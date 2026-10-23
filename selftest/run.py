@@ -37,6 +37,11 @@ def check(name: str, ok: bool, detail: str) -> None:
 
 
 DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+for _stream in (sys.stdout, sys.stderr):  # a console or pipe that cannot show Chinese must not crash the test
+    try:
+        _stream.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass
 WINDOWS = os.name == "nt"
 
 
