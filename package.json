@@ -1,0 +1,38 @@
+{
+  "name": "ferry-cli",
+  "version": "0.4.0",
+  "description": "Ferry: a coding agent for restricted networks. The client keeps your files and history; the Ferry server builds the prompt and talks to the model.",
+  "type": "module",
+  "bin": {
+    "ferry": "client/bin/ferry.mjs"
+  },
+  "files": [
+    "client/bin",
+    "client/lib",
+    "client/ferry.cmd"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "undici": "8.10.2"
+  },
+  "license": "MIT",
+  "overrides": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-codemode": "1.4.0",
+    "@earendil-works/pi-mcp": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wvans123/ferry.git"
+  },
+  "scripts": {
+    "test": "python selftest/run.py"
+  }
+}

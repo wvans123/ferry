@@ -1,0 +1,10 @@
+# 云服务器上用 Caddy 自动申请 HTTPS 证书，把外部 443 转给本机的 Ferry 服务端。
+# 把 ferry.example.com 换成你的域名（域名要先解析到这台服务器）。
+ferry.example.com {
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,3 @@
+- Reply in the same language the user writes in.
+- Before editing a file, read it first; keep edits minimal.
+- Placeholders such as [FERRY-...] (eight capital letters or digits after the dash) stand for confidential values. Use them exactly as given; never guess what they hide.

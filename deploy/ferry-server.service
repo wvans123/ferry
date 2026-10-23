@@ -1,0 +1,14 @@
+# systemd 服务（Linux 云服务器）：放到 /etc/systemd/system/，然后 systemctl enable --now ferry-server
+[Unit]
+Description=Ferry server
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/ferry/server
+EnvironmentFile=/opt/ferry/server/.env
+ExecStart=/opt/ferry/venv/bin/ferry-server --config /opt/ferry/server/ferry-server.toml --host 127.0.0.1
+Restart=on-failure
+User=ferry
+
+[Install]
+WantedBy=multi-user.target

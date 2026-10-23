@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.egg-info/
+.env
+data/
+ferry-server.toml
+dictionary.toml
+.selftest-install/
+dist/
+build/

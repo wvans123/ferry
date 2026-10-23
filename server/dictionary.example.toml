@@ -1,0 +1,19 @@
+# 脱敏词表：命中的内容发给模型前换成 [FERRY-XXXXXXXX]，模型返回时再换回原文。
+# 只有这里列出的内容会被替换；改完重启服务端生效。
+
+terms = [
+  "Project Titan",
+  "internal-host-01",
+]
+
+[[patterns]]
+name = "private-ipv4"
+regex = '\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b'
+
+[[patterns]]
+name = "email"
+regex = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+
+[[patterns]]
+name = "employee-id"
+regex = 'EMP-\d{4,6}'

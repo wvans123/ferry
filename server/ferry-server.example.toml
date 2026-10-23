@@ -1,0 +1,36 @@
+# Ferry 服务端配置。复制为 ferry-server.toml 后修改。
+# 密钥一律放环境变量，不写进这个文件。
+
+[server]
+host = "127.0.0.1"         # 只在本机监听。要让别的电脑访问，前面用 Caddy/Nginx 加 HTTPS 转发，不要直接改成 0.0.0.0
+port = 8787
+max_body_bytes = 1000000   # 单个请求体上限（字节），超出返回 413
+data_dir = "data"          # 会话缓存、占位符映射、日志
+rules_dir = "rules"        # 服务端规则：_global.md + <项目名>.md
+dictionary = "dictionary.toml"
+secret_env = "FERRY_SECRET"  # 生成占位符用的密钥；换了以后旧占位符无法还原
+session_ttl_days = 7
+
+# 每个用户一个令牌，令牌放在环境变量里
+[[users]]
+name = "wesley"
+token_env = "FERRY_TOKEN_WESLEY"
+
+# 模型：名字（main）就是客户端里看到的模型名
+[models.main]
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-chat"
+context_window = 128000
+max_tokens = 8192
+drop_params = ["store"]
+rename_params = { max_completion_tokens = "max_tokens" }
+
+# [models.qwen]
+# base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# api_key_env = "DASHSCOPE_API_KEY"
+# model = "qwen-max"
+# context_window = 32000
+# max_tokens = 8192
+# drop_params = ["store"]
+# rename_params = { max_completion_tokens = "max_tokens" }
