@@ -17,7 +17,7 @@ import uvicorn
 
 from . import PROTOCOL, __version__
 from .app import create_app
-from .config import Config, load, load_default
+from .config import KEY_VARS, Config, load, load_default
 
 
 def client_home() -> Path:
@@ -43,6 +43,8 @@ def banner(cfg: Config, mode: str) -> None:
     for m in cfg.models.values():
         key = "found" if m.api_key else "MISSING: set it before chatting"
         out.append(f"  model {m.id} -> {m.model} at {m.base_url} ({m.api_key_env or 'no key'} {key})")
+    if cfg.home and not any(m.api_key for m in cfg.models.values()):
+        out.append(f"  no model API key found: set one of {KEY_VARS}")
     out.append(f"  mode: {mode}; data in {cfg.data_dir}")
     if cfg.max_upstream_bytes:
         out.append(f"  requests to the model are kept under {cfg.max_upstream_bytes:,} bytes")

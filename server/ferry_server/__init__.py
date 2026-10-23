@@ -1,4 +1,4 @@
 """Ferry server: the context engine and privacy gateway behind the Ferry coding agent."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 PROTOCOL = "1"  # wire protocol major version; must match the client

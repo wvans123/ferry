@@ -20,14 +20,14 @@
 ## 先了解：这一版在你电脑上是怎么跑的
 
 ```
-cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(≤ 900KB/次，敏感词已替换)──> DeepSeek
-   读写文件、执行命令                        拼完整上下文、脱敏、压缩
-   保存对话记录                              读环境变量 DEEPSEEK_API_KEY
+cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(≤ 900KB/次，敏感词已替换)──> 模型 API
+   读写文件、执行命令                        拼完整上下文、脱敏、压缩                  DeepSeek / Claude / OpenAI
+   保存对话记录                              从环境变量读 API Key
 ```
 
 - 你只运行 `ferry`。它会在后台自动启动一个 Ferry 服务端，窗口关掉时服务端一起退出。每个 cmd 窗口各用各的，互不影响。
-- 服务端从环境变量 `DEEPSEEK_API_KEY` 读取 Key，不用写任何配置文件。
-- 这一版服务端和客户端在同一台电脑上，所以是这台电脑直接访问 DeepSeek。脱敏和"单次请求不超过 1MB"照样生效。以后有了单独的服务器，只要在工作电脑上执行一次 `ferry login 服务器地址 令牌`，Key 和对话就都放到服务器那边，用法不变。
+- 服务端从环境变量读取 Key，不用写任何配置文件：设了 `DEEPSEEK_API_KEY` 就用 DeepSeek，设了 `ANTHROPIC_API_KEY` 就多一个 Claude，设了 `OPENAI_API_KEY` 就多一个 OpenAI（见文末"换成 Claude 或 OpenAI"）。
+- 这种用法服务端和客户端在同一台电脑上，所以是这台电脑直接访问模型 API。脱敏和"单次请求不超过 1MB"照样生效。以后有了单独的服务器，只要在工作电脑上执行一次 `ferry login 服务器地址 令牌`，Key 和对话就都放到服务器那边，用法不变。
 
 ---
 
@@ -38,22 +38,22 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(�
 - Node.js 22 或更高（你已有 v25.8.1）。
 - Python 3.11 到 3.14 之一。在 cmd 里输入 `python --version` 能看到版本号即可；提示"不是内部或外部命令"时试 `py -3 --version`。都没有的话，从 python.org 安装，安装时勾选 "Add python.exe to PATH"。
 
-1. 下载安装包 `ferry-windows-0.4.0.zip`。以后会放在 GitHub 的发布页：`https://github.com/wvans123/ferry/releases/latest`；在那之前用我发给你的文件。
-2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.4.0` 文件夹。
+1. 下载安装包 `ferry-windows-0.5.0.zip`。以后会放在 GitHub 的发布页：`https://github.com/wvans123/ferry/releases/latest`；在那之前用我发给你的文件。
+2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.5.0` 文件夹。
 3. 在 cmd 里进入这个文件夹，运行安装命令：
 
    ```bat
-   cd /d %USERPROFILE%\Downloads\ferry-0.4.0
+   cd /d %USERPROFILE%\Downloads\ferry-0.5.0
    node client\bin\ferry.mjs install
    ```
 
    正常输出：
 
    ```
-   Installing Ferry 0.4.0
-     files     C:\Users\你\AppData\Local\Ferry\versions\0.4.0
+   Installing Ferry 0.5.0
+     files     C:\Users\你\AppData\Local\Ferry\versions\0.5.0
      server    python -m pip install ... ferry-server
-     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.4.0 ...）
+     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.5.0 ...）
      command   C:\Users\你\AppData\Roaming\npm\ferry.cmd
 
    Done. Open a NEW cmd window, go to a project folder and run:  ferry
@@ -72,23 +72,29 @@ ferry doctor
 全部正常时：
 
 ```
-Ferry 0.4.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
+Ferry 0.5.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
   info  commands run with: PowerShell (Git Bash not found)
   info  proxy: none
   info  no remote server set: using a Ferry server on this computer
   OK    server installed for python
   OK    server running at http://127.0.0.1:5xxxx
-  OK    server reachable in 3 ms (server 0.4.0, protocol 1)
-  OK    token accepted; models: main
+  OK    server reachable in 3 ms (server 0.5.0, protocol 1)
+  OK    token accepted; models: deepseek (deepseek-chat)
+  info  asking each model for a two-word answer (a few tokens)...
+  OK    model deepseek (deepseek-chat) answered in 900 ms
 ```
 
 | 看到 | 处理 |
 |---|---|
-| `model main has no API key on the server` | 没读到 Key。执行 `setx DEEPSEEK_API_KEY 你的key`，**重新打开 cmd** 再试。`echo %DEEPSEEK_API_KEY%` 能显示出 key 才算设好 |
+| `model deepseek has no API key` | 没读到 Key。执行 `setx DEEPSEEK_API_KEY 你的key`，**重新打开 cmd** 再试。`echo %DEEPSEEK_API_KEY%` 能显示出 key 才算设好 |
+| `model ... HTTP 401` | Key 不对或已失效 |
+| `model ... HTTP 402` | 账户余额不足 |
+| `model ... HTTP 403` | 服务商拒绝：通常是它不服务请求发出的地区（见文末），或 Key 没有权限 |
+| `model ... ConnectError` / `ConnectTimeout` | 这台电脑连不上模型 API，多半要走公司代理，见第三步后面的"连不上模型时" |
 | `the Ferry server is not installed for Python here` | 第一步第 3 条的 pip 没成功，把那一步的输出发给我 |
 | `ferry` 不是内部或外部命令 | 没有重开 cmd；或者安装输出最后提示了 "is not on PATH yet"，按提示把那个文件夹加到 Path |
 
-`doctor` 不会访问 DeepSeek，所以它全是 OK 也不代表能连上 DeepSeek，第三步才是真正的验证。
+`doctor` 是"体检"命令：从本机环境查到服务端、令牌，最后给每个模型发一个只要回答两个字的请求（花几个 token），所以全是 OK 就说明 Key、网络和模型名都没问题。不想花这几个 token 时用 `ferry doctor --no-model`。
 
 ## 第三步：开始对话
 
@@ -99,7 +105,7 @@ echo 服务器 test-host-01 的地址是 10.9.8.7 > notes.txt
 ferry
 ```
 
-进入界面后，顶部显示 `Ferry v0.4.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
+进入界面后，顶部显示 `Ferry v0.5.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
 
 ```
 读一下 notes.txt，然后新建 summary.md，用一句话总结它的内容
@@ -117,9 +123,9 @@ ferry
 | 只问一句、打印回答后退出 | `ferry -p "这个文件夹里有什么"` |
 | 查看全部选项 | `ferry --pi-help` |
 
-### 连不上 DeepSeek 时
+### 连不上模型时
 
-对话时出现 `connect ECONNREFUSED`、`ETIMEDOUT`、`fetch failed`，说明这台电脑访问 DeepSeek 要走公司代理：
+`doctor` 或对话时出现 `ConnectError`、`ConnectTimeout`、`fetch failed`，说明这台电脑访问模型 API 要走公司代理：
 
 1. 查代理地址：`netsh winhttp show proxy`，或者 Windows 设置 → 网络和 Internet → 代理。
 2. 设置一次（Ferry 和它启动的服务端都会用这个代理，访问本机不走代理）：
@@ -129,8 +135,6 @@ ferry
    ```
 
 3. 重新打开 cmd，再运行 `ferry`。
-
-DeepSeek 返回 401 是 Key 不对；返回 402 是账户余额不足。
 
 ## 以后更新
 
@@ -151,7 +155,7 @@ ferry update C:\路径\ferry-windows-x.y.z.zip
 想确认这台 Windows 上一切正常（不需要 Key，不访问外网），在解压出来的文件夹里运行：
 
 ```bat
-cd /d %USERPROFILE%\Downloads\ferry-0.4.0
+cd /d %USERPROFILE%\Downloads\ferry-0.5.0
 python selftest\run.py
 ```
 
@@ -172,3 +176,17 @@ python selftest\run.py
 1. 删除 `%LOCALAPPDATA%\Ferry` 和 `%APPDATA%\npm\ferry.cmd`；
 2. `python -m pip uninstall ferry-server`；
 3. 需要的话再删除 `%USERPROFILE%\.ferry` 和 `%USERPROFILE%\.ferry-server`。
+
+## 换成 Claude 或 OpenAI
+
+不用改代码，也不用写配置，设环境变量就行：
+
+| 想用 | 设置 | 默认模型 | 换模型 |
+|---|---|---|---|
+| Claude | `setx ANTHROPIC_API_KEY 你的key` | `claude-sonnet-5-5` | `setx FERRY_CLAUDE_MODEL claude-opus-5-5` |
+| OpenAI | `setx OPENAI_API_KEY 你的key` | `gpt-6.1-sol` | `setx FERRY_OPENAI_MODEL 模型名` |
+| DeepSeek | `setx DEEPSEEK_API_KEY 你的key` | `deepseek-chat` | `setx FERRY_DEEPSEEK_MODEL 模型名` |
+
+设了几个 Key 就有几个模型，顺序是 Claude、OpenAI、DeepSeek，第一个是默认。想让别的当默认：`setx FERRY_MODEL deepseek`。对话中输入 `/model` 可以随时切换。设完重新打开 cmd，再跑一次 `ferry doctor` 确认。
+
+**注意地区限制**：Anthropic（Claude）和 OpenAI 的 API 不服务中国大陆和香港。从这些地方直接请求通常会被拒（doctor 里看到 HTTP 403），用海外中转去绕也可能违反服务条款。所以要用 Claude 或 OpenAI，Ferry 服务端应该放在它们支持的地区的服务器上（比如新加坡、日本或美国的云服务器），工作电脑执行一次 `ferry login https://服务器地址 令牌` 连过去。DeepSeek 没有这个问题，可以继续在本机模式下用。

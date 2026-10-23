@@ -115,7 +115,8 @@ class Stack:
     def ferry(self, *args, token=TOKEN, timeout=600, local=False) -> tuple[int, str]:
         env = {**self.env, "FERRY_SERVER": self.base, "FERRY_TOKEN": token}
         if local:  # like a fresh install: no server configured, nothing but DEEPSEEK_API_KEY in the environment
-            env = {k: v for k, v in self.env.items() if k not in ("FERRY_SERVER", "FERRY_TOKEN", "FERRY_SECRET")}
+            env = {k: v for k, v in self.env.items() if k not in ("FERRY_SERVER", "FERRY_TOKEN", "FERRY_SECRET",
+                                                                   "ANTHROPIC_API_KEY", "OPENAI_API_KEY")}
         p = subprocess.run([*FERRY, *args], cwd=self.work, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         (self.root / "client.out").write_text(p.stdout + "\n--- stderr ---\n" + p.stderr, encoding="utf-8")

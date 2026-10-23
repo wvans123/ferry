@@ -34,3 +34,20 @@ rename_params = { max_completion_tokens = "max_tokens" }
 # max_tokens = 8192
 # drop_params = ["store"]
 # rename_params = { max_completion_tokens = "max_tokens" }
+
+# Claude（Anthropic 的 OpenAI 兼容接口；不服务中国大陆和香港，服务端要放在支持的地区）
+# [models.claude]
+# base_url = "https://api.anthropic.com/v1"
+# api_key_env = "ANTHROPIC_API_KEY"
+# model = "claude-sonnet-5-5"
+# context_window = 200000
+# max_tokens = 32000
+# drop_params = ["store", "temperature", "top_p"]
+
+# OpenAI（同样不服务中国大陆和香港）
+# [models.openai]
+# base_url = "https://api.openai.com/v1"
+# api_key_env = "OPENAI_API_KEY"
+# model = "gpt-6.1-sol"
+# context_window = 200000
+# max_tokens = 32000

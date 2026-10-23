@@ -2,6 +2,7 @@
 
   GET  /health                               liveness (no auth)
   GET  /v1/ferry/models                      models this user may use
+  POST /v1/ferry/check                       send each model a tiny request (used by `ferry doctor`)
   POST /v1/ferry/upload/{upload}/{seq}       one part of a large upload (raw bytes)
   POST /v1/ferry/commit?conv=&base=&base_hash=[&upload=&parts=]
                                              append messages to the session cache; 409 = base mismatch
@@ -93,8 +94,38 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/v1/ferry/models")
     async def models():
         return {"models": [{"id": m.id, "contextWindow": m.context_window, "maxTokens": m.max_tokens,
-                            "ready": bool(m.api_key) or not m.api_key_env}
+                            "ready": bool(m.api_key) or not m.api_key_env, "keyEnv": m.api_key_env, "model": m.model}
                            for m in cfg.models.values()]}
+
+    @app.post("/v1/ferry/check")
+    async def check(request: Request):
+        """Ask each model (or the one named) for a two-word answer: proves the key, the network path and the model
+        name work, which `ferry doctor` cannot know otherwise. Costs a few tokens."""
+        want = (json.loads(await request.body() or b"{}") or {}).get("model")
+        out = []
+        for m in cfg.models.values():
+            if want and m.id != want:
+                continue
+            row = {"id": m.id, "model": m.model, "base_url": m.base_url}
+            if m.api_key_env and not m.api_key:
+                out.append({**row, "ok": False, "error": f"{m.api_key_env} is not set"})
+                continue
+            t = time.time()
+            body = adapt_params({"model": m.id, "max_completion_tokens": 32,
+                                 "messages": [{"role": "user", "content": "Reply with OK"}]}, m)
+            headers = {"Content-Type": "application/json"}
+            if m.api_key:
+                headers["Authorization"] = f"Bearer {m.api_key}"
+            try:
+                r = await client.post(f"{m.base_url.rstrip('/')}/chat/completions", json=body, headers=headers,
+                                      timeout=60)
+                ok = r.status_code == 200
+                err = "" if ok else f"HTTP {r.status_code}: {r.text[:300]}"
+            except httpx.HTTPError as e:
+                ok, err = False, f"{type(e).__name__}: {e}"
+            out.append({**row, "ok": ok, "ms": int((time.time() - t) * 1000), **({"error": err} if err else {})})
+            write(audit_log, event="check", user=request.state.user, model=m.id, ok=ok)
+        return {"models": out}
 
     @app.post("/v1/ferry/upload/{upload}/{seq}")
     async def upload(upload: str, seq: int, request: Request):

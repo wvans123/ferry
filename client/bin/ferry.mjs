@@ -145,13 +145,54 @@ async function doctor() {
 		if (r.status === 401) return bad(cfg.mode === "remote" ? "token rejected: run ferry login again with the token from the server" : "the local server rejected the saved token: restart it");
 		if (r.status === 426) return bad(r.body?.error?.message ?? "client and server versions do not match");
 		if (r.status !== 200) return bad(`models HTTP ${r.status}`);
-		ok(`token accepted; models: ${r.body.models.map((m) => m.id).join(", ")}`);
+		ok(`token accepted; models: ${r.body.models.map((m) => `${m.id}${m.model ? ` (${m.model})` : ""}`).join(", ")}`);
 		for (const m of r.body.models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);
 		}
 	} catch (e) {
-		bad(`models request failed: ${e.message}`);
+		return bad(`models request failed: ${e.message}`);
 	}
+	if (rest.includes("--no-model")) return info("skipped asking the models (--no-model)");
+	info("asking each model for a two-word answer (a few tokens)...");
+	try {
+		const res = await fetch(`${cfg.server}/v1/ferry/check`, {
+			method: "POST",
+			headers: { "x-ferry-protocol": PROTOCOL, Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
+			body: "{}",
+			signal: AbortSignal.timeout(90000),
+		});
+		if (res.status === 404) return info("this server is too old to test the models; skipped");
+		for (const m of (await res.json()).models) {
+			if (/is not set/.test(m.error ?? "")) continue; // already reported above
+			if (m.ok) ok(`model ${m.id} (${m.model}) answered in ${m.ms} ms`);
+			else bad(`model ${m.id} (${m.model} at ${m.base_url}): ${m.error}\n        ${modelHint(m.error ?? "", cfg)}`);
+		}
+	} catch (e) {
+		bad(`model check failed: ${e.message}`);
+	}
+}
+
+const KEY_HINT = "one of ANTHROPIC_API_KEY, OPENAI_API_KEY or DEEPSEEK_API_KEY";
+const where = (cfg) => cfg.mode === "local"
+	? "(Windows: setx NAME value, then open a new cmd window)"
+	: "on the server, then restart ferry-server";
+
+/** Turn an upstream error into the next thing to try. */
+function modelHint(err, cfg) {
+	if (/is not set/.test(err)) return `set it ${where(cfg)}`;
+	if (/HTTP 401/.test(err)) return "the API key was rejected: check it has no typo and is still active";
+	if (/HTTP 403|region|country|territor/i.test(err)) {
+		return "refused: usually the provider does not serve the region the request comes from (Anthropic and OpenAI " +
+			"do not serve mainland China or Hong Kong), so run the Ferry server where they do; or the key lacks permission";
+	}
+	if (/HTTP 402|balance|quota|billing|credit/i.test(err)) return "the account has no credit left: top it up on the provider's site";
+	if (/HTTP 404|model/i.test(err)) return "the model name may be wrong: set FERRY_<ID>_MODEL (e.g. FERRY_CLAUDE_MODEL) to a valid name";
+	if (/Connect|Timeout|ConnectError|getaddrinfo|ENOTFOUND|ECONN/i.test(err)) {
+		return cfg.mode === "local"
+			? "this computer cannot reach the provider: if you need the company proxy, setx HTTPS_PROXY http://host:port and open a new cmd window"
+			: "the server cannot reach the provider: check its network or proxy (HTTPS_PROXY where ferry-server runs)";
+	}
+	return "see the error above";
 }
 
 async function run(args) {
@@ -165,10 +206,10 @@ async function run(args) {
 		console.error(`Ferry: ${e.message}`);
 		process.exit(2);
 	}
-	if (models.some((m) => m.ready === false)) {
-		console.error("Ferry: the server has no API key for the model. For DeepSeek, set DEEPSEEK_API_KEY where ferry-server runs and restart it.");
+	if (models[0].ready === false) {
+		console.error(`Ferry: no API key for model ${models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
 	}
-	ensureAgentDir(models[0].id);
+	ensureAgentDir(models[0].id, models.map((m) => m.id));
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 	process.env.FERRY_TOKEN = cfg.token;
 	// loaded only here, so install / update / doctor work even before the agent's packages are in place
@@ -203,7 +244,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
 
   ferry                             start the agent in this folder (type your request, Ctrl+C twice to quit)
   ferry -p "question"               one question, answer printed, then exit
-  ferry doctor                      check the setup step by step
+  ferry doctor [--no-model]         check the setup step by step, ending with a tiny request to each model
   ferry login <server-url> <token>  use a Ferry server on another machine
   ferry logout                      go back to a Ferry server on this computer
   ferry update [file.zip]           install the latest release from GitHub (or a zip you downloaded)

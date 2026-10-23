@@ -116,8 +116,50 @@ def _persistent_secret(path: Path) -> str:
     return value
 
 
+# Zero-config models: one per API key found in the environment, all through OpenAI-compatible endpoints.
+# (id, key variable, default base URL, default model, context window, max output, params to drop, params to rename)
+# Context windows are kept at 200K tokens for Claude and OpenAI even where the model takes more: the agent then
+# summarises old history before a request reaches the ~1 MB size limit, and every turn costs less.
+PROVIDERS = [
+    ("claude", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1", "claude-sonnet-5-5", 200_000, 32_000,
+     ["store", "temperature", "top_p"], {}),
+    ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "gpt-6.1-sol", 200_000, 32_000, [], {}),
+    ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com/v1", "deepseek-chat", 128_000, 8_192,
+     ["store"], {"max_completion_tokens": "max_tokens"}),
+]
+KEY_VARS = ", ".join(p[1] for p in PROVIDERS)
+
+
+def zero_config_models() -> dict[str, ModelConfig]:
+    """FERRY_<ID>_MODEL / FERRY_<ID>_BASE_URL override a provider's defaults (e.g. FERRY_CLAUDE_MODEL=claude-opus-5-5);
+    FERRY_MODEL picks the default model (the first one listed). With no key at all, DeepSeek is listed as not ready."""
+    found = {}
+    for pid, key_env, base, model, ctx, max_out, drop, rename in PROVIDERS:
+        if not os.environ.get(key_env) and pid != "deepseek":
+            continue
+        up = pid.upper()
+        legacy_base = os.environ.get("FERRY_UPSTREAM_BASE_URL") if pid == "deepseek" else None
+        legacy_model = os.environ.get("FERRY_UPSTREAM_MODEL") if pid == "deepseek" else None
+        found[pid] = ModelConfig(
+            id=pid,
+            base_url=os.environ.get(f"FERRY_{up}_BASE_URL") or legacy_base or base,
+            model=os.environ.get(f"FERRY_{up}_MODEL") or legacy_model or model,
+            api_key_env=key_env,
+            context_window=int(os.environ.get("FERRY_CONTEXT_WINDOW") or ctx),
+            max_tokens=max_out,
+            drop_params=list(drop),
+            rename_params=dict(rename),
+        )
+    if len(found) > 1 and not os.environ.get("DEEPSEEK_API_KEY"):
+        found.pop("deepseek")  # only shown as a hint when nothing else is configured
+    first = os.environ.get("FERRY_MODEL")
+    if first in found:
+        found = {first: found[first], **{k: v for k, v in found.items() if k != first}}
+    return found
+
+
 def load_default() -> Config:
-    """Zero-config mode: one local user, DeepSeek via DEEPSEEK_API_KEY, secrets generated on first run.
+    """Zero-config mode: one local user, one model per API key in the environment, secrets generated on first run.
 
     Everything lives in ~/.ferry-server (override with FERRY_SERVER_HOME); nothing needs to be edited to start.
     """
@@ -131,16 +173,7 @@ def load_default() -> Config:
         dictionary.write_text(DEFAULT_DICTIONARY, encoding="utf-8")
     secret = os.environ.get("FERRY_SECRET") or _persistent_secret(home / "secret")
     token = os.environ.get("FERRY_TOKEN") or _persistent_secret(home / "token")
-    model = ModelConfig(
-        id="main",
-        base_url=os.environ.get("FERRY_UPSTREAM_BASE_URL", "https://api.deepseek.com/v1"),
-        model=os.environ.get("FERRY_UPSTREAM_MODEL", "deepseek-chat"),
-        api_key_env="DEEPSEEK_API_KEY",
-        context_window=128000,
-        max_tokens=8192,
-        drop_params=["store"],
-        rename_params={"max_completion_tokens": "max_tokens"},
-    )
+    models = zero_config_models()
     cfg = Config(
         host="127.0.0.1",
         port=int(os.environ.get("FERRY_PORT", 8787)),
@@ -149,7 +182,7 @@ def load_default() -> Config:
         dictionary=dictionary,
         secret=secret,
         users={token: "local"},
-        models={"main": model},
+        models=models,
         max_upstream_bytes=int(os.environ.get("FERRY_MAX_UPSTREAM_BYTES", 900_000)),
         home=home,
     )

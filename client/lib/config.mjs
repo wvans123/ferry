@@ -108,12 +108,15 @@ export function findBash() {
 }
 
 /** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept). */
-export function ensureAgentDir(defaultModel) {
+export function ensureAgentDir(defaultModel, modelIds = [defaultModel]) {
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
 	const file = join(AGENT_DIR, "settings.json");
 	const cur = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
 	const defaults = { defaultProvider: "ferry", defaultModel, enableInstallTelemetry: false };
 	// Windows without Git Bash: let the model run commands through PowerShell instead of a missing bash
 	if (!findBash()) defaults.defaultTools = ["read", "powershell", "edit", "write"];
-	writeFileSync(file, JSON.stringify({ ...defaults, ...cur }, null, 2), "utf8");
+	const next = { ...defaults, ...cur };
+	// the server's model list changed (e.g. a new API key): fall back to its first model
+	if (next.defaultProvider === "ferry" && !modelIds.includes(next.defaultModel)) next.defaultModel = defaultModel;
+	writeFileSync(file, JSON.stringify(next, null, 2), "utf8");
 }

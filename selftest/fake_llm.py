@@ -29,6 +29,8 @@ def text_of(m):
 
 
 def decide(msgs):
+    if msgs and text_of(msgs[-1]) == "Reply with OK":  # ferry doctor's model check
+        return ("text", "OK")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if MODE == "basic":

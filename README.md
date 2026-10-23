@@ -37,7 +37,7 @@ flowchart LR
 | 提示词由谁决定 | 和 Cursor 一样由服务端完成最终组装：通用规则 + 按项目的规则，改完下一轮即生效，不用动客户端 | `server/ferry_server/prompt.py` |
 | 敏感信息不外发 | 词表和正则命中的内容替换成确定性占位符 `[FERRY-XXXXXXXX]`（HMAC），同一个值始终对应同一个占位符，模型看到的对话前后一致 | `server/ferry_server/redact.py` |
 | 模型回复里的占位符 | 正文逐字转发，只暂扣可能是占位符开头的最多 15 个字符；工具调用参数在该轮结束时一次性还原后发出，客户端永远拿到真实路径和命令 | `server/ferry_server/stream.py` |
-| 不同模型参数不兼容 | 每个模型可配置去掉或改名的参数（如 `max_completion_tokens` → `max_tokens`） | `server/ferry_server/prompt.py` |
+| 多家模型 | 统一走 OpenAI 兼容接口：DeepSeek、OpenAI、Claude（Anthropic 的兼容接口）；每个模型可配置去掉或改名的参数（如 `max_completion_tokens` → `max_tokens`），`ferry doctor` 会真的给每个模型发一个小请求 | `server/ferry_server/config.py`、`prompt.py` |
 | 本地安全底线 | 禁止目录、执行前确认都在客户端执行，服务端无法绕过；拦截原因里不含受保护的名字 | `client/lib/guard.mjs` |
 | 可审计 | 访问日志和审计日志只记大小、模型、脱敏计数、用量，不记对话内容 | `server/ferry_server/app.py` |
 | 上下文太长 | 两层压缩：pi 在接近模型窗口时把旧历史写成摘要；服务端在发给模型前封顶（默认 900KB），从最旧的工具输出开始删 | `server/ferry_server/prompt.py` |
@@ -78,13 +78,13 @@ ferry doctor                :: 逐项检查环境
 ferry update                :: 更新到 GitHub 上的最新版
 ```
 
-不需要 venv、Docker、npm 或 PyPI：安装包带齐了全部依赖，服务端直接装进现有的 Python。没有 `ferry login` 时，`ferry` 会在后台自己启动一个本机服务端，从环境变量 `DEEPSEEK_API_KEY` 读取 Key，退出时一起关掉。逐步说明和排错见 [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md)。
+不需要 venv、Docker、npm 或 PyPI：安装包带齐了全部依赖，服务端直接装进现有的 Python。没有 `ferry login` 时，`ferry` 会在后台自己启动一个本机服务端，从环境变量读取 Key（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`，设了哪个就有哪个模型），退出时一起关掉。逐步说明和排错见 [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md)。
 
 ### 服务端放在另一台机器上
 
 ```bash
 pip install ./server                   # 或安装包里的 wheels：pip install --no-index --find-links wheels ferry-server
-export DEEPSEEK_API_KEY=...
+export ANTHROPIC_API_KEY=...           # 和/或 OPENAI_API_KEY、DEEPSEEK_API_KEY
 ferry-server                           # 零配置：单用户，令牌在 ~/.ferry-server/token
 # 多用户、多模型：复制 server/ferry-server.example.toml 为 ferry-server.toml 再启动
 ```
@@ -124,11 +124,11 @@ docs/       设计说明
 
 ## 离商业级还差什么
 
-v0.4 是一个可以自用、可以演示的原型：核心链路有 16 个单元测试和 25 项端到端测试覆盖。离商业产品还差下面这些：
+v0.5 是一个可以自用、可以演示的原型：核心链路有 20 个单元测试和 25 项端到端测试覆盖。离商业产品还差下面这些：
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|
-| 核心功能 | 增量同步、服务端组装提示词、可逆脱敏、流式还原、模型适配、两层压缩 | 服务端摘要（现在是直接删旧输出）、代码库检索 |
+| 核心功能 | 增量同步、服务端组装提示词、可逆脱敏、流式还原、模型适配、两层压缩 | Claude 原生接口（提示词缓存能显著降低多轮费用）、服务端摘要、代码库检索 |
 | 可靠性 | 缓存丢失自动恢复（含调用模型前一刻）、版本协商 | 多实例部署（目前单机 SQLite）、数据备份 |
 | 安全 | 多用户隔离、恒定时间令牌比较、拒绝弱密钥、HTTPS 警告、日志不含正文 | 限流、令牌过期与轮换、客户端令牌存进系统凭据库（现在是配置文件明文） |
 | 脱敏 | 词表 + 正则，覆盖正文、工具参数、流式输出 | 自动识别人名和机构名（NER），图片内容 |
