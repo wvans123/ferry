@@ -1,9 +1,16 @@
-name: test
+name: test and release
 
+# Every push and pull request: unit tests and the end-to-end self-test on Linux and Windows.
+# A push to main whose package.json version has no release yet: build the offline Windows package and
+# publish release v<version> (that is what `ferry update` downloads). So releasing = bumping the version.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -28,3 +35,40 @@ jobs:
         run: python -m pytest -q server/tests
       - name: end-to-end self-test (fake model, no API key)
         run: python selftest/run.py
+
+  release:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: is this version released yet?
+        id: v
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$v already released"; echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.v.outputs.new == 'true'
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        if: steps.v.outputs.new == 'true'
+        with:
+          python-version: "3.12"
+      - if: steps.v.outputs.new == 'true'
+        run: npm ci --omit=dev
+      - name: build the offline Windows package
+        if: steps.v.outputs.new == 'true'
+        run: python scripts/build_bundle.py --platform win
+      - name: publish
+        if: steps.v.outputs.new == 'true'
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" dist/ferry-windows-*.zip \
+            --target "$GITHUB_SHA" --title "Ferry v${{ steps.v.outputs.version }}" --generate-notes

@@ -108,7 +108,7 @@ python selftest/run.py         # 端到端：假模型 + 服务端 + 客户端 +
 node client/bin/ferry.mjs      # 直接从源码运行
 ```
 
-端到端测试不需要真实模型和 API Key。每次提交，GitHub Actions 在 Linux 和 Windows 上各跑一遍；推送 `v*` 标签自动构建 Windows 安装包并发布。
+端到端测试不需要真实模型和 API Key。每次提交，GitHub Actions 在 Linux 和 Windows 上各跑一遍；main 分支上 `package.json` 的版本号变了，测试通过后自动构建 Windows 安装包并发布。
 
 ## 目录
 

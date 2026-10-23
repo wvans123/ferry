@@ -152,7 +152,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 
 **更新**：`ferry update` 查询 GitHub 的 latest release，有新版本就下载 zip，解压后运行新版本自己的 `install`，最后改 `current.txt`。正在运行的旧版本不受影响，保留上一个版本用于回退（自测 F24）。访问不了 GitHub 时，`ferry update <zip>` 用手动下载的文件。
 
-**发布**：推送 `v*` 标签后，GitHub Actions 构建安装包并创建 release；每次提交在 Linux 和 Windows 上跑单元测试和端到端自测。
+**发布**：main 分支上的版本号还没有对应的 release 时，测试通过后 GitHub Actions 构建安装包并创建 release（发版就是改版本号）；每次提交在 Linux 和 Windows 上跑单元测试和端到端自测。
 
 ## 13. 服务端放在哪、接哪家模型
 
