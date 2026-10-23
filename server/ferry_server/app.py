@@ -34,7 +34,7 @@ from .stream import restore_message, restore_sse
 
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
-    store = Store(cfg.data_dir / "ferry.db", cfg.session_ttl_days)
+    store = Store(cfg.data_dir / "ferry.db" if cfg.session_store == "disk" else ":memory:", cfg.session_ttl_days)
     red = Redactor(cfg.dictionary, cfg.secret, store)
     client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=15))
     access_log = cfg.data_dir / "access.jsonl"
@@ -91,11 +91,28 @@ def create_app(cfg: Config) -> FastAPI:
     async def health():
         return {"ok": True, "version": __version__, "protocol": PROTOCOL}
 
+    def describe(m, mid=None) -> dict:
+        return {"id": mid or m.id, "contextWindow": m.context_window, "maxTokens": m.max_tokens,
+                "ready": bool(m.api_key) or not m.api_key_env, "keyEnv": m.api_key_env, "model": m.model}
+
     @app.get("/v1/ferry/models")
     async def models():
-        return {"models": [{"id": m.id, "contextWindow": m.context_window, "maxTokens": m.max_tokens,
-                            "ready": bool(m.api_key) or not m.api_key_env, "keyEnv": m.api_key_env, "model": m.model}
-                           for m in cfg.models.values()]}
+        """The client sees "auto" (the server picks); other models only when routing.expose is on."""
+        d = cfg.models[cfg.default_model]
+        auto = {**describe(d, "auto"), "routesTo": d.id}
+        if cfg.summary_model:  # a summary request carries the whole history, so it must fit the smaller window
+            auto["contextWindow"] = min(d.context_window, cfg.models[cfg.summary_model].context_window)
+            auto["summaryTo"] = cfg.summary_model
+        listed = [auto] + ([describe(m) for m in cfg.models.values()] if cfg.expose_models else [])
+        return {"models": listed, "sessionStore": cfg.session_store}
+
+    def route(requested: str, purpose: str):
+        """The server decides which model answers. A client may name one only when routing.expose is on."""
+        if cfg.expose_models and requested in cfg.models:
+            return cfg.models[requested]
+        if purpose == "summary" and cfg.summary_model:
+            return cfg.models[cfg.summary_model]
+        return cfg.models[cfg.default_model]
 
     @app.post("/v1/ferry/check")
     async def check(request: Request):
@@ -168,9 +185,8 @@ def create_app(cfg: Config) -> FastAPI:
                 return JSONResponse({"error": {"message": f"{e.args[0]}; the client will resend"}}, status_code=409)
             if tools is not None:
                 payload["tools"] = tools
-        model = cfg.models.get(payload.get("model", ""))
-        if not model:
-            return JSONResponse({"error": {"message": f"unknown model {payload.get('model')!r}"}}, status_code=404)
+        purpose = (ref or {}).get("purpose") or "agent"
+        model = route(payload.get("model", ""), purpose)
 
         project = request.headers.get("x-ferry-project", "")
         apply_rules(payload, load_rules(cfg.rules_dir, project))
@@ -189,6 +205,7 @@ def create_app(cfg: Config) -> FastAPI:
                                 status_code=503)
         body = json.dumps(adapt_params(payload, model), ensure_ascii=False).encode("utf-8")
         audit = dict(event="chat", user=request.state.user, project=project, model=model.id,
+                     purpose=purpose,
                      messages=len(payload.get("messages", [])), upstream_bytes=len(body), masked=dict(hits),
                      trimmed=trimmed)
         headers = {"Content-Type": "application/json"}
@@ -196,9 +213,14 @@ def create_app(cfg: Config) -> FastAPI:
             headers["Authorization"] = f"Bearer {model.api_key}"
         url = f"{model.base_url.rstrip('/')}/chat/completions"
 
+        def done() -> None:
+            if ref and cfg.session_store == "none":
+                store.forget(key(request, ref["conv"]))
+
         if not payload.get("stream"):
             r = await client.post(url, content=body, headers=headers)
             write(audit_log, **audit, status=r.status_code, ms=int((time.time() - started) * 1000))
+            done()
             if r.status_code != 200:
                 return Response(r.content, status_code=r.status_code, media_type="application/json")
             return JSONResponse(restore_message(r.json(), red, user))
@@ -208,6 +230,7 @@ def create_app(cfg: Config) -> FastAPI:
             err = await upstream.aread()
             await upstream.aclose()
             write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
+            done()
             return Response(err, status_code=upstream.status_code,
                             media_type=upstream.headers.get("content-type", "application/json"))
 
@@ -219,6 +242,7 @@ def create_app(cfg: Config) -> FastAPI:
                     yield b
             finally:
                 write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=usage)
+                done()
 
         return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(upstream.aclose))
 

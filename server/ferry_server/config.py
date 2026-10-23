@@ -55,6 +55,13 @@ class Config:
     secret: str = ""
     session_ttl_days: int = 7
     max_upstream_bytes: int = 0  # 0 = no cap; otherwise old tool outputs are dropped to stay under it
+    # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
+    # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
+    session_store: str = "disk"
+    # the server picks the model: clients ask for "auto"; summaries can go to a cheaper model
+    default_model: str = ""
+    summary_model: str = ""
+    expose_models: bool = False  # true: clients may also pick a model by name
     home: Path | None = None     # set in zero-config mode
     users: dict[str, str] = field(default_factory=dict)  # token -> user name
     models: dict[str, ModelConfig] = field(default_factory=dict)
@@ -79,6 +86,7 @@ def load(path: str | os.PathLike) -> Config:
         secret=os.environ.get(s.get("secret_env", "FERRY_SECRET"), ""),
         session_ttl_days=int(s.get("session_ttl_days", 7)),
         max_upstream_bytes=int(s.get("max_upstream_bytes", 0)),
+        session_store=s.get("session_store", "disk"),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -96,8 +104,24 @@ def load(path: str | os.PathLike) -> Config:
         cfg.models[mid] = ModelConfig(id=mid, **m)
     if not cfg.models:
         raise SystemExit("no [models.*] configured")
+    r = raw.get("routing", {})
+    cfg.default_model, cfg.summary_model = r.get("default", ""), r.get("summary", "")
+    cfg.expose_models = bool(r.get("expose", False))
+    finish(cfg)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     return cfg
+
+
+def finish(cfg: Config) -> None:
+    """Check the routing and storage settings and fill in defaults."""
+    if cfg.session_store not in ("disk", "memory", "none"):
+        raise SystemExit(f'session_store must be "disk", "memory" or "none", not {cfg.session_store!r}')
+    cfg.default_model = cfg.default_model or next(iter(cfg.models))
+    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model)):
+        if mid and mid not in cfg.models:
+            raise SystemExit(f"routing {what} = {mid!r} is not one of the models: {', '.join(cfg.models)}")
+    if "auto" in cfg.models:
+        raise SystemExit('"auto" is reserved for the model the server picks; rename [models.auto]')
 
 
 def server_home() -> Path:
@@ -185,6 +209,11 @@ def load_default() -> Config:
         models=models,
         max_upstream_bytes=int(os.environ.get("FERRY_MAX_UPSTREAM_BYTES", 900_000)),
         home=home,
+        # on this computer the conversation is already in the client's own session files: keep no second copy
+        session_store=os.environ.get("FERRY_SESSION_STORE", "memory"),
+        summary_model=os.environ.get("FERRY_SUMMARY_MODEL", "") if os.environ.get("FERRY_SUMMARY_MODEL") in models else "",
+        expose_models=os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true", "yes"),
     )
+    finish(cfg)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     return cfg

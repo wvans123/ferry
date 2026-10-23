@@ -69,6 +69,7 @@ async function fetchModels(cfg) {
 	try {
 		const r = await getJson(cfg, "/v1/ferry/models", 5000);
 		if (r.status === 200 && r.body.models?.length) {
+			cfg.sessionStore = r.body.sessionStore;
 			writeModelsCache(r.body.models);
 			return r.body.models;
 		}
@@ -145,7 +146,11 @@ async function doctor() {
 		if (r.status === 401) return bad(cfg.mode === "remote" ? "token rejected: run ferry login again with the token from the server" : "the local server rejected the saved token: restart it");
 		if (r.status === 426) return bad(r.body?.error?.message ?? "client and server versions do not match");
 		if (r.status !== 200) return bad(`models HTTP ${r.status}`);
-		ok(`token accepted; models: ${r.body.models.map((m) => `${m.id}${m.model ? ` (${m.model})` : ""}`).join(", ")}`);
+		const label = (m) => m.routesTo ? `auto -> ${m.routesTo} (${m.model})${m.summaryTo ? `, summaries -> ${m.summaryTo}` : ""}`
+			: `${m.id}${m.model ? ` (${m.model})` : ""}`;
+		ok(`token accepted; the server picks the model: ${r.body.models.map(label).join(", ")}`);
+		const store = { disk: "cached on disk", memory: "cached in memory only", none: "not kept (full upload every turn)" };
+		info(`conversation on the server: ${store[r.body.sessionStore] ?? "cached"}; the full history stays on this computer`);
 		for (const m of r.body.models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);
 		}
@@ -207,7 +212,7 @@ async function run(args) {
 		process.exit(2);
 	}
 	if (models[0].ready === false) {
-		console.error(`Ferry: no API key for model ${models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
+		console.error(`Ferry: no API key for model ${models[0].routesTo ?? models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
 	}
 	ensureAgentDir(models[0].id, models.map((m) => m.id));
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;

@@ -23,7 +23,8 @@ class BaseMismatch(Exception):
 
 
 class Store:
-    def __init__(self, path: Path, ttl_days: int = 7):
+    def __init__(self, path: Path | str, ttl_days: int = 7):
+        """path ":memory:" keeps everything in RAM: nothing about conversations is written to disk."""
         self.ttl = ttl_days * 86400
         self.lock = threading.Lock()
         self.db = sqlite3.connect(str(path), check_same_thread=False)
@@ -94,6 +95,12 @@ class Store:
         if tools_hash and not trow:
             raise KeyError("tools not found on server")
         return [json.loads(r[0]) for r in rows], (json.loads(trow[0]) if trow else None)
+
+    def forget(self, conv: str) -> None:
+        """session_store = "none": drop a conversation as soon as its model call is done."""
+        with self.lock, self.db:
+            self.db.execute("DELETE FROM conv WHERE id=?", (conv,))
+            self.db.execute("DELETE FROM msg WHERE conv=?", (conv,))
 
     def drop_sessions(self) -> None:  # test hook
         with self.lock, self.db:

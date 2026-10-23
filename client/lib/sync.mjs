@@ -10,7 +10,8 @@ import { createAssistantMessageEventStream, openAICompletionsApi } from "@earend
 import { PROTOCOL } from "./config.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
-const SALT = randomUUID(); // per process, so two sessions with the same opening never share a server copy
+const SALT = randomUUID();
+const SUMMARY = /^\{"role":"(system|developer)","content":"You are a context summarization assistant/; // pi's summary prompt // per process, so two sessions with the same opening never share a server copy
 
 export class FerryError extends Error {}
 
@@ -47,6 +48,10 @@ export function createSyncProvider(cfg, models) {
 
 	async function shrink(payload, signal) {
 		if (!payload || !Array.isArray(payload.messages)) return payload;
+		if (cfg.sessionStore === "none") { // the server keeps nothing between calls: always send everything
+			known.clear();
+			knownTools.clear();
+		}
 		const msgs = payload.messages.map((m) => JSON.stringify(m));
 		const conv = sha(SALT + (msgs[0] ?? "") + (msgs[1] ?? ""));
 		const chain = [""];
@@ -71,7 +76,9 @@ export function createSyncProvider(cfg, models) {
 		known.set(conv, ack);
 		if (toolsHash) knownTools.add(toolsHash);
 		const { messages: _m, tools: _t, ...rest } = payload;
-		return { ...rest, messages: [], ferry: { conv, count: ack.count, hash: ack.hash, tools_hash: toolsHash } };
+		// tell the server what this request is for, so it can send context summaries to a cheaper model
+		const purpose = SUMMARY.test(msgs[0] ?? "") ? "summary" : "agent";
+		return { ...rest, messages: [], ferry: { conv, count: ack.count, hash: ack.hash, tools_hash: toolsHash, purpose } };
 	}
 
 	function errorEvent(model, message) {

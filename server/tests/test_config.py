@@ -36,3 +36,25 @@ def test_overrides(monkeypatch):
     m = zero_config_models()
     assert list(m)[0] == "deepseek" and m["claude"].model == "claude-opus-5-5"
     assert m["claude"].context_window == 100000
+
+
+def test_routing_checks(tmp_path, monkeypatch):
+    import pytest
+    from ferry_server.config import load
+
+    monkeypatch.setenv("FERRY_SECRET", "s" * 20)
+    monkeypatch.setenv("T1", "t" * 20)
+    base = ('[server]\ndata_dir = "d"\n[[users]]\nname = "a"\ntoken_env = "T1"\n'
+            '[models.big]\nbase_url = "x"\nmodel = "m"\n[models.small]\nbase_url = "x"\nmodel = "s"\n')
+    f = tmp_path / "c.toml"
+    f.write_text(base, encoding="utf-8")
+    cfg = load(f)
+    assert cfg.default_model == "big" and cfg.summary_model == "" and cfg.session_store == "disk"
+    f.write_text(base + '[routing]\ndefault = "small"\nsummary = "small"\n', encoding="utf-8")
+    assert load(f).default_model == "small"
+    f.write_text(base + '[routing]\nsummary = "nope"\n', encoding="utf-8")
+    with pytest.raises(SystemExit):
+        load(f)
+    f.write_text(base.replace('data_dir = "d"', 'data_dir = "d"\nsession_store = "cloud"'), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        load(f)

@@ -45,6 +45,11 @@ def banner(cfg: Config, mode: str) -> None:
         out.append(f"  model {m.id} -> {m.model} at {m.base_url} ({m.api_key_env or 'no key'} {key})")
     if cfg.home and not any(m.api_key for m in cfg.models.values()):
         out.append(f"  no model API key found: set one of {KEY_VARS}")
+    route = f"  clients get model \"auto\" -> {cfg.default_model}"
+    if cfg.summary_model:
+        route += f" (context summaries -> {cfg.summary_model})"
+    out.append(route + ("; clients may also pick a model" if cfg.expose_models else ""))
+    out.append(f"  conversations kept: {dict(disk='on disk', memory='in memory only', none='not at all')[cfg.session_store]}")
     out.append(f"  mode: {mode}; data in {cfg.data_dir}")
     if cfg.max_upstream_bytes:
         out.append(f"  requests to the model are kept under {cfg.max_upstream_bytes:,} bytes")

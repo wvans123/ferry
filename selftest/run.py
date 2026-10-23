@@ -78,7 +78,7 @@ class Stack:
 
     def __init__(self, root: Path, work: Path, mode: str, drop_every: int = 0, context_window: int = 128000,
                  drop_before_chat: int = 0, server_host: str = "127.0.0.1", max_upstream: int = 0,
-                 start_server: bool = True):
+                 start_server: bool = True, extra_toml: str = "", session_store: str = ""):
         self.root, self.work, self.procs = root, work, []
         self.base = f"http://{server_host}:8787"
         self.upstream = root / "upstream.jsonl"
@@ -91,12 +91,13 @@ class Stack:
         self.rules = srv / "rules"
         cfg = (ROOT / "server" / "ferry-server.example.toml").read_text(encoding="utf-8")
         cfg = cfg.replace('host = "127.0.0.1"', f'host = "{server_host}"').replace('data_dir = "data"', f'data_dir = "{self.data.as_posix()}"')
-        cfg = cfg.replace("max_body_bytes = 1000000", f"max_body_bytes = 1000000\nmax_upstream_bytes = {max_upstream}")
+        cfg = cfg.replace("max_body_bytes = 1000000", f"max_body_bytes = 1000000\nmax_upstream_bytes = {max_upstream}"
+                          + (f'\nsession_store = "{session_store}"' if session_store else ""))
         cfg = cfg.replace("https://api.deepseek.com/v1", "http://127.0.0.1:9100/v1")
         cfg = cfg.replace("context_window = 128000", f"context_window = {context_window}", 1)
         cfg = cfg.replace('token_env = "FERRY_TOKEN_WESLEY"',
                           'token_env = "FERRY_TOKEN_WESLEY"\n\n[[users]]\nname = "bob"\ntoken_env = "FERRY_TOKEN_BOB"')
-        (srv / "ferry-server.toml").write_text(cfg, encoding="utf-8")
+        (srv / "ferry-server.toml").write_text(cfg + extra_toml, encoding="utf-8")
         self.config = srv / "ferry-server.toml"
         self.home = root / "ferry-home"
         self.env = {**os.environ, "FERRY_SECRET": SECRET, "FERRY_TOKEN_WESLEY": TOKEN, "FERRY_TOKEN_BOB": TOKEN_BOB,
@@ -229,7 +230,7 @@ def main() -> int:
     print(f"logs: {base}")
     prompt = "请读取 Project Titan 目录下的 notes.txt 并告诉我内容"
 
-    print("\n[1/10] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
+    print("\n[1/11] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
     s = Stack(base / "basic", work, "basic")
     try:
         code, out = s.ferry("--mode", "json", "-p", prompt)
@@ -271,8 +272,11 @@ def main() -> int:
     finally:
         s.close()
 
-    print(f"\n[2/10] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
-    s = Stack(base / "long", work, f"long:{LONG_FILES}", drop_every=22, context_window=300000)
+    print(f"\n[2/11] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
+    cheap = ('\n[models.cheap]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\n'
+             'model = "cheap-model"\ncontext_window = 300000\nmax_tokens = 8192\ndrop_params = ["store"]\n'
+             'rename_params = { max_completion_tokens = "max_tokens" }\n\n[routing]\ndefault = "main"\nsummary = "cheap"\n')
+    s = Stack(base / "long", work, f"long:{LONG_FILES}", drop_every=22, context_window=300000, extra_toml=cheap)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
         acc = jsonl(s.data / "access.jsonl")
@@ -300,10 +304,31 @@ def main() -> int:
               f"拆成 {max([a['parts'] for a in big] or [0])} 块")
         leaks = sum(s.upstream.read_text(encoding="utf-8").count(x) for x in SENSITIVE)
         check("F6b 长会话也不外泄", leaks == 0, f"原文出现 {leaks} 次")
+        chats = [a for a in audit if a.get("event") == "chat"]
+        by = lambda purpose: {a["model"] for a in chats if a.get("purpose") == purpose}
+        offered = [m["id"] for m in json.loads((s.home / "models-cache.json").read_text(encoding="utf-8"))]
+        up_models = {u.get("model") for u in ups}
+        check("F25 服务端决定用哪个模型", ok_run and offered == ["auto"] and by("agent") == {"main"}
+              and by("summary") == {"cheap"} and up_models == {"deepseek-chat", "cheap-model"},
+              f"客户端只看到 {offered}；干活的请求走 main，写摘要的请求走 cheap")
     finally:
         s.close()
 
-    print("\n[3/10] 服务端频繁丢失会话", flush=True)
+    print("\n[3/11] 服务端不保存会话（session_store = none）", flush=True)
+    s = Stack(base / "nostore", work, "long:4", session_store="none")
+    try:
+        code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
+        commits = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "commit"]
+        lost = [a for a in jsonl(s.data / "access.jsonl") if a["status"] == 409]
+        sizes = [a["bytes"] for a in jsonl(s.data / "access.jsonl")]
+        check("F26 服务端可以不保存会话", code == 0 and "READ 4 FILES" in out and len(commits) >= 5
+              and all(a["base"] == 0 for a in commits) and not lost and not (s.data / "ferry.db").exists()
+              and max(sizes) <= LIMIT,
+              f"{len(commits)} 轮每轮都整段重传（单个请求最大 {max(sizes or [0]):,} 字节），服务端磁盘上没有会话库，任务完成")
+    finally:
+        s.close()
+
+    print("\n[4/11] 服务端频繁丢失会话", flush=True)
     s = Stack(base / "drop", work, "long:8", drop_every=3)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -315,7 +340,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[4/10] 本地安全规则", flush=True)
+    print("\n[5/11] 本地安全规则", flush=True)
     s = Stack(base / "guard", work, "basic")
     try:
         (s.home).mkdir(parents=True, exist_ok=True)
@@ -327,7 +352,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[5/10] 经公司代理访问服务端", flush=True)
+    print("\n[6/11] 经公司代理访问服务端", flush=True)
     s = Stack(base / "proxy", work, "basic", server_host="127.0.0.2")
     try:
         plog = s.root / "proxy.log"
@@ -346,7 +371,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[6/10] 调用模型前一刻服务端丢了缓存", flush=True)
+    print("\n[7/11] 调用模型前一刻服务端丢了缓存", flush=True)
     s = Stack(base / "chatdrop", work, "long:6", drop_before_chat=2)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -357,7 +382,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[7/10] 多用户隔离、版本协商、弱密钥", flush=True)
+    print("\n[8/11] 多用户隔离、版本协商、弱密钥", flush=True)
     s = Stack(base / "users", work, "basic")
     try:
         code, out = s.ferry("-p", prompt)  # wesley sends "Project Titan" once, so wesley owns its placeholder
@@ -386,7 +411,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[8/10] 服务端压缩：发给模型的请求有上限", flush=True)
+    print("\n[9/11] 服务端压缩：发给模型的请求有上限", flush=True)
     s = Stack(base / "cap", work, f"long:{LONG_FILES}", context_window=1_000_000, max_upstream=400_000)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -397,7 +422,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[9/10] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
+    print("\n[10/11] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
     s = Stack(base / "zero", work, "long:3", start_server=False)
     try:
         code_d, out_d = s.ferry("doctor", local=True)
@@ -415,7 +440,8 @@ def main() -> int:
             else:
                 still_up.append(port)
         check("F22 零配置自动启动", code_d == 0 and code == 0 and "READ 3 FILES" in out and len(ports) == 2
-              and not still_up and (s.root / "zero-config-home" / "secret").exists(),
+              and not still_up and (s.root / "zero-config-home" / "secret").exists()
+              and not (s.root / "zero-config-home" / "data" / "ferry.db").exists(),
               f"没有登录、没有配置文件：ferry 每次自己启动本机服务端（端口 {', '.join(ports)}），对话完成，退出后服务端随之关闭")
         nokey = {k: v for k, v in s.env.items() if k != "DEEPSEEK_API_KEY"}
         s.env = nokey
@@ -424,7 +450,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[10/10] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
+    print("\n[11/11] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
     check_install_update(base / "install")
 
     failed = [r for r in results if not r[1]]
