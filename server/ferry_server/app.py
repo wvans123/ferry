@@ -16,9 +16,10 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import secrets
 import time
+from collections import Counter, deque
 from types import SimpleNamespace
-from collections import Counter
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -27,16 +28,36 @@ from starlette.background import BackgroundTask
 
 from . import PROTOCOL, __version__
 from .config import Config, refresh_models
+from .presets import chat_url
 from .prompt import adapt_params, apply_rules, cap_upstream, load_rules
 from .redact import Redactor
 from .store import BaseMismatch, Store
 from .stream import restore_message, restore_sse
 
 
+def _text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return ""
+
+
+def details_of(call_id: str, payload: dict, project: str, model: str, purpose: str, size: int) -> dict:
+    """What the model is about to receive, after server rules and redaction. Kept in memory only."""
+    msgs = payload.get("messages", [])
+    system = "\n\n".join(_text(m.get("content")) for m in msgs if m.get("role") in ("system", "developer"))
+    users = [m for m in msgs if m.get("role") == "user"]
+    tools = [t.get("function", {}).get("name", "") for t in payload.get("tools") or []]
+    return {"id": call_id, "ts": round(time.time(), 3), "project": project, "model": model, "purpose": purpose,
+            "bytes": size, "messages": len(msgs), "system": system[:60_000],
+            "last_user": _text(users[-1].get("content"))[:20_000] if users else "", "tools": tools}
+
+
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
     # session store and redactor can be swapped at run time from the admin page (settings, word list)
-    live = SimpleNamespace(store=None, red=None, started=time.time())
+    live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20))
 
     def rebuild(store_too: bool = True) -> None:
         if store_too or live.store is None:
@@ -107,7 +128,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     def describe(m, mid=None) -> dict:
         return {"id": mid or m.id, "contextWindow": m.context_window, "maxTokens": m.max_tokens,
-                "ready": bool(m.api_key) or not m.api_key_env, "keyEnv": m.api_key_env, "model": m.model}
+                "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model}
 
     def reload() -> None:
         err = refresh_models(cfg)
@@ -144,8 +165,9 @@ def create_app(cfg: Config) -> FastAPI:
             if want and m.id != want:
                 continue
             row = {"id": m.id, "model": m.model, "base_url": m.base_url}
-            if m.api_key_env and not m.api_key:
-                out.append({**row, "ok": False, "error": f"{m.api_key_env} is not set"})
+            if not m.ready:
+                out.append({**row, "ok": False, "error": (f"{m.api_key_env} is not set" if m.api_key_env
+                                                          else "no API key: add it on the admin page")})
                 continue
             t = time.time()
             body = adapt_params({"model": m.id, "max_completion_tokens": 32,
@@ -154,7 +176,7 @@ def create_app(cfg: Config) -> FastAPI:
             if m.api_key:
                 headers["Authorization"] = f"Bearer {m.api_key}"
             try:
-                r = await client.post(f"{m.base_url.rstrip('/')}/chat/completions", json=body, headers=headers,
+                r = await client.post(chat_url(m.base_url), json=body, headers=headers,
                                       timeout=60)
                 ok = r.status_code == 200
                 err = "" if ok else f"HTTP {r.status_code}: {r.text[:300]}"
@@ -215,7 +237,11 @@ def create_app(cfg: Config) -> FastAPI:
         model = route(payload.get("model", ""), purpose)
 
         project = request.headers.get("x-ferry-project", "")
-        apply_rules(payload, load_rules(cfg.rules_dir, project))
+        rules = load_rules(cfg.rules_dir, project)
+        if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
+            extra = (cfg.rules_dir / "_summary.md").read_text(encoding="utf-8").strip()
+            rules = f"{rules}\n\n{extra}".strip() if extra else rules
+        apply_rules(payload, rules)
         user = request.state.user
         hits: Counter = live.red.mask_payload(payload, user)
         trimmed, size = cap_upstream(payload, cfg.max_upstream_bytes)
@@ -225,19 +251,23 @@ def create_app(cfg: Config) -> FastAPI:
             return JSONResponse({"error": {"message": f"the conversation is still {size:,} bytes after dropping old "
                                                       f"tool outputs (limit {cfg.max_upstream_bytes:,}). Run /compact "
                                                       f"or start a new session."}}, status_code=413)
-        if not model.api_key and model.api_key_env:
-            return JSONResponse({"error": {"message": f"the Ferry server has no API key for model {model.id}: "
-                                                      f"set {model.api_key_env} and restart ferry-server"}},
+        if not model.ready:
+            how = (f"set {model.api_key_env} and restart ferry-server" if model.api_key_env
+                   else "add the key on the server's admin page")
+            return JSONResponse({"error": {"message": f"the Ferry server has no API key for model {model.id}: {how}"}},
                                 status_code=503)
         body = json.dumps(adapt_params(payload, model), ensure_ascii=False).encode("utf-8")
-        audit = dict(event="chat", user=request.state.user, project=project, model=model.id,
+        call_id = secrets.token_hex(4)
+        if cfg.record_details:
+            live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
+        audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
                      purpose=purpose,
                      messages=len(payload.get("messages", [])), upstream_bytes=len(body), masked=dict(hits),
                      trimmed=trimmed)
         headers = {"Content-Type": "application/json"}
         if model.api_key:
             headers["Authorization"] = f"Bearer {model.api_key}"
-        url = f"{model.base_url.rstrip('/')}/chat/completions"
+        url = chat_url(model.base_url)
 
         def done() -> None:
             if ref and cfg.session_store == "none":

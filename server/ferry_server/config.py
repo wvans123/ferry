@@ -38,10 +38,37 @@ class ModelConfig:
     drop_params: list[str] = field(default_factory=list)
     rename_params: dict[str, str] = field(default_factory=dict)
     extra_params: dict = field(default_factory=dict)
+    provider: str = ""                                  # [providers.<id>] this model belongs to, if any
+    name: str = ""                                      # display name (admin page only)
+    no_key: bool = False                                # e.g. a local Ollama
+    key_value: str = field(default="", repr=False)      # key entered on the admin page (secrets.toml)
 
     @property
     def api_key(self) -> str:
-        return os.environ.get(self.api_key_env, "") if self.api_key_env else ""
+        """The environment variable wins; otherwise the key saved from the admin page."""
+        return (os.environ.get(self.api_key_env, "") if self.api_key_env else "") or self.key_value
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.api_key) or self.no_key or (not self.provider and not self.api_key_env)
+
+
+@dataclass
+class Provider:
+    """One account at one service: an address and a key, shared by its models."""
+    id: str
+    base_url: str
+    name: str = ""
+    preset: str = ""
+    api_key_env: str = ""
+    drop_params: list[str] = field(default_factory=list)
+    rename_params: dict[str, str] = field(default_factory=dict)
+    no_key: bool = False
+    key: str = field(default="", repr=False)
+
+    @property
+    def api_key(self) -> str:
+        return (os.environ.get(self.api_key_env, "") if self.api_key_env else "") or self.key
 
 
 @dataclass
@@ -70,6 +97,8 @@ class Config:
     public_url: str = ""               # how clients reach this server, e.g. https://ferry.example.com (display only)
     users: dict[str, str] = field(default_factory=dict)  # token -> user name
     models: dict[str, ModelConfig] = field(default_factory=dict)
+    providers: dict[str, Provider] = field(default_factory=dict)
+    record_details: bool = False  # keep the last requests' prompts in memory for the admin page
 
 
 def load(path: str | os.PathLike) -> Config:
@@ -154,7 +183,7 @@ PROVIDERS = [
     ("claude", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1", "claude-sonnet-5-5", 200_000, 32_000,
      ["store", "temperature", "top_p"], {}),
     ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "gpt-6.1-sol", 200_000, 32_000, [], {}),
-    ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com/v1", "deepseek-chat", 128_000, 8_192,
+    ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", 128_000, 8_192,
      ["store"], {"max_completion_tokens": "max_tokens"}),
 ]
 KEY_VARS = ", ".join(p[1] for p in PROVIDERS)
@@ -246,13 +275,75 @@ def models_template(found: dict[str, ModelConfig]) -> str:
     return "\n".join(out)
 
 
+def secrets_path(cfg: Config) -> Path | None:
+    return (cfg.home / "secrets.toml") if cfg.home else None
+
+
+def load_secrets(cfg: Config) -> dict[str, str]:
+    f = secrets_path(cfg)
+    if not f or not f.exists():
+        return {}
+    try:
+        return {k: str(v) for k, v in tomllib.loads(f.read_text(encoding="utf-8")).get("providers", {}).items()}
+    except tomllib.TOMLDecodeError:
+        return {}
+
+
+def save_secrets(cfg: Config, keys: dict[str, str]) -> None:
+    f = secrets_path(cfg)
+    if not f:
+        return
+    lines = ["# API keys entered on the Ferry admin page. Keep this file private.", "[providers]"]
+    lines += [f"{_toml_value(k)} = {_toml_value(v)}" for k, v in sorted(keys.items()) if v]
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        f.chmod(0o600)
+    except OSError:
+        pass
+
+
+def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provider], dict[str, ModelConfig]]:
+    """[providers.*] and [models.*] from models.toml. A model either names a provider or has its own base_url."""
+    from .presets import BY_ID
+    providers: dict[str, Provider] = {}
+    for pid, p in raw.get("providers", {}).items():
+        pre = BY_ID.get(p.get("preset", ""), {})
+        base = p.get("base_url") or pre.get("base_url", "")
+        if not base:
+            raise SystemExit(f"provider {pid}: base_url is empty")
+        providers[pid] = Provider(
+            id=pid, base_url=base, name=p.get("name") or pre.get("name") or pid, preset=p.get("preset", ""),
+            api_key_env=p.get("api_key_env", ""), drop_params=list(p.get("drop_params", pre.get("drop_params", []))),
+            rename_params=dict(p.get("rename_params", pre.get("rename_params", {}))),
+            no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""))
+    models: dict[str, ModelConfig] = {}
+    for mid, m in raw.get("models", {}).items():
+        m = dict(m)
+        pid = m.pop("provider", "")
+        if pid:
+            prov = providers.get(pid)
+            if not prov:
+                raise SystemExit(f"model {mid}: provider {pid!r} is not defined")
+            m.setdefault("base_url", prov.base_url)
+            m.setdefault("api_key_env", prov.api_key_env)
+            m.setdefault("drop_params", prov.drop_params)
+            m.setdefault("rename_params", prov.rename_params)
+            m.setdefault("no_key", prov.no_key)
+            m["key_value"] = prov.key
+        try:
+            models[mid] = ModelConfig(id=mid, provider=pid, **m)
+        except TypeError as e:
+            raise SystemExit(f"model {mid}: {e}") from None
+    return providers, models
+
+
 def apply_models_file(cfg: Config, path: Path) -> None:
-    """Read models.toml into cfg (models + routing). Raises SystemExit with a readable message if it is wrong."""
+    """Read models.toml into cfg (providers, models, routing). Raises SystemExit with a readable message if it is wrong."""
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
         raise SystemExit(f"{path}: {e}") from None
-    models = {mid: ModelConfig(id=mid, **m) for mid, m in raw.get("models", {}).items()}
+    providers, models = parse_models(raw, load_secrets(cfg))
     if not models:
         raise SystemExit(f"{path}: no [models.*] left; keep at least one")
     r = raw.get("routing", {})
@@ -263,8 +354,34 @@ def apply_models_file(cfg: Config, path: Path) -> None:
     if trial.default_model not in models:
         trial.default_model = ""
     finish(trial)
-    cfg.models, cfg.default_model = trial.models, trial.default_model
+    cfg.models, cfg.providers, cfg.default_model = trial.models, providers, trial.default_model
     cfg.summary_model, cfg.expose_models = trial.summary_model, trial.expose_models
+
+
+def render_models_toml(providers: list[dict], models: list[dict], routing: dict) -> str:
+    """models.toml from the admin page's form (keys are never written here)."""
+    out = ["# Ferry 模型清单，由管理页生成。也可以手动改，保存后下一次请求生效。",
+           "# 服务商的 Key 保存在同一文件夹的 secrets.toml 里（或环境变量 api_key_env）。", "", "[routing]"]
+    out.append(f"default = {_toml_value(routing.get('default', ''))}")
+    out.append(f"summary = {_toml_value(routing.get('summary', ''))}")
+    out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
+    for p in providers:
+        out += ["", f"[providers.{_toml_key(p['id'])}]"]
+        for k in ("name", "preset", "base_url", "api_key_env", "drop_params", "rename_params", "no_key"):
+            if p.get(k) not in (None, "", [], {}, False):
+                out.append(f"{k} = {_toml_value(p[k])}")
+    for m in models:
+        out += ["", f"[models.{_toml_key(m['id'])}]"]
+        for k in ("provider", "model", "name", "context_window", "max_tokens", "base_url", "api_key_env",
+                  "drop_params", "rename_params"):
+            if m.get(k) not in (None, "", [], {}):
+                out.append(f"{k} = {_toml_value(m[k])}")
+    return "\n".join(out) + "\n"
+
+
+def _toml_key(k: str) -> str:
+    import re
+    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else _toml_value(k)
 
 
 def refresh_models(cfg: Config) -> str:
@@ -330,6 +447,7 @@ def load_default() -> Config:
         models_file=models_file,
         settings_file=settings_file,
         public_url=saved.get("public_url", ""),
+        record_details=bool(saved.get("record_details", False)),
     )
     apply_models_file(cfg, models_file)
     cfg.models_mtime = models_file.stat().st_mtime
@@ -347,4 +465,5 @@ def save_settings(cfg: Config) -> None:
         f'public_url = "{cfg.public_url}"\n'
         f'session_store = "{cfg.session_store}"\n'
         f"redact = {'true' if cfg.redact else 'false'}\n"
-        f"max_upstream_bytes = {int(cfg.max_upstream_bytes)}\n", encoding="utf-8")
+        f"max_upstream_bytes = {int(cfg.max_upstream_bytes)}\n"
+        f"record_details = {'true' if cfg.record_details else 'false'}\n", encoding="utf-8")

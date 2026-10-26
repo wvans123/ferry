@@ -76,6 +76,11 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_GET(self):  # the provider's model list, for the admin page's "fetch models"
+        if self.path.rstrip("/").endswith("/models"):
+            return self.send_json(200, {"object": "list", "data": [{"id": "fake-small"}, {"id": "fake-large"}]})
+        self.send_json(404, {"error": {"message": "not found"}})
+
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
         body = json.loads(raw)

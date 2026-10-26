@@ -21,10 +21,25 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+import re
+import tempfile
+
+import httpx
+
 from . import PROTOCOL, __version__
-from .config import Config, apply_models_file, save_settings
+from . import presets as presets_mod
+from .config import (Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
+from .redact import Redactor
+from .store import Store
 
 PAGE = Path(__file__).with_name("admin.html")
+BUILTIN_PATTERNS = [  # name, label, regex
+    ("private-ipv4", "内网 IP 地址",
+     r"\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b"),
+    ("email", "邮箱地址", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    ("phone-cn", "手机号", r"(?<!\d)1[3-9]\d{9}(?!\d)"),
+    ("api-key", "API Key 和令牌（sk-、ghp_ 等开头的长串）", r"\b(?:sk|pk|rk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{16,}\b"),
+]
 PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded")
 STARTUP_LNK = "Ferry server.lnk"
 
@@ -120,7 +135,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         if not allowed(request):
             return HTMLResponse("<!doctype html><meta charset=utf-8><title>Ferry</title>"
                                 "<p style='font:16px system-ui;margin:3em'>请在服务端电脑上用桌面的 "
-                                "<b>Ferry 服务端</b> 图标（或命令 <code>ferry-server --ui</code>）打开管理页。</p>", 403)
+                                "<b>Ferry Server</b> 图标（或命令 <code>ferry-server --ui</code>）打开管理页。</p>", 403)
         return HTMLResponse(PAGE.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
     # ---------- read ----------
@@ -134,11 +149,12 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "home": str(cfg.home or cfg.data_dir), "public_url": cfg.public_url,
             "token": next(iter(cfg.users)) if cfg.home else "", "zero_config": bool(cfg.home),
             "session_store": cfg.session_store, "redact": cfg.redact, "max_upstream_bytes": cfg.max_upstream_bytes,
+            "record_details": cfg.record_details,
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
             "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "expose": cfg.expose_models},
             "models": [{"id": m.id, "model": m.model, "base_url": m.base_url, "key_env": m.api_key_env,
-                        "ready": bool(m.api_key) or not m.api_key_env} for m in cfg.models.values()],
+                        "provider": m.provider, "ready": m.ready} for m in cfg.models.values()],
             "models_file": str(cfg.models_file or ""), "platform": sys.platform,
             "autostart": bool(startup and (startup / STARTUP_LNK).exists()),
         }
@@ -244,6 +260,10 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.redact = bool(b["redact"])
         if "max_upstream_bytes" in b:
             cfg.max_upstream_bytes = max(0, int(b["max_upstream_bytes"]))
+        if "record_details" in b:
+            cfg.record_details = bool(b["record_details"])
+            if not cfg.record_details:
+                live.details.clear()
         rebuild(store_changed)
         save_settings(cfg)
         return status()
@@ -326,3 +346,268 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             return denied()
         asyncio.get_running_loop().call_later(0.5, os._exit, 0)
         return {"ok": True}
+
+    # ---------- providers and models (structured) ----------
+
+    def provider_views() -> list[dict]:
+        """Configured providers, plus older models that carry their own address, grouped by address and key."""
+        secrets_ = load_secrets(cfg)
+        views: dict[str, dict] = {}
+        for p in cfg.providers.values():
+            key = p.api_key
+            views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url,
+                           "api_key_env": p.api_key_env, "no_key": p.no_key,
+                           "key_tail": key[-4:] if key else "", "key_source": (
+                               "env" if p.api_key_env and os.environ.get(p.api_key_env) else
+                               "saved" if secrets_.get(p.id) else ""), "models": []}
+        for m in cfg.models.values():
+            pid = m.provider
+            if not pid:  # an older entry: group it with others that share the address and key variable
+                base = m.base_url.rstrip("/")
+                norm = re.sub(r"/v1$", "", base)
+                pre = next((x for x in presets_mod.PRESETS if x["base_url"]
+                            and re.sub(r"/v1$", "", x["base_url"].rstrip("/")) == norm), None)
+                pid = (pre["id"] if pre else re.sub(r"[^a-z0-9]+", "-", norm.split("//")[-1].lower()).strip("-"))
+                if pid not in views:
+                    key = m.api_key
+                    views[pid] = {"id": pid, "name": pre["name"] if pre else norm.split("//")[-1],
+                                  "preset": pre["id"] if pre else "custom", "base_url": m.base_url,
+                                  "api_key_env": m.api_key_env, "no_key": False, "key_tail": key[-4:] if key else "",
+                                  "key_source": "env" if key else "", "models": []}
+            views[pid]["models"].append({"id": m.id, "model": m.model, "name": m.name,
+                                         "context_window": m.context_window, "max_tokens": m.max_tokens,
+                                         "ready": m.ready})
+        return list(views.values())
+
+    @app.get("/admin/api/presets")
+    async def get_presets(request: Request):
+        return {"presets": presets_mod.public()} if allowed(request) else denied()
+
+    @app.get("/admin/api/providers")
+    async def get_providers(request: Request):
+        if not allowed(request):
+            return denied()
+        return {"providers": provider_views(), "editable": bool(cfg.models_file),
+                "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "expose": cfg.expose_models}}
+
+    @app.post("/admin/api/providers/models")
+    async def list_remote_models(request: Request):
+        """Read a provider's own model list (GET {base}/models) with a key typed in the form or the saved one."""
+        if not allowed(request, True):
+            return denied()
+        b = await body(request)
+        base = (b.get("base_url") or "").strip()
+        key = (b.get("key") or "").strip()
+        if not key and b.get("provider"):
+            prov = cfg.providers.get(b["provider"])
+            key = prov.api_key if prov else load_secrets(cfg).get(b["provider"], "")
+            if not key:  # an older entry: use the key of one of its models
+                key = next((m.api_key for m in cfg.models.values()
+                            if m.base_url.rstrip("/") == base.rstrip("/") and m.api_key), "")
+        if not base:
+            return JSONResponse({"error": "请先填写接口地址"}, 400)
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(presets_mod.models_url(base), headers={"Authorization": f"Bearer {key}"} if key else {})
+        except httpx.HTTPError as e:
+            return JSONResponse({"error": f"连不上 {presets_mod.models_url(base)}：{type(e).__name__}"}, 502)
+        if r.status_code != 200:
+            hint = {401: "Key 不对或已失效", 403: "没有权限，或者这个地区不能用"}.get(r.status_code, "")
+            return JSONResponse({"error": f"HTTP {r.status_code} {hint}".strip(), "detail": r.text[:300]}, 502)
+        try:
+            data = r.json()
+            items = data.get("data", data) if isinstance(data, dict) else data
+            ids = sorted({(i.get("id") if isinstance(i, dict) else str(i)) for i in items} - {None, ""})
+        except Exception:
+            return JSONResponse({"error": "返回的不是模型列表，可以手动输入模型名"}, 502)
+        return {"models": ids}
+
+    @app.put("/admin/api/providers")
+    async def put_providers(request: Request):
+        """Save providers, their keys and models from the form; models.toml is rewritten, keys go to secrets.toml."""
+        if not allowed(request, True):
+            return denied()
+        if not cfg.models_file:
+            return JSONResponse({"error": "这台服务端用 ferry-server.toml 配置，请直接改那个文件"}, 400)
+        b = await body(request)
+        keys = load_secrets(cfg)
+        providers, models, used = [], [], set()
+        for p in b.get("providers", []):
+            pid = re.sub(r"[^A-Za-z0-9_-]+", "-", (p.get("id") or "").strip()).strip("-")
+            if not pid or pid in {x["id"] for x in providers}:
+                return JSONResponse({"error": f"服务商标识 {p.get('id')!r} 为空或重复"}, 400)
+            pre = presets_mod.BY_ID.get(p.get("preset", ""), {})
+            entry = {"id": pid, "name": p.get("name") or pre.get("name", pid), "preset": p.get("preset", ""),
+                     "base_url": (p.get("base_url") or pre.get("base_url", "")).strip(),
+                     "api_key_env": (p.get("api_key_env") or "").strip(),
+                     "drop_params": pre.get("drop_params", ["store"]),
+                     "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
+            if not entry["base_url"]:
+                return JSONResponse({"error": f"{entry['name']}：接口地址不能为空"}, 400)
+            if p.get("key"):
+                keys[pid] = p["key"].strip()
+            elif p.get("clear_key"):
+                keys.pop(pid, None)
+            providers.append(entry)
+            for m in p.get("models", []):
+                name = (m.get("model") or "").strip()
+                if not name:
+                    continue
+                mid = re.sub(r"[^A-Za-z0-9_.-]+", "-", (m.get("id") or name)).strip("-")
+                if mid in used:
+                    mid = f"{pid}-{mid}"
+                used.add(mid)
+                models.append({"id": mid, "provider": pid, "model": name, "name": m.get("name", ""),
+                               "context_window": int(m.get("context_window") or 128_000),
+                               "max_tokens": int(m.get("max_tokens") or 8_192)})
+        if not models:
+            return JSONResponse({"error": "至少要启用一个模型"}, 400)
+        r = b.get("routing", {})
+        ids = [m["id"] for m in models]
+        routing = {"default": r.get("default") if r.get("default") in ids else ids[0],
+                   "summary": r.get("summary") if r.get("summary") in ids else "",
+                   "expose": bool(r.get("expose", True))}
+        for gone in set(keys) - {p["id"] for p in providers}:
+            keys.pop(gone)
+        old_keys = load_secrets(cfg)
+        save_secrets(cfg, keys)
+        text = render_models_toml(providers, models, routing)
+        tmp = cfg.models_file.with_suffix(".check.toml")
+        tmp.write_text(text, encoding="utf-8")
+        try:
+            apply_models_file(cfg, tmp)
+        except SystemExit as e:
+            save_secrets(cfg, old_keys)
+            return JSONResponse({"error": str(e)}, 400)
+        finally:
+            tmp.unlink(missing_ok=True)
+        cfg.models_file.write_text(text, encoding="utf-8")
+        cfg.models_mtime = cfg.models_file.stat().st_mtime
+        return {"providers": provider_views(), "routing": routing}
+
+    # ---------- prompts ----------
+
+    def projects_seen() -> list[str]:
+        names = {a.get("project") for a in _tail_jsonl(audit_log, 2_000_000) if a.get("event") == "chat"}
+        if cfg.rules_dir and cfg.rules_dir.is_dir():
+            names |= {f.stem for f in cfg.rules_dir.glob("*.md") if not f.stem.startswith("_")}
+        return sorted(n for n in names if n)
+
+    def prompt_file(name: str) -> Path | None:
+        if not cfg.rules_dir:
+            return None
+        if name in ("_global", "_summary"):
+            return cfg.rules_dir / f"{name}.md"
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+        return cfg.rules_dir / f"{safe}.md" if safe and not safe.startswith("_") else None
+
+    @app.get("/admin/api/prompts")
+    async def get_prompts(request: Request):
+        if not allowed(request):
+            return denied()
+        read = lambda n: (prompt_file(n).read_text(encoding="utf-8") if prompt_file(n) and prompt_file(n).exists() else "")
+        return {"global": read("_global"), "summary": read("_summary"),
+                "projects": [{"name": n, "text": read(n)} for n in projects_seen()]}
+
+    @app.put("/admin/api/prompts/{name}")
+    async def put_prompt(name: str, request: Request):
+        if not allowed(request, True):
+            return denied()
+        f = prompt_file(name)
+        if not f:
+            return JSONResponse({"error": "这个名字不能用"}, 400)
+        text = (await body(request)).get("text", "")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if text.strip():
+            f.write_text(text.strip() + "\n", encoding="utf-8")
+        else:
+            f.unlink(missing_ok=True)
+        return {"ok": True}
+
+    # ---------- redaction (structured) ----------
+
+    def read_dictionary() -> dict:
+        f = cfg.dictionary
+        raw = tomllib.loads(f.read_text(encoding="utf-8")) if f and f.exists() else {}
+        pats = raw.get("patterns", [])
+        builtin_names = {n for n, _, _ in BUILTIN_PATTERNS}
+        return {"enabled": cfg.redact, "terms": [t for t in raw.get("terms", []) if str(t).strip()],
+                "builtins": [{"name": n, "label": label, "on": any(p.get("name") == n for p in pats)}
+                             for n, label, _ in BUILTIN_PATTERNS],
+                "custom": [p for p in pats if p.get("name") not in builtin_names]}
+
+    def dictionary_text(d: dict) -> str:
+        from .config import _toml_value
+        lines = ["# Ferry 脱敏词表，由管理页生成。命中的内容发给模型前换成 [FERRY-XXXXXXXX]，回来时再换回原文。",
+                 f"terms = {_toml_value([t.strip() for t in d.get('terms', []) if str(t).strip()])}"]
+        on = {b["name"] for b in d.get("builtins", []) if b.get("on")}
+        for n, _, rx in BUILTIN_PATTERNS:
+            if n in on:
+                lines += ["", "[[patterns]]", f"name = {_toml_value(n)}", f"regex = {_toml_value(rx)}"]
+        for p in d.get("custom", []):
+            if p.get("regex"):
+                re.compile(p["regex"])  # raises on a broken pattern
+                lines += ["", "[[patterns]]", f"name = {_toml_value(p.get('name') or 'custom')}",
+                          f"regex = {_toml_value(p['regex'])}"]
+        return "\n".join(lines) + "\n"
+
+    @app.get("/admin/api/redaction")
+    async def get_redaction(request: Request):
+        return read_dictionary() if allowed(request) else denied()
+
+    @app.put("/admin/api/redaction")
+    async def put_redaction(request: Request):
+        if not allowed(request, True):
+            return denied()
+        d = await body(request)
+        try:
+            text = dictionary_text(d)
+        except re.error as e:
+            return JSONResponse({"error": f"自定义规则写得不对：{e}"}, 400)
+        if cfg.dictionary:
+            cfg.dictionary.write_text(text, encoding="utf-8")
+        if "enabled" in d:
+            cfg.redact = bool(d["enabled"])
+            save_settings(cfg)
+        rebuild(False)
+        return read_dictionary()
+
+    @app.post("/admin/api/redaction/try")
+    async def try_redaction(request: Request):
+        """Show what a piece of text looks like after redaction, with the settings in the form (nothing saved)."""
+        if not allowed(request, True):
+            return denied()
+        d = await body(request)
+        try:
+            text = dictionary_text(d)
+        except re.error as e:
+            return JSONResponse({"error": f"自定义规则写得不对：{e}"}, 400)
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "d.toml"
+            f.write_text(text, encoding="utf-8")
+            from collections import Counter
+            red = Redactor(f, cfg.secret, Store(":memory:"))
+            hits: Counter = Counter()
+            out = red.mask(d.get("sample", ""), hits, "preview")
+        return {"masked": out, "hits": dict(hits)}
+
+    # ---------- call records ----------
+
+    @app.get("/admin/api/calls")
+    async def calls(request: Request, limit: int = 200):
+        if not allowed(request):
+            return denied()
+        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") == "chat"][-max(1, min(limit, 1000)):][::-1]
+        have = {d["id"] for d in live.details}
+        out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
+                                      "masked", "trimmed", "status", "ms", "usage")} for a in rows]
+        for o in out:
+            o["has_details"] = o.get("id") in have
+        return {"calls": out, "record_details": cfg.record_details}
+
+    @app.get("/admin/api/calls/{call_id}")
+    async def call_detail(call_id: str, request: Request):
+        if not allowed(request):
+            return denied()
+        d = next((x for x in live.details if x["id"] == call_id), None)
+        return d or JSONResponse({"error": "没有这次调用的详细记录（详细记录没打开，或服务端重启过）"}, 404)

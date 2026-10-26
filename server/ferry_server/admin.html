@@ -6,16 +6,16 @@
 <title>Ferry 服务端</title>
 <style>
 :root {
-  --bg: #e9f0ef; --surface: #ffffff; --ink: #15333b; --muted: #5d7b81; --line: #cfdcdc;
+  --bg: #e9f0ef; --side: #dde8e7; --surface: #ffffff; --ink: #15333b; --muted: #5d7b81; --line: #cfdcdc;
   --river: #1f6e7c; --river-soft: #d6e9ec; --lamp: #c4860f; --lamp-soft: #f6e7c8;
   --bad: #b4492f; --bad-soft: #f6e0d9; --good: #2f7d55; --good-soft: #dcefe3;
-  --radius-lg: 14px; --radius-sm: 6px;
+  --r-lg: 14px; --r-sm: 7px;
   --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
   --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", ui-monospace, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0e1d21; --surface: #15282d; --ink: #e2eeee; --muted: #8eaaae; --line: #26413f;
+    --bg: #0e1d21; --side: #0b171a; --surface: #15282d; --ink: #e2eeee; --muted: #8eaaae; --line: #26413f;
     --river: #55b3c3; --river-soft: #173a41; --lamp: #e2ad47; --lamp-soft: #3a2f17;
     --bad: #e07a5f; --bad-soft: #3c211b; --good: #5fbf8a; --good-soft: #17352a;
   }
@@ -24,453 +24,721 @@
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--font); }
 button, input, textarea, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--river); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: 13px; }
 .num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+[hidden] { display: none !important; }
 
-header { display: flex; align-items: center; gap: 16px; padding: 18px 28px; border-bottom: 1px solid var(--line); }
-.brand { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
-.brand small { font-weight: 400; color: var(--muted); font-size: 15px; margin-left: 8px; }
-.state { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px;
-  background: var(--good-soft); color: var(--good); font-size: 14px; }
-.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.state.off { background: var(--bad-soft); color: var(--bad); }
-header .spacer { flex: 1; }
+/* frame */
+.app { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 100vh; }
+.side { background: var(--side); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 4px; }
+.brand { font-size: 21px; font-weight: 700; padding: 0 10px 2px; }
+.brand-sub { padding: 0 10px 18px; color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); display: inline-block; flex: none; }
+.dot.off { background: var(--bad); } .dot.warn { background: var(--lamp); }
+.side a { display: block; padding: 8px 12px; border-radius: var(--r-sm); color: var(--ink); text-decoration: none; }
+.side a:hover { background: var(--surface); }
+.side a[aria-current="page"] { background: var(--surface); font-weight: 600; box-shadow: inset 3px 0 0 var(--river); }
+.side .grow { flex: 1; }
+.side .stop { margin: 0 6px; }
+.page { padding: 26px 32px 60px; max-width: 1120px; width: 100%; }
+.page h1 { font-size: 22px; margin: 0 0 4px; }
+.page > p.lead { margin: 0 0 22px; color: var(--muted); }
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px; }
+  .brand-sub, .side .grow { display: none; }
+  .page { padding: 18px 16px 48px; }
+}
 
-.btn { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; border-radius: var(--radius-sm);
-  cursor: pointer; }
+/* parts */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px 22px; margin-bottom: 18px; }
+.card h2 { font-size: 17px; margin: 0 0 4px; }
+.card > p.hint { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+.btn { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; border-radius: var(--r-sm); cursor: pointer; white-space: nowrap; color: var(--ink); text-decoration: none; display: inline-block; }
 .btn:hover { border-color: var(--river); }
 .btn.primary { background: var(--river); border-color: var(--river); color: #fff; }
 .btn.danger { color: var(--bad); }
+.btn.small { padding: 2px 10px; font-size: 13px; }
 .btn:disabled { opacity: .55; cursor: default; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row.end { justify-content: flex-end; }
+.msg { font-size: 14px; } .msg.ok { color: var(--good); } .msg.bad { color: var(--bad); white-space: pre-wrap; }
+label.f { display: block; font-size: 13px; color: var(--muted); margin: 0 0 4px; }
+input[type=text], input[type=password], input[type=number], input[type=search], select, textarea {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg); }
+textarea { resize: vertical; line-height: 1.6; }
+textarea.code { font: 13px/1.6 var(--mono); }
+.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.tag { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; background: var(--river-soft); color: var(--river); white-space: nowrap; }
+.tag.lamp { background: var(--lamp-soft); color: var(--lamp); }
+.tag.bad { background: var(--bad-soft); color: var(--bad); }
+.tag.good { background: var(--good-soft); color: var(--good); }
+.copybox { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.copybox code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--bg); border-radius: var(--r-sm); padding: 6px 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 22px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 22px; }
+@media (max-width: 760px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 13px; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+td.r, th.r { text-align: right; }
+tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--bg); }
+.tablecard { padding: 6px 4px 4px; overflow-x: auto; }
+.empty { padding: 26px 14px; color: var(--muted); }
 
-main { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px; padding: 24px 28px 48px; max-width: 1360px; }
-main > * { min-width: 0; }
-@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 16px; } header { padding: 14px 16px; flex-wrap: wrap; } }
-
-aside .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 18px 20px; }
-aside h2 { font-size: 16px; margin: 0 0 4px; }
-aside p.hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
-.field { margin-bottom: 14px; }
-.field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-.copyline { display: flex; gap: 6px; }
-.copyline code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  background: var(--bg); border-radius: var(--radius-sm); padding: 6px 10px; font: 13px/1.6 var(--mono); }
-.cmd code { white-space: normal; word-break: break-all; }
-
-nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; overflow-x: auto; }
-nav.tabs button { border: 0; background: none; padding: 8px 14px; cursor: pointer; color: var(--muted);
-  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
-nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--river); font-weight: 600; }
-section[hidden] { display: none; }
-
-/* traffic: the crossing */
-.crossing { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px 22px 14px; }
-.crossing-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
-.crossing-head h2 { margin: 0; font-size: 18px; }
-.crossing-head .range { margin-left: auto; display: flex; gap: 4px; }
+/* overview */
+.connect { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px 24px; align-items: end; }
+@media (max-width: 760px) { .connect { grid-template-columns: minmax(0, 1fr); } }
+.summary { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+.summary b { color: var(--ink); font-weight: 600; }
+.legend { display: flex; gap: 18px; font-size: 13px; color: var(--muted); flex-wrap: wrap; margin-bottom: 4px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .range button { border: 1px solid var(--line); background: none; padding: 2px 10px; border-radius: 999px; cursor: pointer; font-size: 13px; }
 .range button[aria-pressed="true"] { background: var(--river); border-color: var(--river); color: #fff; }
-.legend { display: flex; gap: 18px; font-size: 13px; color: var(--muted); margin-bottom: 8px; flex-wrap: wrap; }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
-#chart { width: 100%; height: 260px; display: block; }
+#chart { width: 100%; height: 240px; display: block; }
 #chart .in { fill: var(--lamp); } #chart .up { fill: var(--river); }
-#chart .axis { stroke: var(--ink); stroke-width: 1; opacity: .5; }
+#chart .axis { stroke: var(--ink); stroke-width: 1; opacity: .45; }
 #chart text { fill: var(--muted); font: 11px var(--font); }
-.ratio { margin: 18px 0 0; padding-top: 14px; border-top: 1px dashed var(--line); display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 24px; }
-@media (max-width: 700px) { .ratio { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.ratio div b { display: block; font-size: 22px; font-weight: 650; }
-.ratio div span { color: var(--muted); font-size: 13px; }
-.ratio .lead b { color: var(--river); font-size: 30px; }
 
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th { text-align: left; font-weight: 500; color: var(--muted); font-size: 13px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
-td.r, th.r { text-align: right; }
-.tablewrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); margin-top: 20px; overflow-x: auto; }
-.tablewrap h3 { margin: 0; padding: 14px 16px 6px; font-size: 16px; }
-.tag { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; background: var(--river-soft); color: var(--river); }
-.tag.summary { background: var(--lamp-soft); color: var(--lamp); }
-.tag.bad { background: var(--bad-soft); color: var(--bad); }
-.empty { padding: 28px 16px; color: var(--muted); }
+/* providers */
+.prov { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px 18px; background: var(--surface); margin-bottom: 12px; }
+.prov-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.prov-head h3 { margin: 0; font-size: 16px; }
+.prov-head .addr { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.prov-head .acts { margin-left: auto; display: flex; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 12px 2px 10px; font-size: 13px; }
+.chip .res { color: var(--muted); }
+.chip .res.bad { color: var(--bad); }
+.presets h3 { font-size: 14px; color: var(--muted); font-weight: 500; margin: 16px 0 8px; }
+.presetgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.preset { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-sm); padding: 10px 12px; cursor: pointer; }
+.preset:hover { border-color: var(--river); }
+.preset b { display: block; font-weight: 600; }
+.preset span { color: var(--muted); font-size: 12px; }
+dialog { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 0; width: min(760px, 94vw); background: var(--surface); color: var(--ink); }
+dialog::backdrop { background: rgba(10, 30, 34, .45); }
+.dlg-head { padding: 18px 22px 0; display: flex; align-items: center; gap: 10px; }
+.dlg-head h2 { margin: 0; font-size: 18px; flex: 1; }
+.dlg-body { padding: 14px 22px; max-height: 70vh; overflow: auto; }
+.dlg-foot { padding: 12px 22px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+.modellist { border: 1px solid var(--line); border-radius: var(--r-sm); max-height: 260px; overflow: auto; margin-top: 8px; }
+.modellist label { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.modellist label:last-child { border-bottom: 0; }
+.modellist .sug { margin-left: auto; }
 
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px 22px; margin-bottom: 20px; }
-.panel h2 { margin: 0 0 4px; font-size: 18px; }
-.panel p.hint { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
-.models { display: grid; gap: 8px; margin-bottom: 16px; }
-.model { display: grid; grid-template-columns: 14px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); }
-.dot.no { background: var(--bad); }
-.model .meta { color: var(--muted); font-size: 13px; }
-.model .res { font-size: 13px; max-width: 360px; text-align: right; }
-.model .res.bad { color: var(--bad); }
-textarea.editor { width: 100%; min-height: 360px; resize: vertical; padding: 12px 14px; border: 1px solid var(--line);
-  border-radius: var(--radius-sm); background: var(--bg); font: 13px/1.6 var(--mono); tab-size: 2; }
-.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-.msg { font-size: 14px; }
-.msg.ok { color: var(--good); } .msg.bad { color: var(--bad); white-space: pre-wrap; }
+/* prompts */
+.layers { display: grid; gap: 6px; margin: 4px 0 6px; }
+.layer { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; padding: 8px 12px; border-radius: var(--r-sm); background: var(--bg); font-size: 14px; }
+.layer .n { width: 22px; height: 22px; border-radius: 50%; background: var(--river); color: #fff; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+.layer.fixed .n { background: var(--muted); }
+.preview { background: var(--bg); border-radius: var(--r-sm); padding: 12px 14px; font: 12.5px/1.6 var(--mono); white-space: pre-wrap; max-height: 360px; overflow: auto; }
+.preview mark { background: var(--lamp-soft); color: inherit; }
+.preview.added { background: var(--lamp-soft); }
+details.full { margin-top: 10px; }
+details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-bottom: 8px; }
 
-.choice { display: grid; gap: 8px; }
-.choice label { display: grid; grid-template-columns: 20px 1fr; gap: 6px 10px; padding: 10px 12px; border: 1px solid var(--line);
-  border-radius: var(--radius-sm); cursor: pointer; }
-.choice label:has(input:checked) { border-color: var(--river); background: var(--river-soft); }
-.choice small { grid-column: 2; color: var(--muted); }
-.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-input[type=text], input[type=number] { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); }
-.locked { color: var(--lamp); font-size: 13px; }
-.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
-  padding: 8px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+/* call details */
+.kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 6px 14px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
 .toast.show { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">Ferry<small>服务端</small></div>
-  <span id="state" class="state">连接中</span>
-  <span id="ver" class="num" style="color:var(--muted);font-size:14px"></span>
-  <span class="spacer"></span>
-  <button class="btn" id="openFolder">打开数据文件夹</button>
-  <button class="btn danger" id="stop">停止服务端</button>
-</header>
+<div class="app">
+  <nav class="side" aria-label="页面">
+    <div class="brand">Ferry</div>
+    <div class="brand-sub"><span class="dot" id="sDot"></span><span id="sText">连接中</span><span id="sVer" class="num"></span></div>
+    <a href="#overview" data-page="overview">概览</a>
+    <a href="#providers" data-page="providers">服务商和模型</a>
+    <a href="#prompts" data-page="prompts">提示词</a>
+    <a href="#redaction" data-page="redaction">脱敏</a>
+    <a href="#calls" data-page="calls">调用记录</a>
+    <a href="#settings" data-page="settings">设置</a>
+    <div class="grow"></div>
+    <button class="btn danger stop" id="stop">停止服务端</button>
+  </nav>
 
-<main>
-  <aside>
-    <div class="card">
-      <h2>让工作电脑连进来</h2>
-      <p class="hint">在工作电脑的 cmd 里执行下面这条命令，再运行 <b>ferry doctor</b> 检查。</p>
-      <div class="field cmd">
-        <label>登录命令</label>
-        <div class="copyline"><code id="loginCmd">先在右侧"设置"里填写外网地址</code><button class="btn" data-copy="loginCmd">复制</button></div>
+  <main class="page">
+    <!-- overview -->
+    <section data-view="overview">
+      <h1>概览</h1>
+      <p class="lead" id="ovLead">服务端在这台电脑上运行，工作电脑通过下面的地址连进来。</p>
+      <div class="card">
+        <h2>让工作电脑连进来</h2>
+        <p class="hint">在工作电脑的 cmd 里执行登录命令，再运行 <b>ferry doctor</b> 检查。</p>
+        <div class="connect">
+          <div>
+            <label class="f">登录命令</label>
+            <div class="copybox"><code id="loginCmd"></code><button class="btn" id="copyLogin">复制</button></div>
+          </div>
+          <div>
+            <label class="f">令牌</label>
+            <div class="copybox"><code id="token">••••••••••••</code><button class="btn" id="showToken">显示</button></div>
+          </div>
+        </div>
+        <p class="hint" id="noUrl" style="margin:12px 0 0" hidden>还没填外网地址，登录命令里先用了本机地址。到"设置"里填上你的域名（比如 Cloudflare 上配的那个）。</p>
       </div>
-      <div class="field">
-        <label>外网地址</label>
-        <div class="copyline"><code id="publicUrl">未填写</code></div>
-      </div>
-      <div class="field">
-        <label>令牌</label>
-        <div class="copyline"><code id="token">••••••••••••</code><button class="btn" id="showToken">显示</button><button class="btn" data-copy="token">复制</button></div>
-      </div>
-      <div class="field">
-        <label>本机地址</label>
-        <div class="copyline"><code id="localUrl"></code></div>
-      </div>
-      <div class="field" style="margin:0">
-        <label>运行时间</label>
-        <div id="uptime" class="num"></div>
-      </div>
-    </div>
-  </aside>
-
-  <div>
-    <nav class="tabs" role="tablist">
-      <button role="tab" aria-selected="true" data-tab="traffic">流量</button>
-      <button role="tab" aria-selected="false" data-tab="models">模型</button>
-      <button role="tab" aria-selected="false" data-tab="settings">设置</button>
-      <button role="tab" aria-selected="false" data-tab="rules">规则和词表</button>
-    </nav>
-
-    <section id="tab-traffic">
-      <div class="crossing">
-        <div class="crossing-head">
-          <h2>渡过来的和送出去的</h2>
+      <div class="card">
+        <div class="row" style="margin-bottom:6px">
+          <h2 style="flex:1">流量</h2>
           <div class="range" role="group" aria-label="时间范围">
             <button data-min="60" aria-pressed="true">1 小时</button>
             <button data-min="360" aria-pressed="false">6 小时</button>
             <button data-min="1440" aria-pressed="false">24 小时</button>
           </div>
         </div>
+        <p class="summary" id="ovSummary"></p>
         <div class="legend">
-          <span><i style="background:var(--lamp)"></i>上方：工作电脑发来的（每次只有新增部分）</span>
+          <span><i style="background:var(--lamp)"></i>上方：工作电脑发来的（每次只有新增的部分）</span>
           <span><i style="background:var(--river)"></i>下方：服务端拼好后发给模型的（完整上下文）</span>
         </div>
-        <svg id="chart" role="img" aria-label="每分钟的流量"></svg>
-        <div class="ratio">
-          <div class="lead"><b id="kAmp" class="num">–</b><span>放大倍数：模型收到的 ÷ 工作电脑发来的</span></div>
-          <div><b id="kIn" class="num">–</b><span>收到（来自工作电脑）</span></div>
-          <div><b id="kUp" class="num">–</b><span>发给模型</span></div>
-          <div><b id="kChats" class="num">–</b><span>模型调用 / 请求总数</span></div>
-          <div><b id="kTok" class="num">–</b><span>token（输入 / 输出）</span></div>
-          <div><b id="kMask" class="num">–</b><span>替换的敏感词 / 删掉的旧输出</span></div>
+        <svg id="chart" role="img" aria-label="每段时间的流量"></svg>
+      </div>
+      <div class="card tablecard">
+        <div class="row" style="padding:8px 12px 2px"><h2 style="flex:1;margin:0">最近的调用</h2><a href="#calls" class="btn small">全部调用记录</a></div>
+        <table><thead><tr><th>时间</th><th>项目</th><th>模型</th><th class="r">发给模型</th><th class="r">耗时</th><th>结果</th></tr></thead>
+          <tbody id="ovRecent"></tbody></table>
+      </div>
+    </section>
+
+    <!-- providers -->
+    <section data-view="providers" hidden>
+      <h1>服务商和模型</h1>
+      <p class="lead">添加服务商时选一个预设，填上 API Key 就能用；模型列表直接从服务商那里读取。</p>
+      <div class="card">
+        <h2>用哪个模型</h2>
+        <p class="hint">工作电脑上选 auto（默认）时，由这里决定。</p>
+        <div class="grid3">
+          <div><label class="f" for="rDefault">默认模型</label><select id="rDefault"></select></div>
+          <div><label class="f" for="rSummary">写上下文摘要用</label><select id="rSummary"></select></div>
+          <div><label class="f">&nbsp;</label><label class="switch"><input type="checkbox" id="rExpose"> 工作电脑可以用 /model 自己挑</label></div>
+        </div>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="saveRouting">保存</button><span class="msg" id="routingMsg"></span></div>
+      </div>
+      <div class="row" style="margin:6px 0 12px">
+        <h2 style="flex:1;margin:0;font-size:17px">已添加的服务商</h2>
+        <button class="btn" id="testAll">测试全部模型</button>
+        <button class="btn primary" id="addProv">添加服务商</button>
+      </div>
+      <div id="provList"></div>
+      <p class="msg" id="provMsg"></p>
+    </section>
+
+    <!-- prompts -->
+    <section data-view="prompts" hidden>
+      <h1>提示词</h1>
+      <p class="lead">模型每次收到的系统提示由几层拼起来。工作电脑上的 agent 自带的那层（包括工具说明）不在这里改，下面这些会接在它后面。</p>
+      <div class="card">
+        <h2>拼接顺序</h2>
+        <div class="layers">
+          <div class="layer fixed"><span class="n">1</span><div><b>agent 自带的系统提示</b><div class="muted">来自工作电脑上的 ferry，包括可用的工具和用法，以及项目里的 AGENTS.md</div></div></div>
+          <div class="layer"><span class="n">2</span><div><b>全局提示词</b><div class="muted">每次请求都会加上</div></div></div>
+          <div class="layer"><span class="n">3</span><div><b>项目提示词</b><div class="muted">只在对应项目里加上；项目名就是工作电脑上运行 ferry 的文件夹名</div></div></div>
+          <div class="layer"><span class="n">4</span><div><b>写摘要时的要求</b><div class="muted">只在上下文太长、需要压缩成摘要时加上</div></div></div>
         </div>
       </div>
-      <div class="tablewrap">
-        <h3>最近的模型调用</h3>
-        <table>
-          <thead><tr><th>时间</th><th>项目</th><th>模型</th><th>用途</th><th class="r">消息数</th><th class="r">发给模型</th><th class="r">脱敏</th><th class="r">耗时</th><th>结果</th></tr></thead>
-          <tbody id="recent"></tbody>
-        </table>
+      <div class="card">
+        <h2>全局提示词</h2>
+        <p class="hint">比如：回复用中文；改代码前先读文件；不要动测试数据。保存后下一次请求就生效。</p>
+        <textarea id="pGlobal" rows="7"></textarea>
+        <div class="row" style="margin-top:10px"><button class="btn primary" data-psave="_global" data-src="pGlobal">保存</button><span class="msg" id="msg_global"></span></div>
+      </div>
+      <div class="card">
+        <h2>项目提示词</h2>
+        <p class="hint">工作电脑上用过的项目会自动列出来，也可以先填一个项目名。</p>
+        <div class="grid2">
+          <div><label class="f" for="pProject">项目</label><select id="pProject"></select></div>
+          <div><label class="f" for="pNewProject">或者新填一个项目名</label><input type="text" id="pNewProject" placeholder="文件夹名，比如 my-app"></div>
+        </div>
+        <textarea id="pProjectText" rows="6" style="margin-top:12px" placeholder="比如：这是 Vue 3 项目，用 pnpm；接口文档在 docs/api.md"></textarea>
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="saveProject">保存</button><span class="msg" id="msgProject"></span></div>
+      </div>
+      <div class="card">
+        <h2>写摘要时的要求</h2>
+        <p class="hint">对话太长时 agent 会把前面的内容压缩成摘要。可以要求摘要保留什么，比如"保留所有文件路径和报错原文，用中文写"。</p>
+        <textarea id="pSummary" rows="4"></textarea>
+        <div class="row" style="margin-top:10px"><button class="btn primary" data-psave="_summary" data-src="pSummary">保存</button><span class="msg" id="msg_summary"></span></div>
+      </div>
+      <div class="card">
+        <h2>检查一下：模型实际收到的系统提示</h2>
+        <p class="hint" id="pvHint"></p>
+        <div id="pvText" hidden></div>
       </div>
     </section>
 
-    <section id="tab-models" hidden>
-      <div class="panel">
-        <h2>可用的模型</h2>
-        <p class="hint" id="routingHint"></p>
-        <div class="models" id="modelList"></div>
-        <div class="row"><button class="btn" id="testAll">测试全部模型</button><span class="msg" id="testMsg"></span></div>
+    <!-- redaction -->
+    <section data-view="redaction" hidden>
+      <h1>脱敏</h1>
+      <p class="lead">发给模型前，把命中的内容换成 [FERRY-XXXXXXXX] 这样的占位符；模型回复里出现占位符时，回到工作电脑前再换回原文。</p>
+      <div class="card">
+        <label class="switch"><input type="checkbox" id="rdOn"> <b>开启脱敏</b></label>
       </div>
-      <div class="panel">
-        <h2>models.toml</h2>
-        <p class="hint">在这里加模型、改默认模型。保存时会先检查格式，写错了不会生效。Key 放在环境变量里，文件里只写变量名（<code>api_key_env</code>）。</p>
-        <textarea class="editor" id="modelsText" spellcheck="false" aria-label="models.toml"></textarea>
-        <div class="row"><button class="btn primary" id="saveModels">保存</button><span class="msg" id="modelsMsg"></span></div>
+      <div class="grid2">
+        <div class="card">
+          <h2>敏感词</h2>
+          <p class="hint">一行一个：公司名、项目代号、主机名、人名等。不区分大小写。</p>
+          <textarea id="rdTerms" rows="10" placeholder="Project Titan&#10;internal-host-01"></textarea>
+        </div>
+        <div class="card">
+          <h2>自动识别</h2>
+          <p class="hint">按格式识别，不用一个个列出来。</p>
+          <div id="rdBuiltins" style="display:grid;gap:8px"></div>
+          <h2 style="margin-top:18px;font-size:15px">自定义规则（正则表达式）</h2>
+          <div id="rdCustom" style="display:grid;gap:6px;margin-top:6px"></div>
+          <button class="btn small" id="rdAddRule" style="margin-top:8px">加一条规则</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>试一试</h2>
+        <p class="hint">输入一段文字，看看按当前设置会替换成什么（还没保存的改动也算）。</p>
+        <textarea id="rdSample" rows="3">项目 Project Titan 部署在 10.1.2.3，负责人 bob@corp.example，电话 13812345678</textarea>
+        <div class="row" style="margin-top:8px"><button class="btn" id="rdTry">试一试</button></div>
+        <div class="preview" id="rdOut" style="margin-top:10px" hidden></div>
+      </div>
+      <div class="row"><button class="btn primary" id="rdSave">保存</button><span class="msg" id="rdMsg"></span></div>
+    </section>
+
+    <!-- calls -->
+    <section data-view="calls" hidden>
+      <h1>调用记录</h1>
+      <p class="lead">每一次发给模型的请求。只记大小、耗时和用量，不记对话内容；想检查提示词，到"设置"里打开详细记录。</p>
+      <div class="row" style="margin-bottom:12px">
+        <select id="cModel" style="width:auto"><option value="">全部模型</option></select>
+        <select id="cStatus" style="width:auto"><option value="">全部结果</option><option value="ok">成功</option><option value="bad">失败</option></select>
+        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option></select>
+        <span class="muted" id="cCount"></span>
+      </div>
+      <div class="card tablecard">
+        <table><thead><tr><th>时间</th><th>项目</th><th>模型</th><th>用途</th><th class="r">消息数</th><th class="r">发给模型</th><th class="r">token 输入 / 输出</th><th class="r">耗时</th><th>结果</th></tr></thead>
+          <tbody id="cRows"></tbody></table>
       </div>
     </section>
 
-    <section id="tab-settings" hidden>
-      <div class="panel">
+    <!-- settings -->
+    <section data-view="settings" hidden>
+      <h1>设置</h1>
+      <p class="lead">改完立即生效，并保存在数据文件夹的 server.toml 里。</p>
+      <div class="card">
         <h2>外网地址</h2>
-        <p class="hint">工作电脑访问这台服务端用的地址，比如 Cloudflare 上配的域名。只用来生成左边的登录命令。</p>
-        <input type="text" id="setUrl" placeholder="https://ferry.example.com">
-        <div class="row"><button class="btn primary" id="saveUrl">保存</button><span class="msg" id="urlMsg"></span></div>
+        <p class="hint">工作电脑访问这台服务端用的地址，比如 Cloudflare 上配的域名。用来生成概览页的登录命令。</p>
+        <div class="row"><input type="text" id="setUrl" placeholder="https://ferry.example.com" style="flex:1;min-width:220px"><button class="btn primary" id="saveUrl">保存</button></div>
       </div>
-      <div class="panel">
-        <h2>服务端保存对话吗</h2>
-        <p class="hint">完整对话始终保存在工作电脑上。这里决定服务端留不留一份副本。切换后，正在进行的对话下一轮会整段重传一次。</p>
-        <div class="choice" id="storeChoice">
-          <label><input type="radio" name="store" value="disk"><span>存在磁盘上</span><small>每轮只传新增部分，服务端重启后也不用重传。远程使用推荐。</small></label>
-          <label><input type="radio" name="store" value="memory"><span>只放在内存里</span><small>每轮只传新增部分；服务端重启后第一轮整段重传。</small></label>
-          <label><input type="radio" name="store" value="none"><span>不保存</span><small>每轮都整段重传（仍拆成小块，每次不超过 1MB），服务端处理完就丢。流量最大。</small></label>
+      <div class="card">
+        <h2>服务端存不存对话</h2>
+        <p class="hint">完整对话始终保存在工作电脑上。这里决定服务端留不留一份副本，用来让工作电脑每轮只传新增的部分。</p>
+        <div class="grid3" id="storeChoice">
+          <label class="switch" style="align-items:flex-start"><input type="radio" name="store" value="disk"><span><b>存在磁盘上</b><br><span class="muted" style="font-size:13px">每轮只传新增部分，重启后也不用重传。远程使用推荐</span></span></label>
+          <label class="switch" style="align-items:flex-start"><input type="radio" name="store" value="memory"><span><b>只放在内存里</b><br><span class="muted" style="font-size:13px">每轮只传新增部分，重启后第一轮整段重传</span></span></label>
+          <label class="switch" style="align-items:flex-start"><input type="radio" name="store" value="none"><span><b>不保存</b><br><span class="muted" style="font-size:13px">每轮整段重传（仍拆成小块，每次不超过 1MB），流量最大</span></span></label>
         </div>
-        <div class="locked" id="storeLocked" hidden>环境变量 FERRY_SESSION_STORE 已设置，重启后会以它为准。</div>
+        <p class="msg" id="storeLocked" hidden style="color:var(--lamp)">环境变量 FERRY_SESSION_STORE 已设置，服务端重启后会以它为准。</p>
       </div>
-      <div class="panel">
-        <h2>脱敏和请求上限</h2>
-        <label class="switch"><input type="checkbox" id="setRedact"> 发给模型前替换敏感内容（内网 IP、邮箱和词表里的词）</label>
-        <div class="field" style="margin-top:16px;max-width:280px">
-          <label for="setCap">发给模型的单个请求最大（KB，0 = 不限）</label>
-          <input type="number" id="setCap" min="0" step="50">
+      <div class="grid2">
+        <div class="card">
+          <h2>发给模型的请求上限</h2>
+          <p class="hint">超过时从最旧的工具输出开始删，保证请求不超过这个大小。0 表示不限。</p>
+          <div class="row"><input type="number" id="setCap" min="0" step="50" style="width:140px"> <span class="muted">KB</span><button class="btn primary" id="saveCap">保存</button></div>
         </div>
-        <div class="row"><button class="btn primary" id="saveAdv">保存</button><span class="msg" id="advMsg"></span></div>
+        <div class="card">
+          <h2>详细记录</h2>
+          <p class="hint">在内存里保留最近 20 次请求的系统提示和最后一条消息（脱敏后的样子），用来检查提示词有没有生效。不写磁盘，重启就没了。</p>
+          <label class="switch"><input type="checkbox" id="setDetails"> 打开详细记录</label>
+        </div>
+        <div class="card" id="autoCard">
+          <h2>开机自动启动</h2>
+          <p class="hint">登录 Windows 后在后台启动服务端，不弹窗口。</p>
+          <label class="switch"><input type="checkbox" id="setAuto"> 开机自动启动</label>
+        </div>
+        <div class="card">
+          <h2>令牌</h2>
+          <p class="hint">工作电脑用它登录。换新令牌后，工作电脑要重新 ferry login。</p>
+          <button class="btn" id="rotate">换一个新令牌</button>
+        </div>
       </div>
-      <div class="panel" id="autoPanel">
-        <h2>开机自动启动</h2>
-        <p class="hint">登录 Windows 后在后台启动服务端，不弹窗口。</p>
-        <label class="switch"><input type="checkbox" id="setAuto"> 开机自动启动 Ferry 服务端</label>
-        <span class="msg" id="autoMsg"></span>
-      </div>
-      <div class="panel">
+      <div class="card">
         <h2>数据文件夹</h2>
-        <p class="hint" id="homePath"></p>
-        <button class="btn" id="rotate">换一个新令牌</button>
-        <span class="msg" id="rotateMsg"></span>
+        <p class="hint mono" id="homePath"></p>
+        <button class="btn" id="openFolder">打开数据文件夹</button>
       </div>
+      <details class="card">
+        <summary style="cursor:pointer"><b>高级：直接编辑 models.toml</b></summary>
+        <p class="hint" style="margin-top:10px">"服务商和模型"页面改的就是这个文件。保存前会检查格式，写错了不会生效。</p>
+        <textarea class="code" id="rawModels" rows="18" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="saveRaw">保存</button><span class="msg" id="rawMsg"></span></div>
+      </details>
     </section>
+  </main>
+</div>
 
-    <section id="tab-rules" hidden>
-      <div class="panel">
-        <h2>服务端规则</h2>
-        <p class="hint">会加在每次请求的系统提示后面，下一轮就生效。比如"回复用中文""改代码前先读文件"。</p>
-        <textarea class="editor" id="rulesText" spellcheck="false" style="min-height:200px" aria-label="服务端规则"></textarea>
-        <div class="row"><button class="btn primary" data-save="rules">保存</button><span class="msg" id="rulesMsg"></span></div>
+<dialog id="provDlg">
+  <div class="dlg-head"><h2 id="dlgTitle">添加服务商</h2><button class="btn small" id="dlgClose">关闭</button></div>
+  <div class="dlg-body">
+    <div id="pickStep" class="presets"></div>
+    <div id="formStep" hidden>
+      <div class="grid2">
+        <div><label class="f" for="fName">名称</label><input type="text" id="fName"></div>
+        <div><label class="f" for="fBase">接口地址</label><input type="text" id="fBase" placeholder="https://.../v1"></div>
       </div>
-      <div class="panel">
-        <h2>脱敏词表</h2>
-        <p class="hint">在 <code>terms</code> 里加公司名、项目代号、主机名等。命中的内容发给模型前会换成 [FERRY-XXXXXXXX]，回来时再换回原文。</p>
-        <textarea class="editor" id="dictionaryText" spellcheck="false" style="min-height:240px" aria-label="脱敏词表"></textarea>
-        <div class="row"><button class="btn primary" data-save="dictionary">保存</button><span class="msg" id="dictionaryMsg"></span></div>
+      <p class="muted" style="font-size:13px;margin:6px 0 0">接口地址填到 /v1 这一级即可，会自动接上 /chat/completions；以 /chat/completions 结尾的地址按原样使用。</p>
+      <div style="margin-top:14px" id="keyWrap">
+        <label class="f" for="fKey">API Key <span id="keyNeed" style="color:var(--bad)">（必填）</span></label>
+        <div class="row"><input type="password" id="fKey" autocomplete="off" style="flex:1;min-width:220px"><button class="btn" id="fKeyShow">显示</button></div>
+        <p class="muted" style="font-size:13px;margin:6px 0 0" id="keyHint"></p>
       </div>
-    </section>
+      <div style="margin-top:16px">
+        <div class="row"><b style="flex:1">要启用的模型</b><button class="btn small" id="fFetch">从服务商读取模型列表</button></div>
+        <p class="muted" style="font-size:13px;margin:4px 0 0" id="fetchMsg"></p>
+        <input type="search" id="fFilter" placeholder="筛选模型" style="margin-top:8px" hidden>
+        <div class="modellist" id="fModels"></div>
+        <div class="row" style="margin-top:8px"><input type="text" id="fManual" placeholder="列表里没有？直接输入模型名" style="flex:1;min-width:200px"><button class="btn small" id="fAddManual">添加</button></div>
+      </div>
+    </div>
   </div>
-</main>
+  <div class="dlg-foot" id="dlgFoot" hidden>
+    <button class="btn" id="dlgBack">换一个服务商</button>
+    <span class="msg" id="dlgMsg" style="flex:1"></span>
+    <button class="btn primary" id="dlgSave">保存并测试</button>
+  </div>
+</dialog>
+
+<dialog id="callDlg">
+  <div class="dlg-head"><h2>这次调用</h2><button class="btn small" onclick="this.closest('dialog').close()">关闭</button></div>
+  <div class="dlg-body" id="callBody"></div>
+</dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let S = null, minutes = 60, tokenShown = false;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let S = null, P = null, PRESETS = [], minutes = 60, tokenShown = false, page = "overview";
 
 async function api(path, method = "GET", body) {
-  const r = await fetch("/admin/api/" + path, {
-    method, headers: { "Content-Type": "application/json", "X-Ferry-Admin": "1" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const r = await fetch("/admin/api/" + path, { method, headers: { "Content-Type": "application/json", "X-Ferry-Admin": "1" },
+    body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
   return data;
 }
-function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("show"), 1800); }
-function say(id, text, ok = true) { const e = $(id); e.textContent = text; e.className = "msg " + (ok ? "ok" : "bad"); }
-function bytes(n) {
-  if (!n) return "0";
-  const u = ["B", "KB", "MB", "GB"]; let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + " " + u[i];
-}
-function dur(s) { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} 小时 ${m} 分` : `${m} 分钟`; }
-function hhmm(ts) { const d = new Date(ts * 1000); return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("show"), 1900); }
+function say(id, text, ok = true) { const e = $(id); if (!e) return; e.textContent = text; e.className = "msg " + (ok ? "ok" : "bad"); }
+function bytes(n) { if (!n) return "0"; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + " " + u[i]; }
+function hhmm(ts, sec = true) { return new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", ...(sec ? { second: "2-digit" } : {}) }); }
+function when(ts) { const d = new Date(ts * 1000), t = new Date(); return (d.toDateString() === t.toDateString() ? "" : (d.getMonth() + 1) + "/" + d.getDate() + " ") + hhmm(ts); }
+function secs(ms) { return ms == null ? "–" : (ms / 1000).toFixed(1) + " 秒"; }
+function result(a) { return a.status === 200 ? '<span class="tag good">成功</span>' : `<span class="tag bad">HTTP ${a.status}</span>`; }
+function purpose(p) { return p === "summary" ? '<span class="tag lamp">写摘要</span>' : '<span class="tag">干活</span>'; }
 
-function renderStatus(s) {
-  S = s;
-  $("state").textContent = "运行中"; $("state").className = "state";
-  $("ver").textContent = "v" + s.version;
-  $("uptime").textContent = dur(s.uptime);
-  $("localUrl").textContent = `http://127.0.0.1:${s.port}`;
-  $("publicUrl").textContent = s.public_url || "未填写";
-  $("token").textContent = tokenShown ? s.token : "••••••••••••";
-  $("loginCmd").textContent = s.public_url ? `ferry login ${s.public_url} ${tokenShown ? s.token : "<令牌>"}` : '先在右侧"设置"里填写外网地址';
-  if (document.activeElement !== $("setUrl")) $("setUrl").value = s.public_url;
-  for (const r of document.querySelectorAll("input[name=store]")) r.checked = r.value === s.session_store;
-  $("storeLocked").hidden = !s.locked.session_store;
-  $("setRedact").checked = s.redact;
-  if (document.activeElement !== $("setCap")) $("setCap").value = Math.round(s.max_upstream_bytes / 1000);
-  $("autoPanel").hidden = s.platform !== "win32";
-  $("setAuto").checked = s.autostart;
-  $("homePath").textContent = "令牌、会话缓存、日志、models.toml、规则和词表都在：" + s.home;
-  const r = s.routing;
-  $("routingHint").textContent = `工作电脑选 auto 时用 ${r.default}` + (r.summary ? `，写摘要用 ${r.summary}` : "") +
-    (r.expose ? "；工作电脑上也可以用 /model 自己挑。" : "；工作电脑不能自己挑（expose = false）。");
-  const list = $("modelList");
-  const prev = Object.fromEntries([...list.querySelectorAll(".res")].map((e) => [e.dataset.id, e.outerHTML]));
-  list.innerHTML = s.models.map((m) => `
-    <div class="model"><span class="dot ${m.ready ? "" : "no"}" title="${m.ready ? "有 Key" : "缺少 Key"}"></span>
-      <div><b>${m.id}</b>${m.id === r.default ? ' <span class="tag">默认</span>' : ""}${m.id === r.summary ? ' <span class="tag summary">写摘要</span>' : ""}
-        <div class="meta">${m.model} · ${m.base_url}${m.ready ? "" : ` · 需要设置环境变量 ${m.key_env}`}</div></div>
-      ${prev[m.id] || `<span class="res" data-id="${m.id}"></span>`}</div>`).join("");
+function systemView(text) {
+  const m = /<server-rules>([\s\S]*?)<\/server-rules>/.exec(text || "");
+  const added = m ? `<p class="muted" style="margin:0 0 6px;font-size:14px">服务端加上的部分：</p><div class="preview added">${esc(m[1].trim())}</div>`
+    : '<p class="muted" style="margin:0 0 6px;font-size:14px">这次请求里没有服务端加上的提示词。</p>';
+  return added + `<details class="full"><summary>展开完整的系统提示（${(text || "").length.toLocaleString()} 个字符，大部分是 agent 自带的）</summary><div class="preview">${esc(text)}</div></details>`;
 }
 
+/* ---------- navigation ---------- */
+function show(name) {
+  page = name;
+  for (const d of document.querySelectorAll("dialog[open]")) d.close();
+  for (const s of document.querySelectorAll("[data-view]")) s.hidden = s.dataset.view !== name;
+  for (const a of document.querySelectorAll(".side a")) a.toggleAttribute("aria-current", a.dataset.page === name), a.dataset.page === name && a.setAttribute("aria-current", "page");
+  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, redaction: loadRedaction, calls: loadCalls, settings: loadSettings })[name]?.();
+}
+addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
+
+/* ---------- status (every page) ---------- */
+async function loadStatus() {
+  try {
+    S = await api("status");
+    $("sDot").className = "dot"; $("sText").textContent = "运行中"; $("sVer").textContent = "v" + S.version;
+  } catch { $("sDot").className = "dot off"; $("sText").textContent = "连不上"; }
+}
+function loginCmd(full) {
+  const url = S.public_url || `http://127.0.0.1:${S.port}`;
+  return `ferry login ${url} ${full || tokenShown ? S.token : "<令牌>"}`;
+}
+
+/* ---------- overview ---------- */
+async function loadOverview() {
+  await loadStatus(); if (!S) return;
+  $("loginCmd").textContent = loginCmd();
+  $("token").textContent = tokenShown ? S.token : "••••••••••••";
+  $("noUrl").hidden = !!S.public_url;
+  const notReady = S.models.filter((m) => !m.ready);
+  const up = Math.floor(S.uptime / 3600) ? `${Math.floor(S.uptime / 3600)} 小时` : `${Math.floor(S.uptime / 60)} 分钟`;
+  $("ovLead").innerHTML = `已运行 ${up}，默认模型 <b>${esc(S.routing.default)}</b>` + (notReady.length ? `；<span style="color:var(--bad)">${notReady.length} 个模型缺少 Key，到"服务商和模型"里补上</span>` : "。");
+  const t = await api("traffic?minutes=" + minutes);
+  const k = t.totals, span = { 60: "近 1 小时", 360: "近 6 小时", 1440: "近 24 小时" }[minutes];
+  $("ovSummary").innerHTML = k.requests ? `${span}：<b>${k.requests}</b> 个请求，<b>${k.chats}</b> 次模型调用，收到 <b>${bytes(k.in)}</b>，发给模型 <b>${bytes(k.up)}</b>` + (k.errors ? `，<span style="color:var(--bad)">${k.errors} 次出错</span>` : "")
+    : `${span}没有请求。工作电脑连上并开始对话后，这里会有变化。`;
+  drawChart(t);
+  $("ovRecent").innerHTML = t.recent.slice(0, 6).map((a) => `<tr><td class="num">${hhmm(a.ts)}</td><td>${esc(a.project || "–")}</td><td>${esc(a.model)}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${secs(a.ms)}</td><td>${result(a)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">还没有调用。</td></tr>`;
+}
 function drawChart(t) {
-  const svg = $("chart"), W = svg.clientWidth || 800, H = 260, top = 6, mid = 118, bottom = 228, pad = 64;
+  const svg = $("chart"), W = svg.clientWidth || 800, H = 240, top = 6, mid = 108, bottom = 208, pad = 64;
   const ser = t.series, n = ser.length;
   const maxIn = Math.max(1, ...ser.map((x) => x.in)), maxUp = Math.max(1, ...ser.map((x) => x.up));
   const step = (W - pad) / n, bw = Math.max(1, step - 1);
   let g = `<line class="axis" x1="${pad}" x2="${W}" y1="${mid}" y2="${mid}"/>`;
   ser.forEach((x, i) => {
     const xx = pad + i * step;
-    const hi = x.in ? Math.max(2, (x.in / maxIn) * (mid - top)) : 0;
-    const hu = x.up ? Math.max(2, (x.up / maxUp) * (bottom - mid)) : 0;
-    if (hi) g += `<rect class="in" x="${xx}" y="${mid - hi}" width="${bw}" height="${hi}" rx="1"><title>${hhmm(x.t)} 收到 ${bytes(x.in)}，${x.requests} 个请求</title></rect>`;
-    if (hu) g += `<rect class="up" x="${xx}" y="${mid + 1}" width="${bw}" height="${hu}" rx="1"><title>${hhmm(x.t)} 发给模型 ${bytes(x.up)}，${x.chats} 次调用</title></rect>`;
+    const hi = x.in ? Math.max(2, (x.in / maxIn) * (mid - top)) : 0, hu = x.up ? Math.max(2, (x.up / maxUp) * (bottom - mid)) : 0;
+    if (hi) g += `<rect class="in" x="${xx}" y="${mid - hi}" width="${bw}" height="${hi}" rx="1"><title>${hhmm(x.t, false)} 收到 ${bytes(x.in)}，${x.requests} 个请求</title></rect>`;
+    if (hu) g += `<rect class="up" x="${xx}" y="${mid + 1}" width="${bw}" height="${hu}" rx="1"><title>${hhmm(x.t, false)} 发给模型 ${bytes(x.up)}，${x.chats} 次调用</title></rect>`;
   });
-  g += `<text x="0" y="${top + 10}">${bytes(maxIn)}</text><text x="0" y="${mid - 4}">0</text><text x="0" y="${bottom}">${bytes(maxUp)}</text>`;
-  g += `<text x="${pad}" y="${H - 4}">${hhmm(ser[0].t).slice(0, 5)}</text><text x="${W}" y="${H - 4}" text-anchor="end">现在</text>`;
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.innerHTML = g;
+  g += `<text x="0" y="${top + 10}">${bytes(maxIn)}</text><text x="0" y="${mid + 4}">0</text><text x="0" y="${bottom}">${bytes(maxUp)}</text>`;
+  g += `<text x="${pad}" y="${H - 4}">${hhmm(ser[0].t, false)}</text><text x="${W}" y="${H - 4}" text-anchor="end">现在</text>`;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.innerHTML = g;
 }
+$("copyLogin").onclick = async () => { await navigator.clipboard.writeText(loginCmd(true)); toast("已复制登录命令（含令牌）"); };
+$("showToken").onclick = () => { tokenShown = !tokenShown; $("showToken").textContent = tokenShown ? "隐藏" : "显示"; loadOverview(); };
+for (const b of document.querySelectorAll(".range button")) b.onclick = () => { minutes = +b.dataset.min; for (const x of document.querySelectorAll(".range button")) x.setAttribute("aria-pressed", x === b); loadOverview(); };
 
-function renderTraffic(t) {
-  drawChart(t);
-  const k = t.totals;
-  $("kAmp").textContent = k.in ? (k.up / k.in).toFixed(1) + " 倍" : "–";
-  $("kIn").textContent = bytes(k.in); $("kUp").textContent = bytes(k.up);
-  $("kChats").textContent = `${k.chats} / ${k.requests}`;
-  $("kTok").textContent = `${k.tokens_in.toLocaleString()} / ${k.tokens_out.toLocaleString()}`;
-  $("kMask").textContent = `${k.masked} / ${k.trimmed}`;
-  const rows = t.recent.map((a) => {
-    const ok = a.status === 200;
-    const masked = Object.values(a.masked || {}).reduce((x, y) => x + y, 0);
-    return `<tr><td class="num">${hhmm(a.ts)}</td><td>${a.project || "–"}</td><td>${a.model}</td>
-      <td><span class="tag ${a.purpose === "summary" ? "summary" : ""}">${a.purpose === "summary" ? "写摘要" : "干活"}</span></td>
-      <td class="r num">${a.messages ?? "–"}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${masked}</td>
-      <td class="r num">${a.ms != null ? (a.ms / 1000).toFixed(1) + " 秒" : "–"}</td>
-      <td>${ok ? "成功" : `<span class="tag bad">HTTP ${a.status}</span>`}</td></tr>`;
-  }).join("");
-  $("recent").innerHTML = rows || `<tr><td colspan="9" class="empty">这段时间还没有模型调用。工作电脑连上并开始对话后，每一轮都会出现在这里。</td></tr>`;
+/* ---------- providers ---------- */
+async function loadProviders() {
+  if (!PRESETS.length) PRESETS = (await api("presets")).presets;
+  P = await api("providers");
+  const all = P.providers.flatMap((p) => p.models.map((m) => ({ id: m.id, label: `${m.model}（${p.name}）` })));
+  const opts = (sel, extra) => (extra ? `<option value="">${extra}</option>` : "") + all.map((o) => `<option value="${esc(o.id)}" ${o.id === sel ? "selected" : ""}>${esc(o.label)}</option>`).join("");
+  $("rDefault").innerHTML = opts(P.routing.default); $("rSummary").innerHTML = opts(P.routing.summary, "和默认模型一样");
+  $("rExpose").checked = P.routing.expose;
+  $("provList").innerHTML = P.providers.map((p, i) => {
+    const key = p.no_key ? '<span class="tag good">不需要 Key</span>'
+      : p.key_source === "env" ? `<span class="tag good">Key 来自环境变量 ${esc(p.api_key_env)}</span>`
+      : p.key_tail ? `<span class="tag good">Key 已保存 ••••${esc(p.key_tail)}</span>` : '<span class="tag bad">缺少 Key</span>';
+    return `<div class="prov"><div class="prov-head"><h3>${esc(p.name)}</h3>${key}<span class="addr">${esc(p.base_url)}</span>
+      <span class="acts"><button class="btn small" data-edit="${i}">编辑</button><button class="btn small danger" data-del="${i}">删除</button></span></div>
+      <div class="chips">${p.models.map((m) => `<span class="chip"><span class="dot ${m.ready ? "" : "off"}"></span>${esc(m.model)}${m.id === P.routing.default ? ' <span class="tag">默认</span>' : ""}${m.id === P.routing.summary ? ' <span class="tag lamp">写摘要</span>' : ""}<span class="res" data-res="${esc(m.id)}"></span></span>`).join("")}</div></div>`;
+  }).join("") || `<div class="card empty">还没有服务商。点右上角"添加服务商"，选一个预设，填上 API Key 就能用。</div>`;
+  for (const b of document.querySelectorAll("[data-edit]")) b.onclick = () => openEditor(P.providers[+b.dataset.edit]);
+  for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => removeProvider(+b.dataset.del);
 }
+function payload(list, routing) {
+  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "",
+    models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens })) })),
+    routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, expose: $("rExpose").checked } };
+}
+async function saveAll(list, routing) { P = await api("providers", "PUT", payload(list, routing)); }
+$("saveRouting").onclick = async () => { try { await saveAll(P.providers); say("routingMsg", "已保存，下一次请求生效"); loadProviders(); } catch (e) { say("routingMsg", e.message, false); } };
+async function removeProvider(i) {
+  if (!confirm(`删除 ${P.providers[i].name} 和它下面的模型？保存的 Key 也会删掉。`)) return;
+  try { const list = P.providers.filter((_, j) => j !== i); await saveAll(list); say("provMsg", "已删除"); loadProviders(); } catch (e) { say("provMsg", e.message, false); }
+}
+async function testModels(ids) {
+  const r = await api("models/test", "POST", {});
+  for (const m of r.models) { const e = document.querySelector(`[data-res="${CSS.escape(m.id)}"]`); if (e) { e.className = "res" + (m.ok ? "" : " bad"); e.textContent = m.ok ? ` ${m.ms} 毫秒` : " 不能用"; e.title = m.error || ""; } }
+  return r.models.filter((m) => !ids || ids.includes(m.id));
+}
+$("testAll").onclick = async () => { $("testAll").disabled = true; say("provMsg", "正在给每个模型发一个小请求……");
+  try { const r = await testModels(); const bad = r.filter((m) => !m.ok); say("provMsg", bad.length ? bad.map((m) => `${m.id}：${m.error}`).join("\n") : "全部能用", !bad.length); } catch (e) { say("provMsg", e.message, false); }
+  $("testAll").disabled = false; };
 
-async function refresh() {
+/* provider editor */
+let ED = null; // { orig index or -1, preset, models: [{model, on, suggested}] }
+function openEditor(prov) {
+  $("dlgMsg").textContent = ""; $("fFilter").value = ""; $("fManual").value = "";
+  if (!prov) { ED = null; renderPresets(); $("dlgTitle").textContent = "添加服务商"; $("pickStep").hidden = false; $("formStep").hidden = true; $("dlgFoot").hidden = true; }
+  else { const pre = PRESETS.find((x) => x.id === prov.preset) || PRESETS.find((x) => x.id === "custom"); fillForm(pre, prov); }
+  $("provDlg").showModal();
+}
+function renderPresets() {
+  const groups = [...new Set(PRESETS.map((p) => p.group))];
+  $("pickStep").innerHTML = '<p class="muted" style="margin:0">选一个服务商。地址、推荐模型都已经填好，你只需要填 API Key。</p>' + groups.map((g) => `<h3>${esc(g)}</h3><div class="presetgrid">${
+    PRESETS.filter((p) => p.group === g).map((p) => `<button class="preset" data-preset="${p.id}"><b>${esc(p.name)}</b><span>${esc(p.custom ? "填你自己的接口地址" : p.no_key ? "不需要 Key" : p.models.length ? p.models.map((m) => m.model).slice(0, 2).join("、") : "模型从服务商读取")}</span></button>`).join("")}</div>`).join("");
+  for (const b of document.querySelectorAll("[data-preset]")) b.onclick = () => fillForm(PRESETS.find((x) => x.id === b.dataset.preset), null);
+}
+function fillForm(pre, prov) {
+  const idx = prov ? P.providers.indexOf(prov) : -1;
+  ED = { idx, preset: pre, id: prov?.id || uniqueId(pre.id), api_key_env: prov?.api_key_env || "",
+    models: prov ? prov.models.map((m) => ({ model: m.model, id: m.id, on: true, context_window: m.context_window, max_tokens: m.max_tokens, suggested: !!pre.models.find((x) => x.model === m.model) }))
+      : pre.models.map((m) => ({ ...m, on: true, suggested: true })), keyTail: prov?.key_tail, keySource: prov?.key_source };
+  $("dlgTitle").textContent = prov ? `编辑 ${prov.name}` : `添加 ${pre.name}`;
+  $("pickStep").hidden = true; $("formStep").hidden = false; $("dlgFoot").hidden = false; $("dlgBack").hidden = !!prov;
+  $("fName").value = prov?.name || pre.name; $("fBase").value = prov?.base_url || pre.base_url;
+  $("fBase").readOnly = !pre.custom && !prov; $("fKey").value = ""; $("fKey").type = "password";
+  $("keyWrap").hidden = !!pre.no_key;
+  const needKey = !pre.no_key && !(prov && (prov.key_tail || prov.key_source));
+  $("keyNeed").hidden = !needKey;
+  $("fKey").placeholder = prov?.key_source === "env" ? `来自环境变量 ${prov.api_key_env}，留空即可` : prov?.key_tail ? `已保存 ••••${prov.key_tail}，留空则不改` : "粘贴 API Key";
+  $("keyHint").innerHTML = esc(pre.key_hint) + (pre.key_url ? `　<a href="${esc(pre.key_url)}" target="_blank" rel="noopener">去拿 Key</a>` : "");
+  $("fetchMsg").textContent = pre.models.length ? "已勾选推荐的模型。填好 Key 后可以从服务商读取完整列表。" : "填好 Key 后点右上角，从服务商读取可用的模型。";
+  renderModelList();
+}
+function uniqueId(base) { const ids = new Set((P?.providers || []).map((p) => p.id)); let id = base, i = 2; while (ids.has(id)) id = `${base}-${i++}`; return id; }
+function renderModelList() {
+  const f = $("fFilter").value.trim().toLowerCase();
+  const rows = ED.models.filter((m) => !f || m.model.toLowerCase().includes(f));
+  $("fModels").innerHTML = rows.map((m) => `<label><input type="checkbox" data-m="${esc(m.model)}" ${m.on ? "checked" : ""}> <span class="mono">${esc(m.model)}</span>${m.suggested ? '<span class="tag sug">推荐</span>' : ""}</label>`).join("")
+    || '<div class="empty" style="padding:14px">还没有模型。</div>';
+  for (const c of document.querySelectorAll("#fModels input")) c.onchange = () => { ED.models.find((m) => m.model === c.dataset.m).on = c.checked; };
+  $("fFilter").hidden = ED.models.length < 10;
+}
+$("fFilter").oninput = renderModelList;
+$("fKeyShow").onclick = () => { $("fKey").type = $("fKey").type === "password" ? "text" : "password"; $("fKeyShow").textContent = $("fKey").type === "password" ? "显示" : "隐藏"; };
+$("fFetch").onclick = async () => {
+  $("fetchMsg").textContent = "正在读取……";
   try {
-    renderStatus(await api("status"));
-    if (!$("tab-traffic").hidden) renderTraffic(await api("traffic?minutes=" + minutes));
-  } catch (e) {
-    $("state").textContent = "连不上服务端"; $("state").className = "state off";
+    const r = await api("providers/models", "POST", { base_url: $("fBase").value.trim(), key: $("fKey").value.trim(), provider: ED.idx >= 0 ? P.providers[ED.idx].id : "" });
+    const have = new Set(ED.models.map((m) => m.model));
+    for (const id of r.models) if (!have.has(id)) ED.models.push({ model: id, on: false, suggested: false });
+    ED.models.sort((a, b) => (b.on - a.on) || (b.suggested - a.suggested) || a.model.localeCompare(b.model));
+    $("fetchMsg").textContent = `读到 ${r.models.length} 个模型，勾选要用的。`; renderModelList();
+  } catch (e) { $("fetchMsg").textContent = "读取失败：" + e.message + "。也可以在下面直接输入模型名。"; }
+};
+$("fAddManual").onclick = () => { const v = $("fManual").value.trim(); if (!v) return; if (!ED.models.find((m) => m.model === v)) ED.models.unshift({ model: v, on: true, suggested: false }); else ED.models.find((m) => m.model === v).on = true; $("fManual").value = ""; renderModelList(); };
+$("dlgBack").onclick = () => openEditor(null);
+$("dlgClose").onclick = () => $("provDlg").close();
+$("addProv").onclick = () => openEditor(null);
+$("dlgSave").onclick = async () => {
+  const pre = ED.preset, key = $("fKey").value.trim(), base = $("fBase").value.trim();
+  if (!base) return say("dlgMsg", "请填写接口地址", false);
+  if (!pre.no_key && !key && !(ED.keyTail || ED.keySource)) return say("dlgMsg", "请填写 API Key", false);
+  const models = ED.models.filter((m) => m.on);
+  if (!models.length) return say("dlgMsg", "至少勾选一个模型", false);
+  const entry = { id: ED.id, name: $("fName").value.trim() || pre.name, preset: pre.id, base_url: base, api_key_env: ED.api_key_env, key,
+    models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192 })) };
+  const list = P.providers.slice();
+  if (ED.idx >= 0) list[ED.idx] = entry; else list.push(entry);
+  $("dlgSave").disabled = true; say("dlgMsg", "正在保存……");
+  try {
+    await saveAll(list);
+    await loadProviders();
+    say("dlgMsg", "已保存，正在测试……");
+    const ids = P.providers.find((p) => p.id === entry.id)?.models.map((m) => m.id) || [];
+    const res = await testModels(ids);
+    const bad = res.filter((m) => !m.ok);
+    if (bad.length) say("dlgMsg", "已保存，但测试没通过：" + bad[0].error, false);
+    else { $("provDlg").close(); toast(`${entry.name} 可以用了`); }
+  } catch (e) { say("dlgMsg", e.message, false); }
+  $("dlgSave").disabled = false;
+};
+
+/* ---------- prompts ---------- */
+let PR = null;
+async function loadPrompts() {
+  PR = await api("prompts");
+  $("pGlobal").value = PR.global; $("pSummary").value = PR.summary;
+  $("pProject").innerHTML = PR.projects.length ? PR.projects.map((p) => `<option>${esc(p.name)}</option>`).join("") : '<option value="">（还没有用过的项目）</option>';
+  $("pProjectText").value = PR.projects[0]?.text || "";
+  await loadStatus();
+  const c = (await api("calls?limit=50")).calls.find((x) => x.has_details);
+  if (!S.record_details) { $("pvHint").innerHTML = '打开"设置 → 详细记录"后，这里会显示最近一次请求里模型实际收到的系统提示，可以确认上面的提示词有没有加进去。'; $("pvText").hidden = true; }
+  else if (!c) { $("pvHint").textContent = "详细记录已打开。工作电脑下一次对话后，这里会显示模型实际收到的系统提示。"; $("pvText").hidden = true; }
+  else {
+    const d = await api("calls/" + c.id);
+    $("pvHint").textContent = `最近一次：${when(d.ts)}，项目 ${d.project || "未知"}，模型 ${d.model}。`;
+    $("pvText").innerHTML = systemView(d.system);
+    $("pvText").hidden = false;
   }
 }
+$("pProject").onchange = () => { $("pNewProject").value = ""; $("pProjectText").value = PR.projects.find((p) => p.name === $("pProject").value)?.text || ""; };
+for (const b of document.querySelectorAll("[data-psave]")) b.onclick = async () => {
+  const n = b.dataset.psave, id = n === "_global" ? "msg_global" : "msg_summary";
+  try { await api("prompts/" + n, "PUT", { text: $(b.dataset.src).value }); say(id, "已保存，下一次请求生效"); } catch (e) { say(id, e.message, false); }
+};
+$("saveProject").onclick = async () => {
+  const name = $("pNewProject").value.trim() || $("pProject").value;
+  if (!name) return say("msgProject", "先选一个项目，或者填一个项目名", false);
+  try { await api("prompts/" + encodeURIComponent(name), "PUT", { text: $("pProjectText").value }); say("msgProject", `已保存 ${name} 的提示词`); $("pNewProject").value = ""; await loadPrompts(); $("pProject").value = name; $("pProject").onchange(); }
+  catch (e) { say("msgProject", e.message, false); }
+};
 
-// tabs
-for (const b of document.querySelectorAll("nav.tabs button")) {
-  b.onclick = async () => {
-    for (const x of document.querySelectorAll("nav.tabs button")) x.setAttribute("aria-selected", x === b);
-    for (const s of document.querySelectorAll("main section")) s.hidden = s.id !== "tab-" + b.dataset.tab;
-    if (b.dataset.tab === "models") $("modelsText").value = (await api("models")).text;
-    if (b.dataset.tab === "rules") {
-      $("rulesText").value = (await api("file/rules")).text;
-      $("dictionaryText").value = (await api("file/dictionary")).text;
-    }
-    refresh();
-  };
+/* ---------- redaction ---------- */
+let RD = null;
+async function loadRedaction() {
+  RD = await api("redaction");
+  $("rdOn").checked = RD.enabled; $("rdTerms").value = RD.terms.join("\n");
+  $("rdBuiltins").innerHTML = RD.builtins.map((b, i) => `<label class="switch"><input type="checkbox" data-b="${i}" ${b.on ? "checked" : ""}> ${esc(b.label)}</label>`).join("");
+  renderCustom();
 }
-for (const b of document.querySelectorAll(".range button")) {
-  b.onclick = () => { minutes = +b.dataset.min; for (const x of document.querySelectorAll(".range button")) x.setAttribute("aria-pressed", x === b); refresh(); };
+function renderCustom() {
+  $("rdCustom").innerHTML = RD.custom.map((p, i) => `<div class="row"><input type="text" value="${esc(p.name)}" data-cn="${i}" placeholder="名称" style="width:120px"><input type="text" value="${esc(p.regex)}" data-cr="${i}" placeholder="正则表达式" class="mono" style="flex:1;min-width:160px"><button class="btn small" data-cdel="${i}">删除</button></div>`).join("");
+  for (const b of document.querySelectorAll("[data-cdel]")) b.onclick = () => { collect(); RD.custom.splice(+b.dataset.cdel, 1); renderCustom(); };
 }
-
-// left card
-for (const b of document.querySelectorAll("[data-copy]")) {
-  b.onclick = async () => {
-    const id = b.dataset.copy;
-    let text = $(id).textContent;
-    if (S && id === "token") text = S.token;
-    if (S && id === "loginCmd") text = S.public_url ? `ferry login ${S.public_url} ${S.token}` : "";
-    if (!text) return toast("先在设置里填写外网地址");
-    await navigator.clipboard.writeText(text); toast("已复制");
-  };
+function collect() {
+  RD.enabled = $("rdOn").checked;
+  RD.terms = $("rdTerms").value.split("\n").map((t) => t.trim()).filter(Boolean);
+  for (const c of document.querySelectorAll("[data-b]")) RD.builtins[+c.dataset.b].on = c.checked;
+  RD.custom = RD.custom.map((p, i) => ({ name: document.querySelector(`[data-cn="${i}"]`)?.value || p.name, regex: document.querySelector(`[data-cr="${i}"]`)?.value || "" }));
+  return RD;
 }
-$("showToken").onclick = () => { tokenShown = !tokenShown; $("showToken").textContent = tokenShown ? "隐藏" : "显示"; S && renderStatus(S); };
+$("rdAddRule").onclick = () => { collect(); RD.custom.push({ name: "", regex: "" }); renderCustom(); };
+$("rdTry").onclick = async () => { try { const r = await api("redaction/try", "POST", { ...collect(), sample: $("rdSample").value }); $("rdOut").textContent = r.masked; $("rdOut").hidden = false; } catch (e) { $("rdOut").textContent = e.message; $("rdOut").hidden = false; } };
+$("rdSave").onclick = async () => { try { RD = await api("redaction", "PUT", collect()); say("rdMsg", "已保存，下一次请求生效"); } catch (e) { say("rdMsg", e.message, false); } };
 
-// models
-$("saveModels").onclick = async () => {
-  try { renderStatus(await api("models", "PUT", { text: $("modelsText").value })); say("modelsMsg", "已保存，下一次请求就用新的设置"); }
-  catch (e) { say("modelsMsg", "没有保存：" + e.message, false); }
-};
-$("testAll").onclick = async () => {
-  $("testAll").disabled = true; say("testMsg", "正在给每个模型发一个小请求……");
-  try {
-    const r = await api("models/test", "POST", {});
-    for (const m of r.models) {
-      const e = document.querySelector(`.res[data-id="${CSS.escape(m.id)}"]`);
-      if (!e) continue;
-      e.className = "res " + (m.ok ? "" : "bad");
-      e.textContent = m.ok ? `能用，${m.ms} 毫秒` : m.error;
-    }
-    say("testMsg", r.models.every((m) => m.ok) ? "全部能用" : "有模型不能用，原因见上面", r.models.every((m) => m.ok));
-  } catch (e) { say("testMsg", e.message, false); }
-  $("testAll").disabled = false;
-};
-
-// settings
-$("saveUrl").onclick = async () => {
-  try { renderStatus(await api("settings", "PUT", { public_url: $("setUrl").value })); say("urlMsg", "已保存"); }
-  catch (e) { say("urlMsg", e.message, false); }
-};
-for (const r of document.querySelectorAll("input[name=store]")) {
-  r.onchange = async () => { try { renderStatus(await api("settings", "PUT", { session_store: r.value })); toast("已切换"); } catch (e) { toast(e.message); } };
+/* ---------- calls ---------- */
+let CALLS = [];
+async function loadCalls() {
+  CALLS = (await api("calls?limit=500")).calls;
+  const models = [...new Set(CALLS.map((c) => c.model))];
+  const cur = $("cModel").value;
+  $("cModel").innerHTML = '<option value="">全部模型</option>' + models.map((m) => `<option ${m === cur ? "selected" : ""}>${esc(m)}</option>`).join("");
+  renderCalls();
 }
-$("saveAdv").onclick = async () => {
-  try {
-    renderStatus(await api("settings", "PUT", { redact: $("setRedact").checked, max_upstream_bytes: Math.max(0, +$("setCap").value) * 1000 }));
-    say("advMsg", "已保存，下一次请求生效");
-  } catch (e) { say("advMsg", e.message, false); }
-};
-$("setAuto").onchange = async () => {
-  try { renderStatus(await api("autostart", "PUT", { on: $("setAuto").checked })); say("autoMsg", $("setAuto").checked ? "已开启" : "已关闭"); }
-  catch (e) { say("autoMsg", e.message, false); $("setAuto").checked = !$("setAuto").checked; }
-};
-$("rotate").onclick = async () => {
-  if (!confirm("换令牌后，工作电脑要用新令牌重新 ferry login。继续吗？")) return;
-  try { renderStatus(await api("token/rotate", "POST", {})); say("rotateMsg", "已换新令牌，左边可以复制新的登录命令"); }
-  catch (e) { say("rotateMsg", e.message, false); }
-};
-
-// rules and word list
-for (const b of document.querySelectorAll("[data-save]")) {
-  b.onclick = async () => {
-    const n = b.dataset.save;
-    try { await api("file/" + n, "PUT", { text: $(n + "Text").value }); say(n + "Msg", "已保存，下一轮对话生效"); }
-    catch (e) { say(n + "Msg", e.message, false); }
-  };
+function renderCalls() {
+  const m = $("cModel").value, st = $("cStatus").value, pu = $("cPurpose").value;
+  const rows = CALLS.filter((c) => (!m || c.model === m) && (!st || (st === "ok") === (c.status === 200)) && (!pu || (c.purpose || "agent") === pu));
+  $("cCount").textContent = `${rows.length} 条`;
+  $("cRows").innerHTML = rows.map((a) => { const u = a.usage || {};
+    return `<tr class="click" data-call="${esc(a.id || "")}"><td class="num">${when(a.ts)}</td><td>${esc(a.project || "–")}</td><td>${esc(a.model)}</td><td>${purpose(a.purpose)}</td><td class="r num">${a.messages ?? "–"}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${(u.prompt_tokens ?? "–")} / ${(u.completion_tokens ?? "–")}</td><td class="r num">${secs(a.ms)}</td><td>${result(a)}</td></tr>`; }).join("")
+    || `<tr><td colspan="9" class="empty">没有符合条件的调用。</td></tr>`;
+  for (const r of document.querySelectorAll("[data-call]")) r.onclick = () => openCall(rows.find((c) => (c.id || "") === r.dataset.call));
+}
+for (const id of ["cModel", "cStatus", "cPurpose"]) $(id).onchange = renderCalls;
+async function openCall(a) {
+  if (!a) return;
+  const masked = Object.entries(a.masked || {}).map(([k, v]) => `${k} ${v}`).join("，") || "无";
+  const u = a.usage || {};
+  let html = `<dl class="kv"><dt>时间</dt><dd>${new Date(a.ts * 1000).toLocaleString("zh-CN")}</dd><dt>项目</dt><dd>${esc(a.project || "–")}</dd><dt>模型</dt><dd>${esc(a.model)}</dd>
+    <dt>用途</dt><dd>${purpose(a.purpose)}</dd><dt>消息数</dt><dd>${a.messages ?? "–"}</dd><dt>发给模型</dt><dd>${bytes(a.upstream_bytes)}</dd>
+    <dt>token</dt><dd>输入 ${u.prompt_tokens ?? "–"}，输出 ${u.completion_tokens ?? "–"}</dd><dt>替换的敏感内容</dt><dd>${esc(masked)}</dd>
+    <dt>删掉的旧输出</dt><dd>${a.trimmed || 0} 段</dd><dt>耗时</dt><dd>${secs(a.ms)}</dd><dt>结果</dt><dd>${result(a)}</dd></dl>`;
+  if (a.has_details) {
+    const d = await api("calls/" + a.id);
+    html += `<h3 style="margin:18px 0 6px;font-size:15px">系统提示（脱敏后的样子）</h3>${systemView(d.system)}
+      <h3 style="margin:16px 0 6px;font-size:15px">最后一条用户消息</h3><div class="preview">${esc(d.last_user || "（无）")}</div>
+      <h3 style="margin:16px 0 6px;font-size:15px">可用的工具（${d.tools.length} 个）</h3><p class="mono" style="margin:0">${esc(d.tools.join("、") || "无")}</p>`;
+  } else html += `<p class="muted" style="margin-top:16px">想看这次调用的系统提示和消息内容，到"设置"里打开详细记录（只对之后的调用有效）。</p>`;
+  $("callBody").innerHTML = html; $("callDlg").showModal();
 }
 
-// header
+/* ---------- settings ---------- */
+async function loadSettings() {
+  await loadStatus(); if (!S) return;
+  if (document.activeElement !== $("setUrl")) $("setUrl").value = S.public_url;
+  for (const r of document.querySelectorAll("input[name=store]")) r.checked = r.value === S.session_store;
+  $("storeLocked").hidden = !S.locked.session_store;
+  $("setCap").value = Math.round(S.max_upstream_bytes / 1000);
+  $("setDetails").checked = S.record_details;
+  $("autoCard").hidden = S.platform !== "win32"; $("setAuto").checked = S.autostart;
+  $("homePath").textContent = S.home;
+  $("rawModels").value = (await api("models")).text;
+}
+async function setting(body, okText) { try { S = await api("settings", "PUT", body); toast(okText || "已保存"); } catch (e) { toast(e.message); } }
+$("saveUrl").onclick = () => setting({ public_url: $("setUrl").value }, "已保存外网地址");
+for (const r of document.querySelectorAll("input[name=store]")) r.onchange = () => setting({ session_store: r.value }, "已切换");
+$("saveCap").onclick = () => setting({ max_upstream_bytes: Math.max(0, +$("setCap").value) * 1000 });
+$("setDetails").onchange = () => setting({ record_details: $("setDetails").checked }, $("setDetails").checked ? "已打开详细记录" : "已关闭详细记录");
+$("setAuto").onchange = async () => { try { S = await api("autostart", "PUT", { on: $("setAuto").checked }); toast($("setAuto").checked ? "已开启开机启动" : "已关闭开机启动"); } catch (e) { toast(e.message); $("setAuto").checked = !$("setAuto").checked; } };
+$("rotate").onclick = async () => { if (!confirm("换令牌后，工作电脑要用新令牌重新 ferry login。继续吗？")) return; try { S = await api("token/rotate", "POST", {}); toast("已换新令牌，到概览页复制新的登录命令"); } catch (e) { toast(e.message); } };
 $("openFolder").onclick = () => api("open-folder", "POST", {}).catch((e) => toast(e.message));
+$("saveRaw").onclick = async () => { try { await api("models", "PUT", { text: $("rawModels").value }); say("rawMsg", "已保存"); } catch (e) { say("rawMsg", "没有保存：" + e.message, false); } };
+
 $("stop").onclick = async () => {
-  if (!confirm("停止后，工作电脑就连不上了。要再启动，双击桌面上的 Ferry 服务端。确定停止吗？")) return;
+  if (!confirm("停止后工作电脑就连不上了。要再启动，双击桌面上的 Ferry Server。确定停止吗？")) return;
   await api("stop", "POST", {}).catch(() => {});
-  $("state").textContent = "已停止"; $("state").className = "state off";
+  $("sDot").className = "dot off"; $("sText").textContent = "已停止";
 };
 
-addEventListener("resize", () => !$("tab-traffic").hidden && refresh());
-refresh();
-setInterval(refresh, 4000);
+show(location.hash.slice(1) || "overview");
+setInterval(() => { if (page === "overview") loadOverview(); else loadStatus(); }, 5000);
+addEventListener("resize", () => page === "overview" && loadOverview());
 </script>
 </body>
 </html>

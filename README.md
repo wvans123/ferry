@@ -14,7 +14,7 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.8.0  server on this computer
+  Ferry v0.9.0  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
 
 > 读一下 notes.txt，然后新建 summary.md 总结它
@@ -65,16 +65,20 @@ ferry
 
 ## 服务端管理页
 
-服务端自带一个只能在它自己那台电脑上打开的管理页：双击桌面的 **Ferry 服务端** 图标（或运行 `ferry-server --ui`），服务端在后台启动（没有黑窗口），浏览器自动打开管理页。
+服务端自带一个只能在它自己那台电脑上打开的管理页：双击桌面的 **Ferry Server** 图标（或运行 `ferry-server --ui`），服务端在后台启动（没有黑窗口），浏览器自动打开管理页。设计思路和参考的项目见 [docs/ADMIN-DESIGN.md](docs/ADMIN-DESIGN.md)。
 
-![管理页：流量](docs/images/admin-traffic.png)
+![服务商和模型](docs/images/admin-providers.png)
 
-- **流量**：上半部分是工作电脑发来的（每次只有新增部分），下半部分是服务端拼好后发给模型的（完整上下文），还有放大倍数、token 用量、最近每一次模型调用；
-- **模型**：看哪些模型能用、一键测试，直接编辑 `models.toml`（保存前先检查格式）；
-- **设置**：外网地址（自动生成工作电脑上要敲的登录命令）、服务端存不存对话、脱敏开关、请求上限、开机自动启动、换令牌；
-- **规则和词表**：服务端规则、脱敏词表。
+| 页面 | 能做什么 |
+|---|---|
+| 概览 | 工作电脑要敲的登录命令（一键复制）、流量图（上：工作电脑发来的新增部分；下：发给模型的完整上下文）、最近几次调用 |
+| 服务商和模型 | 选预设（DeepSeek、Kimi、智谱、通义、火山、硅基流动、各家编程套餐、Claude、OpenAI、OpenRouter、Ollama、自定义），**只填 API Key**；从服务商读取模型列表后勾选；保存后自动测试。默认模型、写摘要用的模型、工作电脑能不能自己挑，都在这里选 |
+| 提示词 | 全局提示词、按项目的提示词、写摘要时的要求；打开详细记录后，能看到模型实际收到的系统提示里服务端加了什么 |
+| 脱敏 | 敏感词一行一个、内置识别（内网 IP、邮箱、手机号、API Key）、自定义正则，"试一试"当场看替换结果 |
+| 调用记录 | 每次模型调用的项目、模型、大小、token、耗时、结果，可筛选，点开看详情 |
+| 设置 | 外网地址、服务端存不存对话、请求上限、详细记录、开机启动、换令牌；高级：直接编辑 models.toml |
 
-管理页只接受本机直接打开的请求：经 Cloudflare 隧道进来的请求虽然也来自 127.0.0.1，但带着 Cloudflare 的请求头，会被拒绝；另外还要一把只在本机的钥匙（启动时自动带上）。
+API Key 存在服务端数据文件夹的 `secrets.toml` 里，不会出现在 `models.toml` 和任何接口返回里（只显示末 4 位）。管理页只接受本机直接打开的请求：经 Cloudflare 隧道进来的请求虽然也来自 127.0.0.1，但带着 Cloudflare 的请求头，会被拒绝；另外还要一把只在本机的钥匙（启动时自动带上）。
 
 ## 选模型：在服务端的 models.toml 里配
 
@@ -228,7 +232,7 @@ docs/       设计说明（DESIGN.md）、上下文和记忆方案（CONTEXT-AND
 
 ## 离商业级还差什么
 
-v0.6 是一个可以自用、可以演示的原型：核心链路有 21 个单元测试和 27 项端到端测试覆盖。离商业产品还差下面这些：
+v0.9 是一个可以自用、可以演示的原型：核心链路有 25 个单元测试和 28 项端到端测试覆盖。离商业产品还差下面这些：
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|

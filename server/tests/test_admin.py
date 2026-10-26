@@ -60,3 +60,52 @@ def test_admin_is_local_and_keyed(tmp_path, monkeypatch):
     # settings survive a restart
     cfg2 = load_default()
     assert cfg2.redact is False and cfg2.public_url == "https://f.example.com" and cfg2.session_store == "disk"
+
+
+def test_providers_keys_prompts_redaction(tmp_path, monkeypatch):
+    cfg, app = make(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    key = (tmp_path / "admin-key").read_text().strip()
+    H = {"X-Ferry-Admin": "1"}
+
+    async def go():
+        async with client(app) as c:
+            c.cookies.set("ferry_admin", key)
+            # an older models.toml entry shows up grouped under its preset
+            v = (await c.get("/admin/api/providers")).json()
+            assert v["providers"][0]["preset"] == "deepseek" and v["providers"][0]["models"][0]["model"] == "deepseek-flash"
+            assert any(p["id"] == "kimi-coding" for p in (await c.get("/admin/api/presets")).json()["presets"])
+            # add DeepSeek with a key typed on the page: the key is saved apart, never echoed back
+            r = await c.put("/admin/api/providers", headers=H, json={
+                "providers": [{"id": "deepseek", "preset": "deepseek", "key": "sk-test-0123456789abcd",
+                               "models": [{"model": "deepseek-flash"}, {"model": "deepseek-v4-pro"}]}],
+                "routing": {"default": "deepseek-v4-pro", "summary": "deepseek-flash"}})
+            assert r.status_code == 200, r.text
+            assert "sk-test" not in r.text and r.json()["providers"][0]["key_tail"] == "abcd"
+            assert "sk-test-0123456789abcd" in (tmp_path / "secrets.toml").read_text()
+            assert "sk-test" not in (tmp_path / "models.toml").read_text()
+            assert cfg.default_model == "deepseek-v4-pro" and cfg.models["deepseek-flash"].ready
+            assert cfg.models["deepseek-flash"].base_url == "https://api.deepseek.com"
+            # saving again without a key keeps the saved one
+            r = await c.put("/admin/api/providers", headers=H, json={
+                "providers": [{"id": "deepseek", "preset": "deepseek", "models": [{"model": "deepseek-flash"}]}],
+                "routing": {}})
+            assert r.status_code == 200 and cfg.models["deepseek-flash"].api_key == "sk-test-0123456789abcd"
+            # prompts: global, summary and per project
+            assert (await c.put("/admin/api/prompts/_global", headers=H, json={"text": "- 用中文回复"})).status_code == 200
+            assert (await c.put("/admin/api/prompts/my-app", headers=H, json={"text": "- 这是 Vue 项目"})).status_code == 200
+            pr = (await c.get("/admin/api/prompts")).json()
+            assert pr["global"].startswith("- 用中文") and any(p["name"] == "my-app" for p in pr["projects"])
+            # redaction: structured form, and trying it out
+            d = (await c.get("/admin/api/redaction")).json()
+            assert {b["name"] for b in d["builtins"] if b["on"]} == {"private-ipv4", "email"}
+            d["terms"] = ["Project Titan"]
+            for b in d["builtins"]:
+                b["on"] = True
+            assert (await c.put("/admin/api/redaction", headers=H, json=d)).status_code == 200
+            t = (await c.post("/admin/api/redaction/try", headers=H, json={**d, "sample": "Project Titan 在 10.1.2.3，电话 13812345678"})).json()
+            assert "Project Titan" not in t["masked"] and "10.1.2.3" not in t["masked"] and "13812345678" not in t["masked"]
+            bad = await c.put("/admin/api/redaction", headers=H, json={**d, "custom": [{"name": "x", "regex": "("}]})
+            assert bad.status_code == 400
+
+    run(go())
