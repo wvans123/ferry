@@ -1,6 +1,6 @@
 # 验收标准
 
-`python selftest/run.py` 一条命令跑完下面 27 项自动检查，全部 PASS 才算达标。测试时起一个假模型（记录收到的每个请求）、Ferry 服务端、Ferry 客户端和一个假的公司代理，全部只监听本机，不需要真实模型和 Key。
+`python selftest/run.py` 一条命令跑完下面 28 项自动检查，全部 PASS 才算达标。测试时起一个假模型（记录收到的每个请求）、Ferry 服务端、Ferry 客户端和一个假的公司代理，全部只监听本机，不需要真实模型和 Key。
 
 | 编号 | 检查项 | 怎么判断 |
 |---|---|---|
@@ -29,6 +29,7 @@
 | F23 | 缺 Key 明确提示 | 去掉 `DEEPSEEK_API_KEY` 后 `ferry doctor` 失败并指出要设置它 |
 | F25 | 服务端决定模型 | 客户端只看到 `auto`；服务端把干活的请求发给 `default` 模型、把写摘要的请求发给 `summary` 模型 |
 | F26 | 服务端可以不保存会话 | `session_store = "none"`：每轮整段重传、单个请求仍 ≤ 1MB、没有 409、服务端磁盘上没有会话库，任务完成 |
+| F27 | 服务端前面有登录页 | 模拟 Cloudflare Access：没带凭据时 `ferry doctor` 指出是登录页挡住；`ferry login --header` 带上服务令牌后 doctor 和对话都成功 |
 | F24 | 安装和更新 | `ferry install` 后命令可用；`ferry update` 从（模拟的）GitHub 发布页下载新版本并切换；再次更新提示已是最新；保留新旧两个版本 |
 
 另外手动验证过的交互界面（模拟终端）：
@@ -39,7 +40,7 @@
 
 ## 最近一次结果
 
-2026-10-23，v0.6，Linux，Node 22，Python 3.13，pi 1.4.0：服务端单元测试 21/21，端到端 27/27 通过。v0.5 的 25 项检查也在 GitHub Actions 的 Windows 机器上（Python 3.12、Node 22）全部通过。另用无效 Key 实测了 `ferry doctor` 对 Claude 官方接口的检查：正确识别为 401 并给出提示。
+2026-10-26，v0.6.2，Linux，Node 22，Python 3.13，pi 1.4.0：服务端单元测试 22/22，端到端 28/28 通过。v0.5 的 25 项检查也在 GitHub Actions 的 Windows 机器上（Python 3.12、Node 22）全部通过。另用无效 Key 实测了 `ferry doctor` 对 Claude 官方接口的检查：正确识别为 401 并给出提示。
 
 | 指标 | 数值 |
 |---|---|

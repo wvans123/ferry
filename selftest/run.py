@@ -45,11 +45,22 @@ for _stream in (sys.stdout, sys.stderr):  # a console or pipe that cannot show C
 WINDOWS = os.name == "nt"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_PROBE = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
 def wait_http(url: str, timeout: float = 60) -> None:
+    """Up as soon as anything answers over HTTP (a login-page redirect counts too)."""
     end = time.time() + timeout
     while time.time() < end:
         try:
-            DIRECT.open(url, timeout=2)
+            _PROBE.open(url, timeout=2)
+            return
+        except urllib.error.HTTPError:
             return
         except Exception:
             time.sleep(0.5)
@@ -78,7 +89,8 @@ class Stack:
 
     def __init__(self, root: Path, work: Path, mode: str, drop_every: int = 0, context_window: int = 128000,
                  drop_before_chat: int = 0, server_host: str = "127.0.0.1", max_upstream: int = 0,
-                 start_server: bool = True, extra_toml: str = "", session_store: str = ""):
+                 start_server: bool = True, extra_toml: str = "", session_store: str = "",
+                 server_env: dict | None = None):
         self.root, self.work, self.procs = root, work, []
         self.base = f"http://{server_host}:8787"
         self.upstream = root / "upstream.jsonl"
@@ -105,13 +117,18 @@ class Stack:
                     "FERRY_TEST_DROP_BEFORE_CHAT": str(drop_before_chat), "FERRY_AUTO_APPROVE": "1",
                     "FERRY_SERVER_HOME": str(root / "zero-config-home"), "FERRY_PYTHON": PY,
                     "FERRY_UPSTREAM_BASE_URL": "http://127.0.0.1:9100/v1"}
+        self.env.update(server_env or {})
         local = "127.0.0.1,localhost"
         for k in ("NO_PROXY", "no_proxy"):
             self.env[k] = f"{self.env[k]},{local}" if self.env.get(k) else local
         self.spawn([PY, "-I", str(ROOT / "selftest" / "fake_llm.py"), str(self.upstream), mode])
         if start_server:
             self.spawn([PY, "-m", "ferry_server", "--config", str(srv / "ferry-server.toml")])
-            wait_http(f"{self.base}/health")
+            try:
+                wait_http(f"{self.base}/health")
+            except Exception:
+                self.close()  # never leave a fake model or server behind for the next scenario
+                raise
 
     def spawn(self, cmd):
         log = open(self.root / f"proc{len(self.procs)}.log", "w", encoding="utf-8")
@@ -230,7 +247,7 @@ def main() -> int:
     print(f"logs: {base}")
     prompt = "请读取 Project Titan 目录下的 notes.txt 并告诉我内容"
 
-    print("\n[1/11] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
+    print("\n[1/12] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
     s = Stack(base / "basic", work, "basic")
     try:
         code, out = s.ferry("--mode", "json", "-p", prompt)
@@ -272,7 +289,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print(f"\n[2/11] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
+    print(f"\n[2/12] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
     cheap = ('\n[models.cheap]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\n'
              'model = "cheap-model"\ncontext_window = 300000\nmax_tokens = 8192\ndrop_params = ["store"]\n'
              'rename_params = { max_completion_tokens = "max_tokens" }\n\n[routing]\ndefault = "main"\nsummary = "cheap"\n')
@@ -314,7 +331,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[3/11] 服务端不保存会话（session_store = none）", flush=True)
+    print("\n[3/12] 服务端不保存会话（session_store = none）", flush=True)
     s = Stack(base / "nostore", work, "long:4", session_store="none")
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -328,7 +345,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[4/11] 服务端频繁丢失会话", flush=True)
+    print("\n[4/12] 服务端频繁丢失会话", flush=True)
     s = Stack(base / "drop", work, "long:8", drop_every=3)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -340,7 +357,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[5/11] 本地安全规则", flush=True)
+    print("\n[5/12] 本地安全规则", flush=True)
     s = Stack(base / "guard", work, "basic")
     try:
         (s.home).mkdir(parents=True, exist_ok=True)
@@ -352,7 +369,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[6/11] 经公司代理访问服务端", flush=True)
+    print("\n[6/12] 经公司代理访问服务端", flush=True)
     s = Stack(base / "proxy", work, "basic", server_host="127.0.0.2")
     try:
         plog = s.root / "proxy.log"
@@ -371,7 +388,23 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[7/11] 调用模型前一刻服务端丢了缓存", flush=True)
+    print("\n[7/12] 服务端前面有登录页（像 Cloudflare Access）", flush=True)
+    s = Stack(base / "gate", work, "long:2", server_env={"FERRY_TEST_REQUIRE_HEADER": "CF-Access-Client-Id"})
+    try:
+        code_b, out_b = s.ferry("doctor")
+        code_l, out_l = s.ferry("login", s.base, TOKEN, "--header", "CF-Access-Client-Id: abc.access",
+                                "--header", "CF-Access-Client-Secret: s3cret")
+        code_d, out_d = s.ferry("doctor")
+        code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
+        check("F27 服务端前有登录页", code_b != 0 and "Cloudflare Access" in out_b and code_l == 0
+              and code_d == 0 and code == 0 and "READ 2 FILES" in out,
+              "没带凭据时 doctor 指出是登录页挡住了；ferry login --header 带上服务令牌后 doctor 和对话都成功")
+        if not (code_d == 0 and code == 0):
+            print(out_b[-800:], out_l[-800:], out_d[-800:], out[-800:])
+    finally:
+        s.close()
+
+    print("\n[8/12] 调用模型前一刻服务端丢了缓存", flush=True)
     s = Stack(base / "chatdrop", work, "long:6", drop_before_chat=2)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -382,7 +415,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[8/11] 多用户隔离、版本协商、弱密钥", flush=True)
+    print("\n[9/12] 多用户隔离、版本协商、弱密钥", flush=True)
     s = Stack(base / "users", work, "basic")
     try:
         code, out = s.ferry("-p", prompt)  # wesley sends "Project Titan" once, so wesley owns its placeholder
@@ -411,7 +444,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[9/11] 服务端压缩：发给模型的请求有上限", flush=True)
+    print("\n[10/12] 服务端压缩：发给模型的请求有上限", flush=True)
     s = Stack(base / "cap", work, f"long:{LONG_FILES}", context_window=1_000_000, max_upstream=400_000)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -422,7 +455,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[10/11] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
+    print("\n[11/12] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
     s = Stack(base / "zero", work, "long:3", start_server=False)
     try:
         code_d, out_d = s.ferry("doctor", local=True)
@@ -450,7 +483,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[11/11] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
+    print("\n[12/12] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
     check_install_update(base / "install")
 
     failed = [r for r in results if not r[1]]

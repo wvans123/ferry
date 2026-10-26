@@ -14,7 +14,7 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.6.1  server on this computer
+  Ferry v0.6.2  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
 
 > 读一下 notes.txt，然后新建 summary.md 总结它
@@ -58,7 +58,7 @@ ferry
 | `ferry -p "问题"` | 只问一句，打印回答后退出 |
 | `ferry doctor` | 逐项检查，最后给模型发一个小请求确认能用 |
 | `ferry update` | 更新到 GitHub 上的最新版（访问不了 GitHub 时：`ferry update 下载好的.zip`） |
-| `ferry login 服务器地址 令牌` | 改用另一台机器上的服务端 |
+| `ferry login 服务器地址 令牌` | 改用另一台机器上的服务端（前面有 Cloudflare Access 时加 `--header "CF-Access-Client-Id: ..."`） |
 | `ferry logout` | 回到本机服务端 |
 
 对话里：`/new` 新开对话，`/compact` 手动压缩上下文，Shift+Enter（或 Ctrl+J）换行。
@@ -95,7 +95,7 @@ Anthropic 和 OpenAI 的 API 不服务中国大陆和香港。要用它们，服
 
 ## 服务端放在另一台机器上
 
-工作电脑上的用法不变，只差一次 `ferry login`。服务端在 Windows 上：
+工作电脑上的用法不变，只差一次 `ferry login`。**家里的 Mac + Cloudflare 域名**的完整步骤（不用证书、不用公网 IP）见 [docs/DEPLOY-MAC.md](docs/DEPLOY-MAC.md)。服务端在 Windows 上：
 
 ```bat
 cd /d ferry-x.y.z
@@ -193,7 +193,7 @@ node client/bin/ferry.mjs      # 直接从源码运行
 client/     ferry 命令行（Node.js）：bin/ferry.mjs 入口，lib/ 下是同步、安全规则、界面扩展、安装和更新
 server/     ferry-server（Python / FastAPI）：会话缓存、提示词组装、脱敏、流式还原、模型适配
 selftest/   端到端自测：假模型、假代理、run.py
-deploy/     云服务器部署：systemd 服务、Caddy HTTPS
+deploy/     部署：Mac 开机自启（mac/autostart.sh）、Linux systemd 服务、Caddy HTTPS
 scripts/    构建 Windows 离线安装包
 .github/    CI（Linux + Windows）和发布流程
 docs/       设计说明（DESIGN.md）、上下文和记忆方案（CONTEXT-AND-MEMORY.md）

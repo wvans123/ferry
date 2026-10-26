@@ -20,7 +20,16 @@ export const DEFAULTS = {
 	approve: ["write", "edit", "bash", "powershell"],
 	// Company proxy, e.g. "http://proxy.corp:8080". Empty = use HTTPS_PROXY / HTTP_PROXY if set.
 	proxy: "",
+	// Extra headers for every request to the Ferry server, e.g. a Cloudflare Access service token:
+	// { "CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..." }
+	headers: {},
 };
+
+/** Headers every request to the Ferry server carries. */
+export function serverHeaders(cfg, extra = {}) {
+	return { ...(cfg.headers ?? {}), "x-ferry-protocol": PROTOCOL,
+		...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}), ...extra };
+}
 
 /** Route every request (ours and pi's) through the proxy, if one is configured. Call before any fetch. */
 export async function applyProxy(cfg) {

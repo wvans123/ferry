@@ -41,6 +41,8 @@ def create_app(cfg: Config) -> FastAPI:
     audit_log = cfg.data_dir / "audit.jsonl"
     drop_every = int(os.environ.get("FERRY_TEST_DROP_EVERY", "0"))  # test hook: forget sessions every N commits
     drop_before_chat = int(os.environ.get("FERRY_TEST_DROP_BEFORE_CHAT", "0"))  # test hook: forget before every Nth chat
+    # test hook: act like a Cloudflare Access login in front of the server for requests without this header
+    gate_header = os.environ.get("FERRY_TEST_REQUIRE_HEADER", "").lower()
     counter = {"commits": 0, "chats": 0}
 
     def find_user(auth: str) -> str | None:
@@ -63,6 +65,9 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
+        if gate_header and gate_header not in request.headers:
+            return Response(status_code=302, headers={
+                "location": "https://example.cloudflareaccess.com/cdn-cgi/access/login/ferry"})
         if request.url.path == "/health":
             return await call_next(request)
         body = await request.body()

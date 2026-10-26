@@ -7,7 +7,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
-import { PROTOCOL } from "./config.mjs";
+import { PROTOCOL, serverHeaders } from "./config.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const SALT = randomUUID();
@@ -23,8 +23,8 @@ export function createSyncProvider(cfg, models) {
 	async function post(path, body, signal) {
 		return fetch(`${cfg.server}${path}`, {
 			method: "POST",
-			headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/octet-stream",
-				"x-ferry-protocol": PROTOCOL },
+			headers: serverHeaders(cfg, { "Content-Type": "application/octet-stream" }),
+			redirect: "manual",
 			body,
 			signal,
 		});
@@ -67,6 +67,10 @@ export function createSyncProvider(cfg, models) {
 		if (res.status === 409) res = await commit(conv, 0, "", blob(0, !!toolsHash), signal); // server lost it
 		if (res.status === 401) throw new FerryError("Ferry token rejected by the server. Run: ferry login <server> <token>");
 		if (res.status === 426) throw new FerryError(`Ferry client and server versions do not match: ${await res.text()}`);
+		if (!res.headers.get("content-type")?.includes("json")) {
+			throw new FerryError(`Ferry sync failed: HTTP ${res.status} from something that is not the Ferry server ` +
+				'(a login page or proxy in between?). Run "ferry doctor".');
+		}
 		if (!res.ok) throw new FerryError(`Ferry sync failed: HTTP ${res.status} ${await res.text()}`);
 		const ack = await res.json();
 		if (ack.count !== msgs.length || ack.hash !== chain[msgs.length]) {
@@ -108,7 +112,8 @@ export function createSyncProvider(cfg, models) {
 		const attempt = () => openAICompletionsApi().streamSimple(inner, context, {
 			...options,
 			apiKey: cfg.token,
-			headers: { ...(options?.headers ?? {}), "x-ferry-project": project, "x-ferry-protocol": PROTOCOL },
+			headers: { ...(options?.headers ?? {}), ...(cfg.headers ?? {}), "x-ferry-project": project,
+				"x-ferry-protocol": PROTOCOL },
 			onPayload: async (payload, m) => {
 				const replaced = userOnPayload ? await userOnPayload(payload, m) : undefined;
 				return shrink(replaced ?? payload, options?.signal);

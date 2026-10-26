@@ -2,7 +2,7 @@
 // Ferry CLI
 //   ferry                              start the agent in this folder (all pi options work, e.g. -p "question")
 //   ferry doctor                       check the setup step by step
-//   ferry login <server-url> <token>   use a Ferry server on another machine
+//   ferry login <server-url> <token> [--header "Name: value"]...   use a Ferry server on another machine
 //   ferry logout                       go back to the Ferry server on this computer
 //
 //   ferry update [file.zip]            install the latest release from GitHub
@@ -21,6 +21,7 @@ import {
 	loadConfig,
 	PROTOCOL,
 	readModelsCache,
+	serverHeaders,
 	saveConfig,
 	writeModelsCache,
 } from "../lib/config.mjs";
@@ -34,10 +35,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function getJson(cfg, path, timeoutMs = 8000) {
 	const res = await fetch(`${cfg.server}${path}`, {
-		headers: { "x-ferry-protocol": PROTOCOL, ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}) },
+		headers: serverHeaders(cfg),
+		redirect: "manual", // a login page in front of the server (e.g. Cloudflare Access) shows up as a redirect
 		signal: AbortSignal.timeout(timeoutMs),
 	});
-	return { status: res.status, body: res.headers.get("content-type")?.includes("json") ? await res.json() : await res.text() };
+	const json = res.headers.get("content-type")?.includes("json");
+	return { status: res.status, location: res.headers.get("location") ?? "", json,
+		body: json ? await res.json() : await res.text() };
+}
+
+/** Something other than Ferry answered (a login page, a proxy error page): say what, and what to do. */
+function notFerry(r) {
+	const page = `${r.location} ${typeof r.body === "string" ? r.body.slice(0, 3000) : ""}`;
+	if (/cloudflareaccess|cf-access|Cloudflare Access/i.test(page)) {
+		return "a Cloudflare Access login page answered instead of the Ferry server. Either remove the Access policy from " +
+			"this hostname (the Ferry token already protects it), or create an Access service token and run:\n" +
+			"        ferry login <url> <token> --header \"CF-Access-Client-Id: ...\" --header \"CF-Access-Client-Secret: ...\"";
+	}
+	if (r.status >= 300 && r.status < 400) return `the server address redirects to ${r.location || "another page"}; use the final https address`;
+	return `HTTP ${r.status} with a web page instead of the Ferry server: check the address (and the proxy settings)`;
 }
 
 async function healthy(server) {
@@ -68,6 +84,7 @@ async function ensureServer(cfg) {
 async function fetchModels(cfg) {
 	try {
 		const r = await getJson(cfg, "/v1/ferry/models", 5000);
+		if (!r.json) throw new Error(`${notFerry(r)}\n  (run "ferry doctor" for details)`);
 		if (r.status === 200 && r.body.models?.length) {
 			cfg.sessionStore = r.body.sessionStore;
 			writeModelsCache(r.body.models);
@@ -76,30 +93,40 @@ async function fetchModels(cfg) {
 		if (r.status === 401) throw new Error(cfg.mode === "remote" ? "token rejected: run ferry login again"
 			: "the local server rejected the saved token: restart it");
 	} catch (e) {
-		if (e.message.startsWith("token") || e.message.startsWith("the local")) throw e;
+		if (/^(token|the local|a Cloudflare|the server address|HTTP \d)/.test(e.message)) throw e;
 		// offline or server down: fall back to the last list we saw
 	}
 	return readModelsCache() ?? [{ id: "main" }];
 }
 
-async function login(server, token) {
+async function login(args) {
+	const headers = {};
+	const pos = [];
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--header" && args[i + 1]?.includes(":")) {
+			const h = args[++i];
+			headers[h.slice(0, h.indexOf(":")).trim()] = h.slice(h.indexOf(":") + 1).trim();
+		} else pos.push(args[i]);
+	}
+	const [server, token] = pos;
 	if (!server || !token) {
-		console.error("usage: ferry login <server-url> <token>");
+		console.error('usage: ferry login <server-url> <token> [--header "Name: value"]...');
 		process.exit(2);
 	}
-	const cfg = { ...loadConfig(), server: server.replace(/\/+$/, ""), token, mode: "remote" };
+	const cfg = { ...loadConfig(), server: server.replace(/\/+$/, ""), token, headers, mode: "remote" };
 	await applyProxy(cfg);
 	try {
 		const r = await getJson(cfg, "/v1/ferry/models");
 		if (r.status === 401) throw new Error("the server rejected this token");
 		if (r.status === 426) throw new Error(r.body?.error?.message ?? "client and server versions do not match");
+		if (!r.json) throw new Error(notFerry(r));
 		if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
 		writeModelsCache(r.body.models);
 		console.log(`Connected. Models: ${r.body.models.map((m) => m.id).join(", ")}`);
 	} catch (e) {
 		console.error(`Could not verify the server (${e.message}). Saved anyway; run "ferry doctor" to investigate.`);
 	}
-	console.log(`Saved to ${saveConfig({ server: cfg.server, token })}`);
+	console.log(`Saved to ${saveConfig({ server: cfg.server, token, headers })}`);
 }
 
 function logout() {
@@ -134,7 +161,8 @@ async function doctor() {
 	}
 	try {
 		const t = Date.now();
-		const r = await getJson({ server: cfg.server }, "/health");
+		const r = await getJson({ server: cfg.server, headers: cfg.headers }, "/health");
+		if (!r.json) return bad(notFerry(r));
 		if (r.status !== 200) return bad(`health check HTTP ${r.status}`);
 		if (r.body.protocol && r.body.protocol !== PROTOCOL) return bad(`server protocol ${r.body.protocol}, client ${PROTOCOL}: update the older side`);
 		ok(`server reachable in ${Date.now() - t} ms (server ${r.body.version}, protocol ${r.body.protocol})`);
@@ -145,6 +173,7 @@ async function doctor() {
 		const r = await getJson(cfg, "/v1/ferry/models");
 		if (r.status === 401) return bad(cfg.mode === "remote" ? "token rejected: run ferry login again with the token from the server" : "the local server rejected the saved token: restart it");
 		if (r.status === 426) return bad(r.body?.error?.message ?? "client and server versions do not match");
+		if (!r.json) return bad(notFerry(r));
 		if (r.status !== 200) return bad(`models HTTP ${r.status}`);
 		const label = (m) => m.routesTo ? `auto -> ${m.routesTo} (${m.model})${m.summaryTo ? `, summaries -> ${m.summaryTo}` : ""}`
 			: `${m.id}${m.model ? ` (${m.model})` : ""}`;
@@ -162,7 +191,7 @@ async function doctor() {
 	try {
 		const res = await fetch(`${cfg.server}/v1/ferry/check`, {
 			method: "POST",
-			headers: { "x-ferry-protocol": PROTOCOL, Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
+			headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
 			body: "{}",
 			signal: AbortSignal.timeout(90000),
 		});
@@ -232,7 +261,7 @@ async function run(args) {
 }
 
 const exit = () => process.exit(process.exitCode ?? 0); // also stops a server this window started
-if (cmd === "login") await login(rest[0], rest[1]).then(exit);
+if (cmd === "login") await login(rest).then(exit);
 else if (cmd === "logout") logout();
 else if (cmd === "doctor") await doctor().then(exit);
 else if (cmd === "install") install(VERSION, rest.includes("--client-only") || undefined);
@@ -251,6 +280,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry -p "question"               one question, answer printed, then exit
   ferry doctor [--no-model]         check the setup step by step, ending with a tiny request to each model
   ferry login <server-url> <token>  use a Ferry server on another machine
+      [--header "Name: value"]      extra header for every request (e.g. a Cloudflare Access service token)
   ferry logout                      go back to a Ferry server on this computer
   ferry update [file.zip]           install the latest release from GitHub (or a zip you downloaded)
   ferry install [--client-only]     install from an unpacked Ferry folder (--client-only: no local server)
