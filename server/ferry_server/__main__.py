@@ -53,6 +53,8 @@ def banner(cfg: Config, mode: str) -> None:
     out.append(f"  mode: {mode}; data in {cfg.data_dir}")
     if cfg.max_upstream_bytes:
         out.append(f"  requests to the model are kept under {cfg.max_upstream_bytes:,} bytes")
+    if not cfg.redact:
+        out.append("  redaction: OFF (content goes to the model as is)")
     if cfg.home:
         out.append(f"  word list: {cfg.dictionary}   rules: {cfg.rules_dir}")
         out.append("  a Ferry client on this computer connects automatically; just run: ferry")

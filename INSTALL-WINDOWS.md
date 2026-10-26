@@ -38,22 +38,22 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(�
 - Node.js 22 或更高（你已有 v25.8.1）。
 - Python 3.11 到 3.14 之一。在 cmd 里输入 `python --version` 能看到版本号即可；提示"不是内部或外部命令"时试 `py -3 --version`。都没有的话，从 python.org 安装，安装时勾选 "Add python.exe to PATH"。
 
-1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.6.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
-2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.6.0` 文件夹。
+1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.6.1.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
+2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.6.1` 文件夹。
 3. 在 cmd 里进入这个文件夹，运行安装命令：
 
    ```bat
-   cd /d %USERPROFILE%\Downloads\ferry-0.6.0
+   cd /d %USERPROFILE%\Downloads\ferry-0.6.1
    node client\bin\ferry.mjs install
    ```
 
    正常输出：
 
    ```
-   Installing Ferry 0.6.0
-     files     C:\Users\你\AppData\Local\Ferry\versions\0.6.0
+   Installing Ferry 0.6.1
+     files     C:\Users\你\AppData\Local\Ferry\versions\0.6.1
      server    python -m pip install ... ferry-server
-     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.6.0 ...）
+     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.6.1 ...）
      command   C:\Users\你\AppData\Roaming\npm\ferry.cmd
 
    Done. Open a NEW cmd window, go to a project folder and run:  ferry
@@ -72,13 +72,13 @@ ferry doctor
 全部正常时：
 
 ```
-Ferry 0.6.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
+Ferry 0.6.1, Node v25.8.1, win32, settings in C:\Users\你\.ferry
   info  commands run with: PowerShell (Git Bash not found)
   info  proxy: none
   info  no remote server set: using a Ferry server on this computer
   OK    server installed for python
   OK    server running at http://127.0.0.1:5xxxx
-  OK    server reachable in 3 ms (server 0.6.0, protocol 1)
+  OK    server reachable in 3 ms (server 0.6.1, protocol 1)
   OK    token accepted; the server picks the model: auto -> deepseek (deepseek-chat)
   info  conversation on the server: cached in memory only; the full history stays on this computer
   info  asking each model for a two-word answer (a few tokens)...
@@ -106,7 +106,7 @@ echo 服务器 test-host-01 的地址是 10.9.8.7 > notes.txt
 ferry
 ```
 
-进入界面后，顶部显示 `Ferry v0.6.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
+进入界面后，顶部显示 `Ferry v0.6.1  server on this computer`，底部是输入框。直接打字，回车发送，比如：
 
 ```
 读一下 notes.txt，然后新建 summary.md，用一句话总结它的内容
@@ -151,12 +151,52 @@ ferry update
 ferry update C:\路径\ferry-windows-x.y.z.zip
 ```
 
+## 把服务端单独跑起来（为以后放到别的电脑上做准备）
+
+上面的用法里，`ferry` 会自己在后台启动服务端。想先体验"服务端是一台独立的机器"，可以在同一台电脑上开两个 cmd 窗口：
+
+**窗口 1：服务端**（一直开着）
+
+```bat
+python -m ferry_server
+```
+
+它会打印模型、端口（默认 8787）和各个文件的位置。令牌在 `%USERPROFILE%\.ferry-server\token`。
+
+**窗口 2：客户端**
+
+```bat
+for /f "usebackq" %t in ("%USERPROFILE%\.ferry-server\token") do ferry login http://127.0.0.1:8787 %t
+ferry doctor
+cd /d C:\ferry-test
+ferry
+```
+
+这时 `ferry` 连的就是窗口 1 里的服务端，和以后连远程服务端完全一样，只是地址换了。想回到自动模式：`ferry logout`。
+
+以后服务端放到别的电脑上，那台电脑运行 `python -m ferry_server --host 0.0.0.0`（允许别的电脑连进来），工作电脑上把地址换成那台电脑的地址再 `ferry login` 一次。
+
+### 要不要 HTTPS
+
+- **同一台电脑、家里的局域网**：用 `http://` 就行。`ferry doctor` 会提示 plain http，可以忽略。
+- **经过公司网络或公网**：要加密。用 `http://` 时，令牌和代码内容都是明文，公司代理能直接看到、记录；而且很多公司代理只放行 HTTPS。加密不一定要买域名，可以用 Caddy 的自签证书，或者用加密的隧道（比如 frp 开启 TLS），等确定网络方案后再选。
+
+### 要不要脱敏
+
+不是必须的。默认只替换内网 IP 和邮箱（词表里的词默认为空），关掉的方法：
+
+```bat
+setx FERRY_REDACT 0
+```
+
+重新打开窗口后，启动的服务端会显示 `redaction: OFF`。用配置文件时写 `redact = false`（放在 `[server]` 下）。
+
 ## 可选：在这台电脑上跑自测
 
 想确认这台 Windows 上一切正常（不需要 Key，不访问外网），在解压出来的文件夹里运行：
 
 ```bat
-cd /d %USERPROFILE%\Downloads\ferry-0.6.0
+cd /d %USERPROFILE%\Downloads\ferry-0.6.1
 python selftest\run.py
 ```
 

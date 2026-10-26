@@ -35,7 +35,7 @@ from .stream import restore_message, restore_sse
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
     store = Store(cfg.data_dir / "ferry.db" if cfg.session_store == "disk" else ":memory:", cfg.session_ttl_days)
-    red = Redactor(cfg.dictionary, cfg.secret, store)
+    red = Redactor(cfg.dictionary if cfg.redact else None, cfg.secret, store)
     client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=15))
     access_log = cfg.data_dir / "access.jsonl"
     audit_log = cfg.data_dir / "audit.jsonl"

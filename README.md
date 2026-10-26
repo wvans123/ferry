@@ -14,7 +14,7 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.6.0  server on this computer
+  Ferry v0.6.1  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
 
 > 读一下 notes.txt，然后新建 summary.md 总结它
@@ -76,12 +76,14 @@ ferry
 | `FERRY_SUMMARY_MODEL` | 上下文太长要写摘要时用哪家，比如 `deepseek`，省钱 |
 | `FERRY_CLAUDE_MODEL` 等 | 换具体型号，比如 `setx FERRY_CLAUDE_MODEL claude-opus-5-5` |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认，只在内存）、`disk`、`none` |
+| `FERRY_REDACT` | `0` 关闭脱敏（默认开，只替换内网 IP、邮箱和词表里的词） |
 
 **配置文件**（`ferry-server.toml`，多用户、多模型）：
 
 ```toml
 [server]
 session_store = "disk"     # disk：存磁盘，每轮只传新增部分；memory：只在内存；none：每轮整段重传，服务端不留
+redact = true              # false：不脱敏，原样发给模型
 
 [routing]
 default = "claude"         # 干活用的模型
@@ -115,7 +117,7 @@ ferry login https://服务器地址 上面显示的令牌
 ferry doctor
 ```
 
-公网上一定要加 HTTPS：Linux 服务器用 `deploy/Caddyfile`（自动证书）和 `deploy/ferry-server.service`。公司代理：`setx HTTPS_PROXY http://代理地址:端口`。
+同一台电脑或家里局域网用 `http://` 即可；经过公司网络或公网时要加密，否则令牌和代码都是明文。Linux 服务器用 `deploy/Caddyfile`（自动证书）和 `deploy/ferry-server.service`。公司代理：`setx HTTPS_PROXY http://代理地址:端口`。
 
 ## 工作原理
 

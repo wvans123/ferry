@@ -58,6 +58,7 @@ class Config:
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
+    redact: bool = True  # false: send content to the model as is (the word list is ignored)
     # the server picks the model: clients ask for "auto"; summaries can go to a cheaper model
     default_model: str = ""
     summary_model: str = ""
@@ -87,6 +88,7 @@ def load(path: str | os.PathLike) -> Config:
         session_ttl_days=int(s.get("session_ttl_days", 7)),
         max_upstream_bytes=int(s.get("max_upstream_bytes", 0)),
         session_store=s.get("session_store", "disk"),
+        redact=bool(s.get("redact", True)),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -211,6 +213,7 @@ def load_default() -> Config:
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=os.environ.get("FERRY_SESSION_STORE", "memory"),
+        redact=os.environ.get("FERRY_REDACT", "1").lower() not in ("0", "false", "off", "no"),
         summary_model=os.environ.get("FERRY_SUMMARY_MODEL", "") if os.environ.get("FERRY_SUMMARY_MODEL") in models else "",
         expose_models=os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true", "yes"),
     )

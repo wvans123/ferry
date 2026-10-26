@@ -58,3 +58,20 @@ def test_routing_checks(tmp_path, monkeypatch):
     f.write_text(base.replace('data_dir = "d"', 'data_dir = "d"\nsession_store = "cloud"'), encoding="utf-8")
     with pytest.raises(SystemExit):
         load(f)
+
+
+def test_redaction_can_be_switched_off(tmp_path, monkeypatch):
+    from ferry_server.config import load_default
+    from ferry_server.redact import Redactor
+    from ferry_server.store import Store
+
+    env(monkeypatch, DEEPSEEK_API_KEY="d")
+    monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
+    monkeypatch.setenv("FERRY_REDACT", "0")
+    cfg = load_default()
+    assert cfg.redact is False
+    red = Redactor(cfg.dictionary if cfg.redact else None, "s" * 20, Store(":memory:"))
+    p = {"messages": [{"role": "user", "content": "mail bob@corp.example at 10.1.2.3"}]}
+    assert not red.mask_payload(p, "u") and p["messages"][0]["content"] == "mail bob@corp.example at 10.1.2.3"
+    monkeypatch.setenv("FERRY_REDACT", "1")
+    assert load_default().redact is True
