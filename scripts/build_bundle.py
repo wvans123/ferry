@@ -3,8 +3,10 @@
 It holds the client with all its Node packages and wheels for the server and its dependencies
 (Windows x64, Python 3.11 to 3.14), so `ferry install` needs no internet access.
 
-usage: python scripts/build_bundle.py [--platform win|native] [--skip-wheels]
-  needs: `npm ci` done in the repo root, and pip (with internet access) to fetch the wheels
+It also carries fd and ripgrep for Windows x64 (vendor/win32-x64/), which the agent's file search tools need.
+
+usage: python scripts/build_bundle.py [--platform win|native] [--skip-wheels] [--skip-tools]
+  needs: `npm ci` done in the repo root, and internet access for pip (wheels) and GitHub (fd, ripgrep)
 """
 from __future__ import annotations
 
@@ -14,7 +16,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -29,10 +33,45 @@ def copy(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst, ignore=lambda d, names: [n for n in names if n in SKIP or n.endswith(".egg-info")])
 
 
+# Same versions as client/lib/toolbins.mjs
+TOOLS = {
+    "fd": "https://github.com/sharkdp/fd/releases/download/v10.2.0/fd-v10.2.0-{t}",
+    "rg": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-{t}",
+}
+
+
+def fetch_tools(dest: Path, platform: str) -> None:
+    """Put fd and rg for the target platform into dest (vendor/<node platform>-<arch>/)."""
+    if platform == "win":
+        key, asset, exe = "win32-x64", "x86_64-pc-windows-msvc.zip", ".exe"
+    elif sys.platform.startswith("linux"):
+        key, asset, exe = "linux-x64", "x86_64-unknown-linux-musl.tar.gz", ""
+    else:
+        print("tools: skipped (no prebuilt for this platform here)")
+        return
+    out = dest / "vendor" / key
+    out.mkdir(parents=True, exist_ok=True)
+    for name, url in TOOLS.items():
+        archive = dest / "vendor" / asset
+        urllib.request.urlretrieve(url.format(t=asset), archive)
+        if asset.endswith(".zip"):
+            with zipfile.ZipFile(archive) as z:
+                member = next(m for m in z.namelist() if m.endswith("/" + name + exe) or m == name + exe)
+                (out / (name + exe)).write_bytes(z.read(member))
+        else:
+            with tarfile.open(archive) as t:
+                member = next(m for m in t.getmembers() if m.name.endswith("/" + name))
+                (out / name).write_bytes(t.extractfile(member).read())
+                (out / name).chmod(0o755)
+        archive.unlink()
+    print(f"tools: fd and rg in vendor/{key}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--platform", choices=["win", "native"], default="win")
     ap.add_argument("--skip-wheels", action="store_true")
+    ap.add_argument("--skip-tools", action="store_true")
     a = ap.parse_args()
 
     version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
@@ -52,6 +91,9 @@ def main() -> int:
             shutil.copy2(ROOT / name, stage / name)
     for name in ["client", "server", "selftest", "docs", "deploy", "node_modules"]:
         copy(ROOT / name, stage / name)
+
+    if not a.skip_tools:
+        fetch_tools(stage, a.platform)
 
     if not a.skip_wheels:
         wheels = stage / "wheels"

@@ -311,7 +311,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       <div class="row" style="margin-bottom:12px">
         <select id="cModel" style="width:auto"><option value="">全部模型</option></select>
         <select id="cStatus" style="width:auto"><option value="">全部结果</option><option value="ok">成功</option><option value="bad">失败</option></select>
-        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option></select>
+        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option><option value="subagent">子 agent</option><option value="web">联网</option></select>
         <span class="muted" id="cCount"></span>
       </div>
       <div class="card tablecard">
@@ -338,6 +338,20 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
           <label class="switch" style="align-items:flex-start"><input type="radio" name="store" value="none"><span><b>不保存</b><br><span class="muted" style="font-size:13px">每轮整段重传（仍拆成小块，每次不超过 1MB），流量最大</span></span></label>
         </div>
         <p class="msg" id="storeLocked" hidden style="color:var(--lamp)">环境变量 FERRY_SESSION_STORE 已设置，服务端重启后会以它为准。</p>
+      </div>
+      <div class="card">
+        <h2>联网：替工作电脑读网页和搜索</h2>
+        <p class="hint">工作电脑的命令行上不了外网。打开后，agent 的 web_fetch（读网页）和 web_search（搜索）由这台电脑代为访问，只把文字传回去。这等于让工作电脑经这里访问外网、绕开公司网关对这些网址的检查：请先确认公司规定允许，最好只放行需要的网站。</p>
+        <label class="switch"><input type="checkbox" id="webOn"> <b>允许联网</b></label>
+        <div class="grid2" style="margin-top:12px">
+          <div><label class="muted" style="font-size:13px">只允许这些网站（一行一个，包含子域名；空着表示不限）</label>
+            <textarea id="webAllow" rows="4" class="mono" placeholder="github.com&#10;docs.python.org"></textarea></div>
+          <div><label class="muted" style="font-size:13px">搜索用</label>
+            <select id="webEngine"><option value="bing">Bing（国内可用）</option><option value="duckduckgo">DuckDuckGo</option></select>
+            <label class="muted" style="font-size:13px;display:block;margin-top:10px">这台电脑上网要走的代理（没有就空着）</label>
+            <input type="text" id="webProxy" placeholder="http://127.0.0.1:7890"></div>
+        </div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="saveWeb">保存</button></div>
       </div>
       <div class="grid2">
         <div class="card">
@@ -432,7 +446,7 @@ function hhmm(ts, sec = true) { return new Date(ts * 1000).toLocaleTimeString("z
 function when(ts) { const d = new Date(ts * 1000), t = new Date(); return (d.toDateString() === t.toDateString() ? "" : (d.getMonth() + 1) + "/" + d.getDate() + " ") + hhmm(ts); }
 function secs(ms) { return ms == null ? "–" : (ms / 1000).toFixed(1) + " 秒"; }
 function result(a) { return a.status === 200 ? '<span class="tag good">成功</span>' : `<span class="tag bad">HTTP ${a.status}</span>`; }
-function purpose(p) { return p === "summary" ? '<span class="tag lamp">写摘要</span>' : '<span class="tag">干活</span>'; }
+function purpose(p) { return p === "summary" ? '<span class="tag lamp">写摘要</span>' : p === "subagent" ? '<span class="tag">子 agent</span>' : p === "web" ? '<span class="tag lamp">联网</span>' : '<span class="tag">干活</span>'; }
 
 function systemView(text) {
   const m = /<server-rules>([\s\S]*?)<\/server-rules>/.exec(text || "");
@@ -716,6 +730,9 @@ async function loadSettings() {
   $("storeLocked").hidden = !S.locked.session_store;
   $("setCap").value = Math.round(S.max_upstream_bytes / 1000);
   $("setDetails").checked = S.record_details;
+  $("webOn").checked = S.web.enabled; $("webEngine").value = S.web.engine;
+  if (document.activeElement !== $("webAllow")) $("webAllow").value = S.web.allow.join("\n");
+  if (document.activeElement !== $("webProxy")) $("webProxy").value = S.web.proxy;
   $("autoCard").hidden = S.platform !== "win32"; $("setAuto").checked = S.autostart;
   $("homePath").textContent = S.home;
   $("rawModels").value = (await api("models")).text;
@@ -723,6 +740,8 @@ async function loadSettings() {
 async function setting(body, okText) { try { S = await api("settings", "PUT", body); toast(okText || "已保存"); } catch (e) { toast(e.message); } }
 $("saveUrl").onclick = () => setting({ public_url: $("setUrl").value }, "已保存外网地址");
 for (const r of document.querySelectorAll("input[name=store]")) r.onchange = () => setting({ session_store: r.value }, "已切换");
+$("webOn").onchange = () => setting({ web: { enabled: $("webOn").checked } }, $("webOn").checked ? "已允许联网" : "已关闭联网");
+$("saveWeb").onclick = () => setting({ web: { enabled: $("webOn").checked, allow: $("webAllow").value, engine: $("webEngine").value, proxy: $("webProxy").value } }, "已保存联网设置");
 $("saveCap").onclick = () => setting({ max_upstream_bytes: Math.max(0, +$("setCap").value) * 1000 });
 $("setDetails").onchange = () => setting({ record_details: $("setDetails").checked }, $("setDetails").checked ? "已打开详细记录" : "已关闭详细记录");
 $("setAuto").onchange = async () => { try { S = await api("autostart", "PUT", { on: $("setAuto").checked }); toast($("setAuto").checked ? "已开启开机启动" : "已关闭开机启动"); } catch (e) { toast(e.message); $("setAuto").checked = !$("setAuto").checked; } };

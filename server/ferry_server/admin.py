@@ -150,6 +150,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "token": next(iter(cfg.users)) if cfg.home else "", "zero_config": bool(cfg.home),
             "session_store": cfg.session_store, "redact": cfg.redact, "max_upstream_bytes": cfg.max_upstream_bytes,
             "record_details": cfg.record_details,
+            "web": {"enabled": cfg.web_enabled, "allow": cfg.web_allow, "engine": cfg.web_engine, "proxy": cfg.web_proxy},
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
             "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "expose": cfg.expose_models},
@@ -260,6 +261,17 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.redact = bool(b["redact"])
         if "max_upstream_bytes" in b:
             cfg.max_upstream_bytes = max(0, int(b["max_upstream_bytes"]))
+        if isinstance(b.get("web"), dict):
+            w = b["web"]
+            if "enabled" in w:
+                cfg.web_enabled = bool(w["enabled"])
+            if "allow" in w:
+                items = w["allow"] if isinstance(w["allow"], list) else str(w["allow"]).replace(",", "\n").splitlines()
+                cfg.web_allow = [x.strip().lower() for x in items if x.strip()]
+            if w.get("engine") in ("bing", "duckduckgo"):
+                cfg.web_engine = w["engine"]
+            if "proxy" in w:
+                cfg.web_proxy = str(w["proxy"]).strip()
         if "record_details" in b:
             cfg.record_details = bool(b["record_details"])
             if not cfg.record_details:
@@ -597,7 +609,10 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def calls(request: Request, limit: int = 200):
         if not allowed(request):
             return denied()
-        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") == "chat"][-max(1, min(limit, 1000)):][::-1]
+        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") in ("chat", "web")][-max(1, min(limit, 1000)):][::-1]
+        for a in rows:
+            if a.get("event") == "web":  # a page read or a search for the agent: shown with purpose "web"
+                a.update(purpose="web", model=f"{a.get('kind', '')} {a.get('host', '')}".strip())
         have = {d["id"] for d in live.details}
         out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
                                       "masked", "trimmed", "status", "ms", "usage")} for a in rows]

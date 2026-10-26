@@ -16,13 +16,35 @@ export const DEFAULTS = {
 	chunkBytes: 512 * 1024,
 	// Paths the agent may never read, change or run commands on (substring match, case-insensitive)
 	blockedPaths: [".env", ".ssh", "id_rsa", "secrets", "credentials"],
-	// Tools that need a yes in the terminal before they run
-	approve: ["write", "edit", "bash", "powershell"],
+	// Permission mode at start: default (ask before edits and commands), acceptEdits, plan (read-only), bypass.
+	// Shift+Tab switches while ferry runs; "always allow" answers are kept as rules (see /permissions).
+	permissionMode: "default",
 	// Company proxy, e.g. "http://proxy.corp:8080". Empty = use HTTPS_PROXY / HTTP_PROXY if set.
 	proxy: "",
 	// Extra headers for every request to the Ferry server, e.g. a Cloudflare Access service token:
 	// { "CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..." }
 	headers: {},
+	// Agent features (see `ferry config`)
+	memory: true, // remember things across conversations, stored in <FERRY_HOME>/memory
+	subagents: true, // the task tool: hand searches and side tasks to a subagent with a fresh context
+	bigOutputBytes: 8192, // longer command/search output is saved to a file; the model sees start, end and path. 0 = off
+	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
+	browserPath: "", // a browser program to use instead of Edge / Chrome
+	browserHeadless: false, // run the browser without a window
+};
+
+/** What `ferry config` shows and accepts: key -> [type, explanation]. */
+export const SETTINGS = {
+	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows where)"],
+	subagents: ["boolean", "let the agent hand searches and side tasks to subagents with their own context"],
+	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
+	permissionMode: ["string", "permission mode at start: default (ask before edits and commands), acceptEdits (file changes go ahead), plan (read-only), bypass (nothing asks). Shift+Tab switches"],
+	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
+	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
+	browserHeadless: ["boolean", "run that browser without a window"],
+	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
+	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
+	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
 };
 
 /** Headers every request to the Ferry server carries. */
@@ -121,11 +143,22 @@ export function ensureAgentDir(defaultModel, modelIds = [defaultModel]) {
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
 	const file = join(AGENT_DIR, "settings.json");
 	const cur = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-	const defaults = { defaultProvider: "ferry", defaultModel, enableInstallTelemetry: false };
-	// Windows without Git Bash: let the model run commands through PowerShell instead of a missing bash
-	if (!findBash()) defaults.defaultTools = ["read", "powershell", "edit", "write"];
+	// Searching (grep, find, ls) is on by default; Windows without Git Bash runs commands through PowerShell
+	const shell = findBash() ? "bash" : "powershell";
+	const tools = ["read", shell, "edit", "write", "grep", "find", "ls"];
+	const defaults = { defaultProvider: "ferry", defaultModel, enableInstallTelemetry: false, defaultTools: tools };
 	const next = { ...defaults, ...cur };
+	// lists written by older Ferry versions, which nobody chose by hand: upgrade them
+	const old = JSON.stringify(next.defaultTools);
+	if (old === JSON.stringify(["read", "powershell", "edit", "write"]) || old === JSON.stringify(["read", "bash", "edit", "write"])) {
+		next.defaultTools = tools;
+	}
 	// the server's model list changed (e.g. a new API key): fall back to its first model
 	if (next.defaultProvider === "ferry" && !modelIds.includes(next.defaultModel)) next.defaultModel = defaultModel;
 	writeFileSync(file, JSON.stringify(next, null, 2), "utf8");
+	// Shift+Tab switches the permission mode (like Claude Code); pi uses it for thinking levels, which the
+	// server-chosen model does not expose
+	const kb = join(AGENT_DIR, "keybindings.json");
+	const keys = existsSync(kb) ? JSON.parse(readFileSync(kb, "utf8")) : {};
+	if (!("app.thinking.cycle" in keys)) writeFileSync(kb, JSON.stringify({ ...keys, "app.thinking.cycle": [] }, null, 2), "utf8");
 }

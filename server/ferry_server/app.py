@@ -18,6 +18,8 @@ import json
 import os
 import secrets
 import time
+import uuid
+from urllib.parse import unquote, urlparse
 from collections import Counter, deque
 from types import SimpleNamespace
 
@@ -146,7 +148,43 @@ def create_app(cfg: Config) -> FastAPI:
             auto["contextWindow"] = min(d.context_window, cfg.models[cfg.summary_model].context_window)
             auto["summaryTo"] = cfg.summary_model
         listed = [auto] + ([describe(m) for m in cfg.models.values()] if cfg.expose_models else [])
-        return {"models": listed, "sessionStore": cfg.session_store}
+        return {"models": listed, "sessionStore": cfg.session_store, "web": cfg.web_enabled}
+
+    async def web_call(request: Request, kind: str):
+        from . import web
+
+        if not cfg.web_enabled:
+            return JSONResponse({"error": {"message": "web access is switched off on the Ferry server "
+                                           "(admin page > 设置 > 联网)"}}, status_code=403)
+        b = json.loads(await request.body() or b"{}")
+        started = time.time()
+        what = b.get("url", "") if kind == "fetch" else b.get("query", "")
+        row = dict(event="web", id=uuid.uuid4().hex[:12], user=request.state.user,
+                   project=unquote(request.headers.get("x-ferry-project", "")), kind=kind,
+                   host=(urlparse(what).hostname or what[:60]) if kind == "fetch" else cfg.web_engine)
+        try:
+            if kind == "fetch":
+                out = await web.fetch(str(what), allow=cfg.web_allow, proxy=cfg.web_proxy,
+                                      offset=max(0, int(b.get("offset") or 0)))
+            else:
+                out = await web.search(str(what), engine=cfg.web_engine, allow=cfg.web_allow, proxy=cfg.web_proxy,
+                                       count=max(1, min(int(b.get("count") or 8), 20)),
+                                       base=os.environ.get("FERRY_TEST_SEARCH_BASE", ""))
+        except (web.WebError, httpx.HTTPError) as e:
+            write(audit_log, **row, status=502, ms=int((time.time() - started) * 1000), error=str(e)[:200])
+            return JSONResponse({"error": {"message": f"{type(e).__name__}: {e}" if not isinstance(e, web.WebError) else str(e)}},
+                                status_code=502)
+        size = len(json.dumps(out, ensure_ascii=False).encode())
+        write(audit_log, **row, status=200, ms=int((time.time() - started) * 1000), upstream_bytes=size)
+        return out
+
+    @app.post("/v1/ferry/web/fetch")
+    async def web_fetch(request: Request):
+        return await web_call(request, "fetch")
+
+    @app.post("/v1/ferry/web/search")
+    async def web_search(request: Request):
+        return await web_call(request, "search")
 
     def route(requested: str, purpose: str):
         """The server decides which model answers. A client may name one only when routing.expose is on."""
@@ -234,10 +272,14 @@ def create_app(cfg: Config) -> FastAPI:
             if tools is not None:
                 payload["tools"] = tools
         purpose = (ref or {}).get("purpose") or "agent"
+        if purpose not in ("agent", "summary", "subagent"):
+            purpose = "agent"
         model = route(payload.get("model", ""), purpose)
 
-        project = request.headers.get("x-ferry-project", "")
+        project = unquote(request.headers.get("x-ferry-project", ""))  # sent URL-encoded: folder names can be Chinese
         rules = load_rules(cfg.rules_dir, project)
+        if not cfg.redact:  # no placeholders will appear, so the note about them is noise
+            rules = "\n".join(l for l in rules.splitlines() if "[FERRY-...]" not in l).strip()
         if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
             extra = (cfg.rules_dir / "_summary.md").read_text(encoding="utf-8").strip()
             rules = f"{rules}\n\n{extra}".strip() if extra else rules

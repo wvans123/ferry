@@ -205,9 +205,21 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 
 模型配置以**服务商**为核心（`models.toml` 里的 `[providers.*]`，模型用 `provider = "..."` 引用）：预设带好地址和推荐模型，页面上只需要填 API Key；Key 存在 `secrets.toml`，接口只返回末 4 位。旧写法（模型自带地址和 `api_key_env`）仍然可用，页面上按地址自动归到对应服务商下，保存时转换成新写法。页面的结构和参考来源见 [ADMIN-DESIGN.md](ADMIN-DESIGN.md)。
 
-## 15. 路线图
+## 15. 客户端 agent 的扩展（v0.10）
 
-1. 大输出写文件、自动记忆（见 CONTEXT-AND-MEMORY.md 第 4 节）。
-2. Claude 原生接口：服务端把 OpenAI 格式翻译成 Anthropic Messages API，加上提示词缓存和思考过程。
+全部写成 pi 的扩展，在 `ferry.mjs` 里通过 `extensionFactories` 装进去，不改 pi：
+
+| 扩展 | 做什么 | 用到的 pi 接口 |
+|---|---|---|
+| `memory.mjs` | 两层记忆（user / project），每层一个 `MEMORY.md` 索引加每条一个文件；索引作为系统提示里的 `<ferry_memory>` 段，每轮开始时重读；`memory` 工具只能碰记忆目录，所以不需要审批 | `before_agent_start` 改 `systemPromptOptions.sections`，`registerTool`，`registerCommand` |
+| `subagent.mjs` | `task` 工具：用 `createAgentSession` 在同一进程里另起一个会话（`SessionManager.inMemory`），只装 Ferry 自己的扩展；同步时 `purpose = "subagent"`，服务端调用记录能区分；审批借用主会话的 `ctx.ui`，标题里写明是哪个子 agent | SDK、`tool_execution_start` 事件、`onUpdate` |
+| `tools.mjs` | `todo`（状态放在工具结果的 `details` 里，切分支时从会话重建）；长输出写文件（`tool_result` 事件里替换结果，pi 已经截断的命令输出从它的完整临时文件取全文）；`history_search`（在当前分支的全部消息里搜，包括被摘要替换掉的） | `tool_result`，`sessionManager.getBranch()`，`ui.setWidget` |
+| `toolbins.mjs` | pi 用离线模式启动，不会自己下载 fd 和 rg：安装包带 `vendor/<平台>/`，`ferry install` 和每次启动时拷到 `agent/bin`；git 仓库安装时从 GitHub 下载固定版本 | pi 的 `getBinDir()` 约定 |
+
+系统提示变化（记忆更新、工具变化）由 pi 以增量的方式记进对话，第一条系统消息不变，所以 Ferry 的增量同步不受影响。
+
+## 16. 路线图
+
+1. Claude 原生接口：服务端把 OpenAI 格式翻译成 Anthropic Messages API，加上提示词缓存和思考过程。
 3. 服务端摘要：用便宜模型给被删掉的旧输出写摘要，而不是直接删。
 4. 管理面板：用户与令牌、用量和费用、审计查询。

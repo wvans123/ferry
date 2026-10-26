@@ -14,8 +14,9 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.9.0  server on this computer
+  Ferry v0.10.0  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
+  memory: 3 (/memory)  ·  subagents on  ·  ferry config to change
 
 > 读一下 notes.txt，然后新建 summary.md 总结它
   （agent 读文件；要写文件时先弹出 Allow / Deny 让你确认）
@@ -50,6 +51,8 @@ ferry
 
 `ferry doctor` 全是 OK 就说明 Key、网络、模型都没问题。逐步截图式说明和排错见 [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md)。
 
+用 `git clone` 拿到的代码没有依赖包：在文件夹里先 `npm ci`（要能访问 npm，公司网络先设好 `npm config set https-proxy ...`），再 `node client\bin\ferry.mjs install`。`install` 会从 GitHub 下载文件搜索要用的 `fd` 和 `rg`；下载不了时 `ferry doctor` 会提示，改用 Releases 里的安装包就行（已经带好）。
+
 ### 常用命令
 
 | 命令 | 作用 |
@@ -60,8 +63,48 @@ ferry
 | `ferry update` | 更新到 GitHub 上的最新版（访问不了 GitHub 时：`ferry update 下载好的.zip`） |
 | `ferry login 服务器地址 令牌` | 改用另一台机器上的服务端（前面有 Cloudflare Access 时加 `--header "CF-Access-Client-Id: ..."`） |
 | `ferry logout` | 回到本机服务端 |
+| `ferry config` | 查看客户端设置；`ferry config set memory false` 这样改 |
 
-对话里：`/new` 新开对话，`/compact` 手动压缩上下文，Shift+Enter（或 Ctrl+J）换行。
+对话里：**Shift+Tab 切换权限模式**，`/permissions` 看和删"以后都允许"的规则，`/new` 新开对话，`/compact` 手动压缩上下文，`/memory` 看记住了什么，`/settings` 改界面和压缩设置，Shift+Enter（或 Ctrl+J）换行。`ferry -c` 接着上次的对话，`ferry -r` 选一个以前的对话。
+
+## 客户端 agent 能做什么
+
+干活的 agent 跑在工作电脑上（[pi](https://github.com/earendil-works/pi) 引擎加 Ferry 的扩展），服务端只负责"问模型"这一步。所以工具、记忆、子 agent、上下文管理都在客户端，参考 Claude Code、Codex 和 pi 的做法：
+
+| 能力 | 怎么用 | 参考 |
+|---|---|---|
+| **文件和命令** | `read` `edit` `write` 读写文件；`bash`（没有 Git Bash 时用 PowerShell）执行命令，命令在工作电脑上跑，和你自己在 cmd 里敲一样；`grep` `find` `ls` 搜索和浏览（自带 ripgrep 和 fd） | pi |
+| **权限** | 四种模式，Shift+Tab 切换，底栏显示当前模式：**默认**（改文件、执行命令前问）、**自动改文件**（项目里的改动不问，命令照问）、**只读规划**（只能读和搜，先出方案）、**全部放行**。确认框里可以选"以后都允许这类命令"（比如 `npm test` 开头的都放行，按项目记住）。`git status`、`dir`、`rg` 这类只读命令不问；删目录、`git push --force`、`reset --hard` 这类危险操作除了全部放行模式都会问，并说明危险在哪；写项目文件夹以外的地方总要确认。规则也可以手写，见下文 | Claude Code 的权限模式、Codex 的审批策略 |
+| **联网** | `web_search` 搜索、`web_fetch` 读网页。工作电脑上不了外网，所以由服务端代为访问，只把文字传回来。服务端管理页"设置 → 联网"里打开，默认关闭，可以只放行指定网站 | Cursor、Claude Code 的网页工具 |
+| **浏览器** | `ferry config set browser true` 后，agent 能驱动工作电脑上的 Edge：打开网页、点击、填表、读页面（微软的 [Playwright MCP](https://github.com/microsoft/playwright-mcp)，安装包里带好，不下载浏览器）。走工作电脑自己的网络 | Claude in Chrome、Codex 的浏览器工具 |
+| **任务清单** | 多步任务时模型先列计划，输入框上方显示进度：`[x]` 完成、`[>]` 进行中 | Claude Code 的 TodoWrite |
+| **记忆** | 跨对话记住你的偏好、纠正、项目里的决定。分"你个人"（所有项目）和"这个项目"两层，存在工作电脑 `%USERPROFILE%\.ferry\memory`，一条一个 Markdown 文件。每次对话开头只带目录（每层最多 200 行），用到哪条再读哪条。说"记住……"或"忘掉……"即可；`/memory` 查看 | Claude Code 的 auto memory |
+| **子 agent** | `task` 工具把"在整个代码库里找……"这类活交给一个上下文全新的子 agent，只把结论带回主对话。内置 `explore`（只读搜索）和 `general`（和主 agent 一样的工具，改东西照样先问你）；几个子 agent 可以同时跑。自己的子 agent 写成 Markdown 放在项目的 `.ferry/agents/`（也认 Claude Code 的 `.claude/agents/`） | Claude Code 的 Task、pi 的 subagent 示例 |
+| **长输出写文件** | 命令或搜索输出超过 8KB 时，全文存到 `%USERPROFILE%\.ferry\outputs`，模型只看到开头、结尾和文件路径，需要时自己去读。每个请求都更小，压缩次数更少 | Cursor 的 dynamic context discovery |
+| **压缩和找回** | 上下文接近模型窗口时自动把旧内容写成摘要（`/compact` 手动触发；摘要可以由服务端交给便宜模型写）；压缩后模型用 `history_search` 在本地完整记录里找回原话、原报错 | pi、Cursor |
+| **规则** | 项目文件夹里的 `AGENTS.md`（也认 `CLAUDE.md`）每次自动带上；所有项目通用的写在 `%USERPROFILE%\.ferry\agent\AGENTS.md`；服务端还可以加团队规则 | pi、Codex、Claude Code |
+
+记忆、子 agent、长输出、浏览器、启动时的权限模式都在 `ferry config` 里。
+
+### 权限规则
+
+确认框里选"以后都允许"会自动写规则；也可以手写。三个文件，禁止优先于询问，询问优先于允许：
+
+| 文件 | 管哪里 |
+|---|---|
+| `%USERPROFILE%\.ferry\permissions.json` | 所有项目 |
+| `%USERPROFILE%\.ferry\projects\<文件夹名>-<编号>\permissions.json` | 一个项目，只给你自己（"以后都允许"写在这里） |
+| 项目里的 `.ferry\permissions.json` | 一个项目，可以提交进仓库给团队用 |
+
+```json
+{
+  "allow": ["bash(npm test*)", "bash(git commit*)", "edit(src/**)", "mcp__browser__*"],
+  "ask":   ["bash(git push*)"],
+  "deny":  ["bash(curl*)", "read(secrets/**)"]
+}
+```
+
+`bash(...)` 里是命令开头的样子，`*` 匹配任意内容；`edit(...)` `write(...)` `read(...)` 里是项目里的路径，`**` 匹配多层目录；`shell(...)` 同时管 bash 和 PowerShell。复合命令（`a && b`）要每一段都被允许才放行。
 
 ## 服务端管理页
 
@@ -182,13 +225,18 @@ flowchart LR
 | 单个请求 ≤ 1MB，但长会话的上下文会超过 1MB | 客户端每轮只上传新增消息，用哈希链校验双方一致；超过 512KB 的内容拆块上传；服务端拼回完整上下文再发给模型 | `client/lib/sync.mjs`、`server/ferry_server/store.py` |
 | 服务端缓存丢了怎么办 | 客户端始终保存完整记录；服务端只是缓存。校验不一致时返回 409，客户端自动全量重传 | 同上 |
 | 提示词由谁决定 | 和 Cursor 一样由服务端完成最终组装：通用规则 + 按项目的规则，改完下一轮即生效，不用动客户端 | `server/ferry_server/prompt.py` |
-| 敏感信息不外发 | 词表和正则命中的内容替换成确定性占位符 `[FERRY-XXXXXXXX]`（HMAC），同一个值始终对应同一个占位符，模型看到的对话前后一致 | `server/ferry_server/redact.py` |
+| 敏感信息不外发（可选，默认关闭） | 词表和正则命中的内容替换成确定性占位符 `[FERRY-XXXXXXXX]`（HMAC），同一个值始终对应同一个占位符，模型看到的对话前后一致 | `server/ferry_server/redact.py` |
 | 模型回复里的占位符 | 正文逐字转发，只暂扣可能是占位符开头的最多 15 个字符；工具调用参数在该轮结束时一次性还原后发出，客户端永远拿到真实路径和命令 | `server/ferry_server/stream.py` |
 | 用哪个模型由服务端决定 | 客户端只看到一个 `auto` 模型；服务端按设置把干活的请求和写摘要的请求分别发给不同模型。统一走 OpenAI 兼容接口：DeepSeek、OpenAI、Claude（Anthropic 的兼容接口） | `server/ferry_server/app.py`、`config.py` |
 | 服务端存不存对话 | 设置项 `session_store`：存磁盘（省流量）、只存内存、完全不存（每轮整段重传，仍按 512KB 分块，单个请求不超过 1MB） | `server/ferry_server/store.py` |
 | 本地安全底线 | 禁止目录、执行前确认都在客户端执行，服务端无法绕过；拦截原因里不含受保护的名字 | `client/lib/guard.mjs` |
 | 可审计 | 访问日志和审计日志只记大小、模型、脱敏计数、用量，不记对话内容 | `server/ferry_server/app.py` |
-| 上下文太长 | 两层压缩：pi 在接近模型窗口时把旧历史写成摘要；服务端在发给模型前封顶（默认 900KB），从最旧的工具输出开始删 | `server/ferry_server/prompt.py` |
+| 上下文太长 | 三层：长输出在客户端写文件，只给模型开头结尾；pi 在接近模型窗口时把旧历史写成摘要，压缩后能用 `history_search` 找回原文；服务端在发给模型前封顶（默认 900KB），从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/prompt.py` |
+| 记忆放哪 | 客户端：内容本来就是关于这台电脑上的代码和你的习惯；服务端只转发，换服务端不丢记忆。只有目录进系统提示，正文按需读取 | `client/lib/memory.mjs` |
+| 子 agent | 在同一个进程里另起一个 pi 会话（内存里，不存盘），作为一个独立对话同步到服务端；审批对话框借用主窗口 | `client/lib/subagent.mjs` |
+| 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |
+| 系统提示 | 用 Ferry 自己的开场和工作方式代替 pi 的（不再提 pi 文档，避免模型去翻 agent 自己的配置），保留 pi 的工具说明，加上操作系统、shell、日期、是否 git 仓库 | `client/lib/prompt.mjs` |
+| 联网 | 服务端代为访问；只允许 http(s)，拒绝本机和内网地址（管理页信任本机来的请求，不能让网页请求绕到它），每次跳转都重新检查；可设网站白名单 | `server/ferry_server/web.py` |
 | 公司代理 | 客户端所有请求统一走代理（环境变量或配置项），支持 NO_PROXY | `client/lib/config.mjs` |
 | 好装、好更新 | 离线安装包 + `ferry install`；`ferry update` 从 GitHub 发布页取最新版；没登录远程服务端时自动在本机启动服务端 | `client/lib/setup.mjs` |
 | 不重复造轮子 | Agent 循环、工具和终端界面直接用开源的 [pi](https://github.com/earendil-works/pi)（MIT），通过它公开的 `main()` 和扩展接口嵌入，不 fork 内核 | `client/bin/ferry.mjs` |
@@ -203,7 +251,11 @@ flowchart LR
 | 工具执行（读写文件、命令） | 客户端 | 客户端 |
 | 最终提示词组装 | 服务端（官方文档说明即使用自己的 API Key 也经服务端） | 服务端 |
 | 模型调用和 API Key | 服务端 | 服务端 |
-| 代码库语义检索 | 服务端索引 | 路线图中 |
+| 代码库语义检索 | 服务端索引 | 不做（要把代码上传建索引）；用 grep + 子 agent 搜索 |
+| 记忆 | Memories（服务端生成，需批准） | 客户端文件，模型用 `memory` 工具读写，你可以直接改 |
+| 子 agent | 有 | `task` 工具，内置 explore / general，可自定义 |
+| 权限 | 有 | 四种模式、按项目记住的规则、只读命令白名单、危险命令总是问（参考 Claude Code） |
+| 读网页、搜索 | 服务端执行 | 服务端执行，默认关闭 |
 
 ## 开发
 
@@ -221,7 +273,9 @@ node client/bin/ferry.mjs      # 直接从源码运行
 ## 目录
 
 ```
-client/     ferry 命令行（Node.js）：bin/ferry.mjs 入口，lib/ 下是同步、安全规则、界面扩展、安装和更新
+client/     ferry 命令行（Node.js）：bin/ferry.mjs 入口；lib/ 下是同步（sync）、安全规则（guard）、记忆（memory）、
+            子 agent（subagent）、任务清单和长输出（tools）、权限（permissions、guard）、系统提示（prompt）、
+            联网（web）、浏览器（browser）、fd/rg（toolbins）、安装和更新（setup）
 server/     ferry-server（Python / FastAPI）：会话缓存、提示词组装、脱敏、流式还原、模型适配
 selftest/   端到端自测：假模型、假代理、run.py
 deploy/     部署：Mac 开机自启（mac/autostart.sh）、Linux systemd 服务、Caddy HTTPS
@@ -232,11 +286,11 @@ docs/       设计说明（DESIGN.md）、上下文和记忆方案（CONTEXT-AND
 
 ## 离商业级还差什么
 
-v0.9 是一个可以自用、可以演示的原型：核心链路有 25 个单元测试和 28 项端到端测试覆盖。离商业产品还差下面这些：
+v0.10 是一个可以自用、可以演示的原型：37 个单元测试（服务端 31、客户端权限 6）和 37 项端到端测试覆盖。离商业产品还差下面这些：
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|
-| 核心功能 | 增量同步、服务端组装提示词和选模型、可逆脱敏、流式还原、两层压缩 | 自动记忆和大输出写文件（方案见 [docs/CONTEXT-AND-MEMORY.md](docs/CONTEXT-AND-MEMORY.md)）、Claude 原生接口（提示词缓存）、服务端摘要 |
+| 核心功能 | 增量同步、服务端组装提示词和选模型、可逆脱敏、流式还原、三层上下文管理、记忆、子 agent、任务清单、权限模式、联网、浏览器 | Claude 原生接口（提示词缓存）、服务端摘要、会话结束后自动整理记忆、命令在沙箱里跑（Codex 的做法） |
 | 可靠性 | 缓存丢失自动恢复（含调用模型前一刻）、版本协商 | 多实例部署（目前单机 SQLite）、数据备份 |
 | 安全 | 多用户隔离、恒定时间令牌比较、拒绝弱密钥、HTTPS 警告、日志不含正文 | 限流、令牌过期与轮换、客户端令牌存进系统凭据库（现在是配置文件明文） |
 | 脱敏 | 词表 + 正则，覆盖正文、工具参数、流式输出 | 自动识别人名和机构名（NER），图片内容 |
@@ -246,7 +300,8 @@ v0.9 是一个可以自用、可以演示的原型：核心链路有 25 个单�
 
 ## 限制
 
-- 只有词表和正则里的内容会被替换；没有列入的信息仍会发给模型。脱敏是降低风险，不是保证。
+- 脱敏默认关闭，在管理页打开。打开后也只有词表和正则里的内容会被替换；没有列入的信息仍会发给模型。脱敏是降低风险，不是保证。
+- 联网工具让工作电脑经你的服务端访问外网，绕开了公司网关对这些网址的检查。打开前请确认公司规定允许。
 - 服务端在处理请求时能看到完整会话原文（`session_store = "none"` 时处理完就丢），所以服务端本身必须可信，并只通过 HTTPS 访问。
 - 还没在真实的公司电脑、真实模型和公司代理下验证过。
 

@@ -135,12 +135,12 @@ class Stack:
         extra = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
         self.procs.append(subprocess.Popen(cmd, env=self.env, stdout=log, stderr=subprocess.STDOUT, **extra))
 
-    def ferry(self, *args, token=TOKEN, timeout=600, local=False) -> tuple[int, str]:
-        env = {**self.env, "FERRY_SERVER": self.base, "FERRY_TOKEN": token}
+    def ferry(self, *args, token=TOKEN, timeout=600, local=False, cwd=None, env_extra=None) -> tuple[int, str]:
+        env = {**self.env, "FERRY_SERVER": self.base, "FERRY_TOKEN": token, **(env_extra or {})}
         if local:  # like a fresh install: no server configured, nothing but DEEPSEEK_API_KEY in the environment
             env = {k: v for k, v in self.env.items() if k not in ("FERRY_SERVER", "FERRY_TOKEN", "FERRY_SECRET",
                                                                    "ANTHROPIC_API_KEY", "OPENAI_API_KEY")}
-        p = subprocess.run([*FERRY, *args], cwd=self.work, capture_output=True, text=True, encoding="utf-8",
+        p = subprocess.run([*FERRY, *args], cwd=cwd or self.work, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, env=env)
         (self.root / "client.out").write_text(p.stdout + "\n--- stderr ---\n" + p.stderr, encoding="utf-8")
         return p.returncode, p.stdout + p.stderr
@@ -176,6 +176,114 @@ def system_text(body: dict) -> str:
     return c if isinstance(c, str) else json.dumps(c, ensure_ascii=False)
 
 
+def check_agent_features(root: Path, work: Path) -> None:
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "MEMTEST-SAVE: remember that tests use the real database")
+        c2, o2 = s.ferry("-p", "MEMTEST-RECALL: what do you remember?")  # a new conversation
+        mem = list((s.home / "memory" / "projects").glob("*/test-db.md"))
+        index = list((s.home / "memory" / "projects").glob("*/MEMORY.md"))
+        check("F28 记忆跨会话、存在客户端", c1 == 0 and "Saved project memory" in o1 and c2 == 0 and "INDEX HAS test-db" in o2
+              and len(mem) == 1 and index and "[test-db](test-db.md)" in index[0].read_text(encoding="utf-8"),
+              "模型用 memory 工具记下一条；记忆文件在工作电脑的 FERRY_HOME/memory；下一次新对话的系统提示里带着记忆索引")
+
+        before = len(jsonl(s.upstream))
+        c3, o3 = s.ferry("-p", "TASKTEST: explore the data folder")
+        ups = jsonl(s.upstream)[before:]
+        sub = [u for u in ups if "<ferry_subagent>" in system_text(u)]
+        main = [u for u in ups if "<ferry_subagent>" not in system_text(u)]
+        purposes = [a.get("purpose") for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "chat"]
+        main_tools = [m for m in main[-1]["messages"] if m.get("role") == "tool"] if main else []
+        check("F29 子 agent", c3 == 0 and "EXPLORE REPORT" in o3 and len(sub) >= 3 and len(main) == 2
+              and len(main_tools) == 1 and "subagent" in purposes,
+              f"主对话调用 task，子 agent 用自己的上下文跑了 {len(sub)} 次模型（ls、read、写报告），"
+              f"主对话只多了 1 条结果；服务端调用记录标为 subagent")
+
+        c4, o4 = s.ferry("-p", "BIGTEST: print a long output")
+        saved = list((s.home / "outputs").rglob("bash-*.txt"))
+        lines = saved[0].read_text(encoding="utf-8").count("\n") if saved else 0
+        size = re.search(r"size=(\d+)", o4)
+        check("F30 长输出写文件", c4 == 0 and "saved=True" in o4 and "last=True" in o4 and size and int(size.group(1)) < 9000
+              and lines >= 2999, f"3000 行输出全文存到客户端文件；模型只收到开头、结尾和路径，约 {size.group(1) if size else '?'} 字符")
+
+        c5, o5 = s.ferry("-p", "TODOTEST: plan it")
+        check("F31 任务清单", c5 == 0 and "[x] step one | [>] step two" in o5, "todo 工具记下两步，一步完成、一步进行中")
+
+        ask = {"FERRY_AUTO_APPROVE": "0"}  # the stack auto-approves; these runs use the real permission check
+        c6, o6 = s.ferry("-p", "PERMTEST: touch a file", env_extra=ask)
+        blocked = c6 == 0 and "needs the user's approval" in o6 and not (work / "perm-ok.txt").exists()
+        perm_file = s.home / "permissions.json"
+        perm_file.write_text(json.dumps({"allow": ["bash(touch*)"]}), encoding="utf-8")
+        c7, o7 = s.ferry("-p", "PERMTEST: touch a file", env_extra=ask)
+        by_rule = c7 == 0 and "PERM: touched" in o7
+        perm_file.unlink()
+        (work / "perm-ok.txt").unlink(missing_ok=True)
+        (s.home / "config.json").write_text(json.dumps({"permissionMode": "plan"}), encoding="utf-8")
+        c8, o8 = s.ferry("-p", "PERMTEST: touch a file", env_extra=ask)
+        planned = c8 == 0 and "Plan mode is on" in o8 and not (work / "perm-ok.txt").exists()
+        (s.home / "config.json").write_text(json.dumps({"permissionMode": "bypass"}), encoding="utf-8")
+        c9, o9 = s.ferry("-p", "PERMTEST: touch a file", env_extra=ask)
+        (s.home / "config.json").unlink()
+        check("F32 权限模式和规则", blocked and by_rule and planned and c9 == 0 and "PERM: touched" in o9,
+              "没有终端时需要确认的命令被拦下；允许规则放行同类命令；只读规划模式拒绝改动；全部放行模式不问")
+
+        ups = jsonl(s.upstream)
+        sys0 = system_text(ups[-1]) if ups else ""
+        check("F33 Ferry 自己的系统提示", "You are Ferry" in sys0 and "Pi documentation" not in sys0
+              and "PI_" not in sys0 and "<environment>" in sys0 and "Today's date" in sys0,
+              "不再提 pi 和它的文档，带上操作系统、shell、日期")
+
+        cn = work.parent / "中文 项目"
+        cn.mkdir(exist_ok=True)
+        c10, o10 = s.ferry("-p", "TODOTEST: plan it", cwd=cn)
+        projects = [a.get("project") for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "chat"]
+        check("F34 中文文件夹名", c10 == 0 and "[x] step one" in o10 and "中文 项目" in projects,
+              "在名字含中文和空格的文件夹里运行正常，服务端记录的项目名正确")
+    finally:
+        s.close()
+
+
+def find_browser() -> str:
+    """A Chrome/Chromium/Edge for the browser test, or "" (the test is then skipped)."""
+    cands = [os.environ.get("FERRY_TEST_BROWSER", ""), r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+             r"C:\Program Files\Google\Chrome\Application\chrome.exe", "/usr/bin/google-chrome", "/usr/bin/chromium"]
+    cands += sorted(str(p) for p in Path("/opt/pw-browsers").glob("chromium-*/chrome-linux*/chrome")) if Path("/opt/pw-browsers").exists() else []
+    return next((c for c in cands if c and Path(c).exists()), "")
+
+
+def check_web_browser(root: Path, work: Path) -> None:
+    s = Stack(root, work, "agent", server_env={"FERRY_WEB": "0"})
+    try:
+        c0, o0 = s.ferry("-p", "WEBTEST: look it up")
+        off_ok = c0 == 0 and "web_search" not in json.dumps(jsonl(s.upstream)[-1].get("tools", []))
+        code, status = s.http("POST", "/v1/ferry/web/fetch", {"url": "http://example.com"})
+        refused = code == 403 and "switched off" in json.dumps(status)
+    finally:
+        s.close()
+    s = Stack(root.parent / (root.name + "-on"), work, "agent", server_env={
+        "FERRY_WEB": "1", "FERRY_TEST_WEB_LOCAL": "1", "FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100"})
+    try:
+        c1, o1 = s.ferry("-p", "WEBTEST: look it up")
+        web = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "web"]
+        check("F35 联网由服务端代办", off_ok and refused and c1 == 0 and "pelican-42" in o1
+              and [a.get("kind") for a in web] == ["search", "fetch"],
+              "关闭时工作电脑看不到联网工具、接口拒绝；打开后搜索和读网页都由服务端完成，调用记录里有两条联网记录")
+        browser = find_browser()
+        if not browser:
+            print("  SKIP  F36 浏览器（这台机器上没有 Chrome / Edge）")
+            return
+        s.home.mkdir(parents=True, exist_ok=True)
+        root = hasattr(os, "geteuid") and os.geteuid() == 0
+        extra = ["--no-sandbox"] if root or os.environ.get("CI") else []  # CI and root: no Chrome sandbox
+        (s.home / "config.json").write_text(json.dumps({"browser": True, "browserHeadless": True,
+                                                        "browserPath": browser, "browserArgs": extra}), encoding="utf-8")
+        c2, o2 = s.ferry("-p", "BROWSERTEST: open the page", timeout=300)
+        check("F36 浏览器", c2 == 0 and "BROWSER: pelican-42" in o2,
+              f"agent 用本机浏览器（{Path(browser).name}）打开测试页面，读到页面内容" if "pelican-42" in o2 else o2[-400:])
+    finally:
+        s.close()
+
+
 def check_install_update(root: Path) -> None:
     """ferry install, then ferry update against a fake GitHub "latest release" API serving a newer zip."""
     import http.server
@@ -188,7 +296,7 @@ def check_install_update(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "FERRY_HOME": str(root / "home"), "FERRY_INSTALL_DIR": str(inst), "FERRY_BIN_DIR": str(bin_dir),
            "FERRY_CLIENT_ONLY": "1", "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
-           "FERRY_UPDATE_URL": "http://127.0.0.1:9200/latest"}
+           "FERRY_UPDATE_URL": "http://127.0.0.1:9200/latest", "FERRY_NO_TOOL_DOWNLOAD": "1"}
     for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         env.pop(k, None)
     shim = [str(bin_dir / "ferry.cmd")] if WINDOWS else [str(bin_dir / "ferry")]
@@ -247,7 +355,7 @@ def main() -> int:
     print(f"logs: {base}")
     prompt = "请读取 Project Titan 目录下的 notes.txt 并告诉我内容"
 
-    print("\n[1/12] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
+    print("\n[1/14] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
     s = Stack(base / "basic", work, "basic")
     try:
         code, out = s.ferry("--mode", "json", "-p", prompt)
@@ -289,7 +397,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print(f"\n[2/12] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
+    print(f"\n[2/14] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
     cheap = ('\n[models.cheap]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\n'
              'model = "cheap-model"\ncontext_window = 300000\nmax_tokens = 8192\ndrop_params = ["store"]\n'
              'rename_params = { max_completion_tokens = "max_tokens" }\n\n[routing]\ndefault = "main"\nsummary = "cheap"\n')
@@ -331,7 +439,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[3/12] 服务端不保存会话（session_store = none）", flush=True)
+    print("\n[3/14] 服务端不保存会话（session_store = none）", flush=True)
     s = Stack(base / "nostore", work, "long:4", session_store="none")
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -345,7 +453,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[4/12] 服务端频繁丢失会话", flush=True)
+    print("\n[4/14] 服务端频繁丢失会话", flush=True)
     s = Stack(base / "drop", work, "long:8", drop_every=3)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -357,7 +465,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[5/12] 本地安全规则", flush=True)
+    print("\n[5/14] 本地安全规则", flush=True)
     s = Stack(base / "guard", work, "basic")
     try:
         (s.home).mkdir(parents=True, exist_ok=True)
@@ -369,7 +477,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[6/12] 经公司代理访问服务端", flush=True)
+    print("\n[6/14] 经公司代理访问服务端", flush=True)
     s = Stack(base / "proxy", work, "basic", server_host="127.0.0.2")
     try:
         plog = s.root / "proxy.log"
@@ -388,7 +496,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[7/12] 服务端前面有登录页（像 Cloudflare Access）", flush=True)
+    print("\n[7/14] 服务端前面有登录页（像 Cloudflare Access）", flush=True)
     s = Stack(base / "gate", work, "long:2", server_env={"FERRY_TEST_REQUIRE_HEADER": "CF-Access-Client-Id"})
     try:
         code_b, out_b = s.ferry("doctor")
@@ -404,7 +512,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[8/12] 调用模型前一刻服务端丢了缓存", flush=True)
+    print("\n[8/14] 调用模型前一刻服务端丢了缓存", flush=True)
     s = Stack(base / "chatdrop", work, "long:6", drop_before_chat=2)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -415,7 +523,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[9/12] 多用户隔离、版本协商、弱密钥", flush=True)
+    print("\n[9/14] 多用户隔离、版本协商、弱密钥", flush=True)
     s = Stack(base / "users", work, "basic")
     try:
         code, out = s.ferry("-p", prompt)  # wesley sends "Project Titan" once, so wesley owns its placeholder
@@ -444,7 +552,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[10/12] 服务端压缩：发给模型的请求有上限", flush=True)
+    print("\n[10/14] 服务端压缩：发给模型的请求有上限", flush=True)
     s = Stack(base / "cap", work, f"long:{LONG_FILES}", context_window=1_000_000, max_upstream=400_000)
     try:
         code, out = s.ferry("-p", "请按指示读取 data 目录下的文件")
@@ -455,7 +563,7 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[11/12] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
+    print("\n[11/14] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
     s = Stack(base / "zero", work, "long:3", start_server=False)
     try:
         code_d, out_d = s.ferry("doctor", local=True)
@@ -483,7 +591,13 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[12/12] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
+    print("\n[12/14] 客户端 agent：记忆、子 agent、长输出、任务清单、权限、系统提示、中文路径", flush=True)
+    check_agent_features(base / "agent", work)
+
+    print("\n[13/14] 联网（服务端代办）和浏览器", flush=True)
+    check_web_browser(base / "web", work)
+
+    print("\n[14/14] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
     check_install_update(base / "install")
 
     failed = [r for r in results if not r[1]]

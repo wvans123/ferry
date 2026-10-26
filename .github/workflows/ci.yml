@@ -34,7 +34,9 @@ jobs:
       - run: npm ci
       - run: python -m pip install -e server pytest
       - name: unit tests
-        run: python -m pytest -q server/tests
+        run: |
+          python -m pytest -q server/tests
+          node --test "client/test/*.test.mjs"
       - name: end-to-end self-test (fake model, no API key)
         run: python selftest/run.py
 

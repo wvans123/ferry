@@ -1,6 +1,7 @@
 """Load ferry-server.toml. Secrets (API keys, user tokens) are read from environment variables, never from the file."""
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import tomllib
@@ -85,7 +86,7 @@ class Config:
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
-    redact: bool = True  # false: send content to the model as is (the word list is ignored)
+    redact: bool = False  # true: replace words from the list and built-in patterns with placeholders before the model
     # the server picks the model: clients ask for "auto"; summaries can go to a cheaper model
     default_model: str = ""
     summary_model: str = ""
@@ -99,6 +100,11 @@ class Config:
     models: dict[str, ModelConfig] = field(default_factory=dict)
     providers: dict[str, Provider] = field(default_factory=dict)
     record_details: bool = False  # keep the last requests' prompts in memory for the admin page
+    # web access for the work computer's agent (web_fetch / web_search run here); off unless switched on
+    web_enabled: bool = False
+    web_allow: list[str] = field(default_factory=list)  # empty: every site; else these sites and their subdomains
+    web_engine: str = "bing"  # bing (reachable from mainland China) or duckduckgo
+    web_proxy: str = ""       # e.g. http://127.0.0.1:7890 when this computer reaches the internet through a proxy
 
 
 def load(path: str | os.PathLike) -> Config:
@@ -121,7 +127,12 @@ def load(path: str | os.PathLike) -> Config:
         session_ttl_days=int(s.get("session_ttl_days", 7)),
         max_upstream_bytes=int(s.get("max_upstream_bytes", 0)),
         session_store=s.get("session_store", "disk"),
-        redact=bool(s.get("redact", True)),
+        redact=bool(s.get("redact", False)),
+        web_enabled=(os.environ["FERRY_WEB"].lower() in ("1", "true", "on", "yes")) if os.environ.get("FERRY_WEB")
+        else bool(s.get("web", False)),
+        web_allow=list(s.get("web_allow", [])),
+        web_engine=s.get("web_engine", "bing"),
+        web_proxy=s.get("web_proxy", ""),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -443,11 +454,15 @@ def load_default() -> Config:
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
         redact=(env("FERRY_REDACT").lower() not in ("0", "false", "off", "no")) if env("FERRY_REDACT")
-        else bool(saved.get("redact", True)),
+        else bool(saved.get("redact", False)),
         models_file=models_file,
         settings_file=settings_file,
         public_url=saved.get("public_url", ""),
         record_details=bool(saved.get("record_details", False)),
+        web_enabled=(env("FERRY_WEB").lower() in ("1", "true", "on", "yes")) if env("FERRY_WEB") else bool(saved.get("web", False)),
+        web_allow=list(saved.get("web_allow", [])),
+        web_engine=saved.get("web_engine", "bing"),
+        web_proxy=saved.get("web_proxy", ""),
     )
     apply_models_file(cfg, models_file)
     cfg.models_mtime = models_file.stat().st_mtime
@@ -466,4 +481,8 @@ def save_settings(cfg: Config) -> None:
         f'session_store = "{cfg.session_store}"\n'
         f"redact = {'true' if cfg.redact else 'false'}\n"
         f"max_upstream_bytes = {int(cfg.max_upstream_bytes)}\n"
-        f"record_details = {'true' if cfg.record_details else 'false'}\n", encoding="utf-8")
+        f"record_details = {'true' if cfg.record_details else 'false'}\n"
+        f"web = {'true' if cfg.web_enabled else 'false'}\n"
+        f"web_allow = {json.dumps(cfg.web_allow, ensure_ascii=False)}\n"
+        f"web_engine = {json.dumps(cfg.web_engine)}\n"
+        f"web_proxy = {json.dumps(cfg.web_proxy)}\n", encoding="utf-8")

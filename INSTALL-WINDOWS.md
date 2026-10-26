@@ -38,22 +38,22 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(�
 - Node.js 22 或更高（你已有 v25.8.1）。
 - Python 3.11 到 3.14 之一。在 cmd 里输入 `python --version` 能看到版本号即可；提示"不是内部或外部命令"时试 `py -3 --version`。都没有的话，从 python.org 安装，安装时勾选 "Add python.exe to PATH"。
 
-1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.9.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
-2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.9.0` 文件夹。
+1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.10.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
+2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.10.0` 文件夹。
 3. 在 cmd 里进入这个文件夹，运行安装命令：
 
    ```bat
-   cd /d %USERPROFILE%\Downloads\ferry-0.9.0
+   cd /d %USERPROFILE%\Downloads\ferry-0.10.0
    node client\bin\ferry.mjs install
    ```
 
    正常输出：
 
    ```
-   Installing Ferry 0.9.0
-     files     C:\Users\你\AppData\Local\Ferry\versions\0.9.0
+   Installing Ferry 0.10.0
+     files     C:\Users\你\AppData\Local\Ferry\versions\0.10.0
      server    python -m pip install ... ferry-server
-     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.9.0 ...）
+     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.10.0 ...）
      command   C:\Users\你\AppData\Roaming\npm\ferry.cmd
 
    Done. Open a NEW cmd window, go to a project folder and run:  ferry
@@ -62,6 +62,22 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(�
    安装做了三件事：把程序复制到 `%LOCALAPPDATA%\Ferry`；用 pip 把服务端装进现有的 Python（离线，用安装包里带的文件）；在 Node.js 的命令目录里放一个 `ferry` 命令。解压出来的文件夹之后可以删掉。
 
 4. **关掉这个 cmd 窗口，重新打开一个**，新窗口才认识 `ferry` 命令。
+
+### 用 git clone 拿到的代码
+
+仓库里没有依赖包（`node_modules`），多一步 `npm ci`：
+
+```bat
+cd /d 你clone下来的ferry文件夹
+git pull
+npm ci
+node client\bin\ferry.mjs install --client-only
+```
+
+- `npm ci` 从 npm 下载约 150MB。公司网络要先设代理：`npm config set proxy http://代理:端口` 和 `npm config set https-proxy http://代理:端口`。
+- `install` 还会从 GitHub 下载文件搜索要用的 `fd.exe` 和 `rg.exe`。下载失败时 `ferry doctor` 会提示，agent 照样能用，只是没有 `grep`/`find` 工具；把 Releases 安装包里 `vendor\win32-x64\` 下的两个文件拷到 `%USERPROFILE%\.ferry\agent\bin\` 也行。
+- 只连远程服务端时加 `--client-only`，不需要 Python。
+- 以后更新：`git pull`、`npm ci`，再跑一次 `install`。
 
 ## 第二步：检查环境
 
@@ -72,13 +88,14 @@ ferry doctor
 全部正常时：
 
 ```
-Ferry 0.9.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
+Ferry 0.10.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
   info  commands run with: PowerShell (Git Bash not found)
+  OK    search tools: fd and rg (C:\Users\你\.ferry\agent\bin)
   info  proxy: none
   info  no remote server set: using a Ferry server on this computer
   OK    server installed for python
   OK    server running at http://127.0.0.1:5xxxx
-  OK    server reachable in 3 ms (server 0.9.0, protocol 1)
+  OK    server reachable in 3 ms (server 0.10.0, protocol 1)
   OK    token accepted; the server picks the model: auto -> deepseek (deepseek-chat)
   info  conversation on the server: cached in memory only; the full history stays on this computer
   info  asking each model for a two-word answer (a few tokens)...
@@ -106,7 +123,7 @@ echo 服务器 test-host-01 的地址是 10.9.8.7 > notes.txt
 ferry
 ```
 
-进入界面后，顶部显示 `Ferry v0.9.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
+进入界面后，顶部显示 `Ferry v0.10.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
 
 ```
 读一下 notes.txt，然后新建 summary.md，用一句话总结它的内容
@@ -198,11 +215,11 @@ setx FERRY_REDACT 0
 想确认这台 Windows 上一切正常（不需要 Key，不访问外网），在解压出来的文件夹里运行：
 
 ```bat
-cd /d %USERPROFILE%\Downloads\ferry-0.9.0
+cd /d %USERPROFILE%\Downloads\ferry-0.10.0
 python selftest\run.py
 ```
 
-它会依次启动假模型、Ferry 服务端、客户端和假代理，跑 10 组场景，最后一行是 `结果: 25/25 通过`。长会话那一组要几分钟。用到本机端口 8787、8899、9100、9200。有 `FAIL` 时把整个窗口的输出发给我。
+它会依次启动假模型、Ferry 服务端、客户端和假代理，跑 13 组场景，最后一行是 `结果: 32/32 通过`。长会话那一组要几分钟。用到本机端口 8787、8899、9100、9200。有 `FAIL` 时把整个窗口的输出发给我。
 
 ## 文件都在哪
 
@@ -210,6 +227,9 @@ python selftest\run.py
 |---|---|
 | `%LOCALAPPDATA%\Ferry\versions\` | 程序本身（当前版本和上一个版本） |
 | `%USERPROFILE%\.ferry\` | 客户端设置 `config.json`、对话记录 `agent\sessions\`、服务端日志 `server.log` |
+| `%USERPROFILE%\.ferry\memory\` | 记忆：`user\` 是跟着你走的，`projects\<文件夹名>-<编号>\` 是每个项目的；都是 Markdown，可以直接改、删 |
+| `%USERPROFILE%\.ferry\outputs\` | 太长的命令输出全文（保留 7 天） |
+| `%USERPROFILE%\.ferry\agent\` | agent 设置 `settings.json`、所有项目通用的规则 `AGENTS.md`、`bin\` 里的 `fd.exe` 和 `rg.exe` |
 | `%USERPROFILE%\.ferry-server\` | 服务端数据：会话缓存、审计日志、规则 `rules\_global.md`、脱敏词表 `dictionary.toml` |
 
 脱敏词表 `%USERPROFILE%\.ferry-server\dictionary.toml` 里可以加你们公司的项目名、主机名等，保存后下次启动 ferry 生效。规则文件改完下一轮对话就生效。

@@ -8,6 +8,7 @@ max_body_bytes = 1000000   # 单个请求体上限（字节），超出返回 41
 data_dir = "data"          # 会话缓存、占位符映射、日志
 rules_dir = "rules"        # 服务端规则：_global.md + <项目名>.md
 dictionary = "dictionary.toml"
+redact = true              # 脱敏：词表和内置规则命中的内容换成占位符再发给模型（默认关闭）
 secret_env = "FERRY_SECRET"  # 生成占位符用的密钥；换了以后旧占位符无法还原
 session_ttl_days = 7
 

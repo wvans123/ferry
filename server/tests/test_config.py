@@ -75,6 +75,8 @@ def test_redaction_can_be_switched_off(tmp_path, monkeypatch):
     assert not red.mask_payload(p, "u") and p["messages"][0]["content"] == "mail bob@corp.example at 10.1.2.3"
     monkeypatch.setenv("FERRY_REDACT", "1")
     assert load_default().redact is True
+    monkeypatch.delenv("FERRY_REDACT")
+    assert load_default().redact is False  # off unless switched on
 
 
 def test_models_file_written_then_hot_reloaded(tmp_path, monkeypatch):

@@ -15,7 +15,8 @@ const SUMMARY = /^\{"role":"(system|developer)","content":"You are a context sum
 
 export class FerryError extends Error {}
 
-export function createSyncProvider(cfg, models) {
+/** opts.purpose: "agent" (default) or "subagent"; tells the server what the requests are for. */
+export function createSyncProvider(cfg, models, opts = {}) {
 	const known = new Map(); // conv -> { count, hash } the server has acknowledged
 	const knownTools = new Set();
 	const project = process.env.FERRY_PROJECT ?? basename(process.cwd());
@@ -81,7 +82,7 @@ export function createSyncProvider(cfg, models) {
 		if (toolsHash) knownTools.add(toolsHash);
 		const { messages: _m, tools: _t, ...rest } = payload;
 		// tell the server what this request is for, so it can send context summaries to a cheaper model
-		const purpose = SUMMARY.test(msgs[0] ?? "") ? "summary" : "agent";
+		const purpose = SUMMARY.test(msgs[0] ?? "") ? "summary" : (opts.purpose ?? "agent");
 		return { ...rest, messages: [], ferry: { conv, count: ack.count, hash: ack.hash, tools_hash: toolsHash, purpose } };
 	}
 
@@ -112,7 +113,7 @@ export function createSyncProvider(cfg, models) {
 		const attempt = () => openAICompletionsApi().streamSimple(inner, context, {
 			...options,
 			apiKey: cfg.token,
-			headers: { ...(options?.headers ?? {}), ...(cfg.headers ?? {}), "x-ferry-project": project,
+			headers: { ...(options?.headers ?? {}), ...(cfg.headers ?? {}), "x-ferry-project": encodeURIComponent(project), // headers must be ASCII; folder names may not be
 				"x-ferry-protocol": PROTOCOL },
 			onPayload: async (payload, m) => {
 				const replaced = userOnPayload ? await userOnPayload(payload, m) : undefined;

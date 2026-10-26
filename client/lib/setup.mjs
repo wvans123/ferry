@@ -17,6 +17,7 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FERRY_HOME, saveConfig } from "./config.mjs";
+import { downloadMissing, installBundled, toolStatus } from "./toolbins.mjs";
 
 export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WIN = process.platform === "win32";
@@ -122,7 +123,7 @@ function binDir() {
  * `ferry install`, run from an unpacked Ferry folder (a release zip or a git checkout):
  * copy it to the install folder, install the server into the normal Python (no venv), add the `ferry` command.
  */
-export function install(version, clientOnly = !!process.env.FERRY_CLIENT_ONLY) {
+export async function install(version, clientOnly = !!process.env.FERRY_CLIENT_ONLY) {
 	const { dir, cmdDir } = installBase();
 	const dest = join(dir, "versions", version);
 	const say = (m) => console.log(m);
@@ -136,6 +137,19 @@ export function install(version, clientOnly = !!process.env.FERRY_CLIENT_ONLY) {
 		}
 	}
 	say(`  files     ${dest}`);
+
+	// fd and ripgrep for the agent's file search tools: from the release zip, else from GitHub (git checkout)
+	installBundled(dest);
+	let missing = Object.entries(toolStatus()).filter(([, s]) => !s).map(([n]) => n);
+	if (missing.length && !process.env.FERRY_NO_TOOL_DOWNLOAD) {
+		say(`  tools     downloading ${missing.join(", ")} from GitHub...`);
+		const r = await downloadMissing();
+		if (r.failed.length) say(`  tools     could not download ${r.failed.join(", ")}`);
+		missing = Object.entries(toolStatus()).filter(([, s]) => !s).map(([n]) => n);
+	}
+	say(missing.length
+		? `  tools     ${missing.join(" and ")} missing: file search is slower. Use the release zip (it includes them).`
+		: "  tools     fd and rg ready");
 
 	// the server half, into the Python that is already there
 	const py = clientOnly ? null : findPython({}, false);

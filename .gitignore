@@ -8,3 +8,4 @@ dictionary.toml
 .selftest-install/
 dist/
 build/
+vendor/
