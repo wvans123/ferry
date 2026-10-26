@@ -75,3 +75,25 @@ def test_redaction_can_be_switched_off(tmp_path, monkeypatch):
     assert not red.mask_payload(p, "u") and p["messages"][0]["content"] == "mail bob@corp.example at 10.1.2.3"
     monkeypatch.setenv("FERRY_REDACT", "1")
     assert load_default().redact is True
+
+
+def test_models_file_written_then_hot_reloaded(tmp_path, monkeypatch):
+    import os
+    from ferry_server.config import load_default, refresh_models
+
+    env(monkeypatch, DEEPSEEK_API_KEY="d")
+    monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
+    cfg = load_default()
+    f = tmp_path / "models.toml"
+    assert f.exists() and list(cfg.models) == ["deepseek"] and cfg.expose_models
+    text = f.read_text(encoding="utf-8")
+    f.write_text(text.replace("# [models.deepseek-think]", "[models.deepseek-think]")
+                 .replace('# base_url = "https://api.deepseek.com/v1"\n# api_key_env = "DEEPSEEK_API_KEY"\n# model = "deepseek-reasoner"',
+                          'base_url = "https://api.deepseek.com/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nmodel = "deepseek-reasoner"')
+                 .replace('default = "deepseek"', 'default = "deepseek-think"'), encoding="utf-8")
+    os.utime(f, (cfg.models_mtime + 5, cfg.models_mtime + 5))
+    assert refresh_models(cfg) == ""
+    assert cfg.default_model == "deepseek-think" and cfg.models["deepseek-think"].model == "deepseek-reasoner"
+    f.write_text("this is [ not toml", encoding="utf-8")                 # a broken edit keeps the old list
+    os.utime(f, (cfg.models_mtime + 10, cfg.models_mtime + 10))
+    assert refresh_models(cfg) and cfg.default_model == "deepseek-think"

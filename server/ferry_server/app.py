@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from . import PROTOCOL, __version__
-from .config import Config
+from .config import Config, refresh_models
 from .prompt import adapt_params, apply_rules, cap_upstream, load_rules
 from .redact import Redactor
 from .store import BaseMismatch, Store
@@ -100,9 +100,16 @@ def create_app(cfg: Config) -> FastAPI:
         return {"id": mid or m.id, "contextWindow": m.context_window, "maxTokens": m.max_tokens,
                 "ready": bool(m.api_key) or not m.api_key_env, "keyEnv": m.api_key_env, "model": m.model}
 
+    def reload() -> None:
+        err = refresh_models(cfg)
+        if err:
+            print(f"models.toml not applied, still using the previous models: {err}", flush=True)
+            write(audit_log, event="models_file_error", error=err[:300])
+
     @app.get("/v1/ferry/models")
     async def models():
         """The client sees "auto" (the server picks); other models only when routing.expose is on."""
+        reload()
         d = cfg.models[cfg.default_model]
         auto = {**describe(d, "auto"), "routesTo": d.id}
         if cfg.summary_model:  # a summary request carries the whole history, so it must fit the smaller window
@@ -123,6 +130,7 @@ def create_app(cfg: Config) -> FastAPI:
     async def check(request: Request):
         """Ask each model (or the one named) for a two-word answer: proves the key, the network path and the model
         name work, which `ferry doctor` cannot know otherwise. Costs a few tokens."""
+        reload()
         want = (json.loads(await request.body() or b"{}") or {}).get("model")
         out = []
         for m in cfg.models.values():
@@ -176,6 +184,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
         started = time.time()
+        reload()
         payload = json.loads(await request.body())
         ref = payload.pop("ferry", None)
         counter["chats"] += 1

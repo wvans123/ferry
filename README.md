@@ -14,7 +14,7 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.6.2  server on this computer
+  Ferry v0.7.0  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
 
 > 读一下 notes.txt，然后新建 summary.md 总结它
@@ -63,22 +63,36 @@ ferry
 
 对话里：`/new` 新开对话，`/compact` 手动压缩上下文，Shift+Enter（或 Ctrl+J）换行。
 
-## 模型由服务端决定
+## 选模型：在服务端的 models.toml 里配
 
-客户端不选模型，只看到一个 `auto`。用哪个模型、摘要用哪个便宜模型，都在服务端设置，换模型不用动工作电脑。
+用哪些模型、默认用哪个、客户端能不能自己挑，都在服务端的一个文件里配，**改完保存就生效，不用重启**，工作电脑上什么都不用动。
 
-**零配置**（`ferry` 自动启动的本机服务端，或直接运行 `ferry-server`）：设了哪个 Key 就能用哪家。
+服务端第一次启动时会生成 `models.toml`（在服务端数据目录里，默认 `%USERPROFILE%\.ferry-server\`），有哪个 Key 就把哪家写成可用，其他的写成注释，去掉 `#` 就能启用：
+
+```toml
+[routing]
+default = "deepseek"   # 客户端选 auto 时用这个
+summary = ""           # 写上下文摘要用哪个（填便宜的省钱），空 = 同 default
+expose = true          # true：客户端可以用 /model 自己挑；false：完全由服务端决定
+
+[models.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"     # Key 放在环境变量里，不写进文件
+model = "deepseek-chat"
+```
+
+`base_url` 可以是任何 OpenAI 兼容接口：官方 API、你自己的中转、本机的模型服务。客户端里：默认是 `auto`（服务端选），输入 `/model` 可以切换到具体模型。
+
+其他服务端设置用环境变量：
 
 | 环境变量 | 作用 |
 |---|---|
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | 有哪个 Key 就有哪家模型 |
-| `FERRY_MODEL` | 默认用哪家：`claude`、`openai` 或 `deepseek`（不设时按这个顺序取第一个有 Key 的） |
-| `FERRY_SUMMARY_MODEL` | 上下文太长要写摘要时用哪家，比如 `deepseek`，省钱 |
-| `FERRY_CLAUDE_MODEL` 等 | 换具体型号，比如 `setx FERRY_CLAUDE_MODEL claude-opus-5-5` |
+| `FERRY_SERVER_HOME` | 服务端数据放哪，比如 `D:\ferry\server`（令牌、会话、日志、models.toml、规则、词表都在这里） |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | 各家的 Key；第一次生成 models.toml 时有哪个就启用哪个 |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认，只在内存）、`disk`、`none` |
 | `FERRY_REDACT` | `0` 关闭脱敏（默认开，只替换内网 IP、邮箱和词表里的词） |
 
-**配置文件**（`ferry-server.toml`，多用户、多模型）：
+**多用户**时改用完整配置文件 `ferry-server.toml`（参考 `server/ferry-server.example.toml`）：
 
 ```toml
 [server]

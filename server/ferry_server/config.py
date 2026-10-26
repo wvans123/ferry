@@ -64,6 +64,8 @@ class Config:
     summary_model: str = ""
     expose_models: bool = False  # true: clients may also pick a model by name
     home: Path | None = None     # set in zero-config mode
+    models_file: Path | None = None  # zero-config: models.toml, re-read whenever it changes
+    models_mtime: float = 0.0
     users: dict[str, str] = field(default_factory=dict)  # token -> user name
     models: dict[str, ModelConfig] = field(default_factory=dict)
 
@@ -184,10 +186,109 @@ def zero_config_models() -> dict[str, ModelConfig]:
     return found
 
 
-def load_default() -> Config:
-    """Zero-config mode: one local user, one model per API key in the environment, secrets generated on first run.
+def _toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{k} = {_toml_value(x)}" for k, x in v.items()) + " }"
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
-    Everything lives in ~/.ferry-server (override with FERRY_SERVER_HOME); nothing needs to be edited to start.
+
+def _model_block(m: ModelConfig, commented: bool = False, note: str = "") -> str:
+    lines = [f"# {note}"] if note else []
+    body = [f"[models.{m.id}]", f"base_url = {_toml_value(m.base_url)}", f"api_key_env = {_toml_value(m.api_key_env)}",
+            f"model = {_toml_value(m.model)}", f"context_window = {m.context_window}", f"max_tokens = {m.max_tokens}"]
+    if m.drop_params:
+        body.append(f"drop_params = {_toml_value(m.drop_params)}")
+    if m.rename_params:
+        body.append(f"rename_params = {_toml_value(m.rename_params)}")
+    lines += [("# " if commented else "") + b for b in body]
+    return "\n".join(lines)
+
+
+def models_template(found: dict[str, ModelConfig]) -> str:
+    """The first models.toml: every provider with a key is active, the others are there to uncomment."""
+    default = next(iter(found))
+    out = ["# Ferry 模型清单。改完保存，下一次请求就生效，不用重启服务端。",
+           "# 每个 [models.名字] 是一个模型；客户端里 /model 列出的就是这些名字（expose = true 时）。",
+           "# api_key_env 是放 Key 的环境变量名；Key 本身不要写在这个文件里。",
+           "# base_url 可以是任何 OpenAI 兼容接口：官方 API、你自己的中转、本机的模型服务都行。",
+           "",
+           "[routing]",
+           f'default = "{default}"   # 客户端用 auto 时由服务端选这个',
+           'summary = ""            # 上下文太长要写摘要时用哪个模型（填便宜的省钱），空 = 同 default',
+           "expose = true           # true：客户端可以用 /model 自己挑；false：只能用 auto，完全由服务端决定",
+           ""]
+    for m in found.values():
+        out += [_model_block(m), ""]
+    by_id = {p[0]: p for p in PROVIDERS}
+    for pid, key_env, base, model, ctx, max_out, drop, rename in PROVIDERS:
+        if pid in found:
+            continue
+        m = ModelConfig(id=pid, base_url=base, model=model, api_key_env=key_env, context_window=ctx,
+                        max_tokens=max_out, drop_params=list(drop), rename_params=dict(rename))
+        out += [_model_block(m, True, f"需要 {key_env}，去掉下面几行开头的 # 即可启用"), ""]
+    ds = found.get("deepseek") or ModelConfig(id="deepseek", **{k: v for k, v in zip(
+        ("base_url", "model", "context_window", "max_tokens"), (by_id["deepseek"][2], "deepseek-chat", 128_000, 8_192))})
+    think = ModelConfig(id="deepseek-think", base_url=ds.base_url, model="deepseek-reasoner", api_key_env="DEEPSEEK_API_KEY",
+                        context_window=128_000, max_tokens=32_000, drop_params=["store"],
+                        rename_params={"max_completion_tokens": "max_tokens"})
+    out += [_model_block(think, True, "DeepSeek 思考模式：难题更好，但更慢；连续调用很多工具的任务如果报错，换回 deepseek"), ""]
+    custom = ModelConfig(id="my-relay", base_url="http://127.0.0.1:3000/v1", model="模型名", api_key_env="MY_RELAY_KEY",
+                         context_window=128_000, max_tokens=8_192)
+    out += [_model_block(custom, True, "自定义：任何 OpenAI 兼容的接口（比如你自己的 API 中转）"), ""]
+    return "\n".join(out)
+
+
+def apply_models_file(cfg: Config, path: Path) -> None:
+    """Read models.toml into cfg (models + routing). Raises SystemExit with a readable message if it is wrong."""
+    try:
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(f"{path}: {e}") from None
+    models = {mid: ModelConfig(id=mid, **m) for mid, m in raw.get("models", {}).items()}
+    if not models:
+        raise SystemExit(f"{path}: no [models.*] left; keep at least one")
+    r = raw.get("routing", {})
+    trial = Config(models=models, default_model=os.environ.get("FERRY_MODEL") or r.get("default", ""),
+                   summary_model=os.environ.get("FERRY_SUMMARY_MODEL") or r.get("summary", ""),
+                   expose_models=bool(r.get("expose", False)) or os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true"),
+                   session_store=cfg.session_store)
+    if trial.default_model not in models:
+        trial.default_model = ""
+    finish(trial)
+    cfg.models, cfg.default_model = trial.models, trial.default_model
+    cfg.summary_model, cfg.expose_models = trial.summary_model, trial.expose_models
+
+
+def refresh_models(cfg: Config) -> str:
+    """Re-read models.toml if it changed since last time. Returns an error message, or "" when all is well."""
+    f = cfg.models_file
+    if not f:
+        return ""
+    try:
+        mtime = f.stat().st_mtime
+    except OSError:
+        return ""
+    if mtime == cfg.models_mtime:
+        return ""
+    cfg.models_mtime = mtime
+    try:
+        apply_models_file(cfg, f)
+        return ""
+    except SystemExit as e:  # keep serving with the previous list
+        return str(e)
+
+
+def load_default() -> Config:
+    """Zero-config mode: one local user, secrets generated on first run, models from <home>/models.toml
+    (written on the first run with one model per API key found in the environment).
+
+    Everything lives in ~/.ferry-server (override with FERRY_SERVER_HOME, e.g. D:\\ferry\\server).
     """
     home = server_home()
     (home / "rules").mkdir(parents=True, exist_ok=True)
@@ -199,7 +300,9 @@ def load_default() -> Config:
         dictionary.write_text(DEFAULT_DICTIONARY, encoding="utf-8")
     secret = os.environ.get("FERRY_SECRET") or _persistent_secret(home / "secret")
     token = os.environ.get("FERRY_TOKEN") or _persistent_secret(home / "token")
-    models = zero_config_models()
+    models_file = home / "models.toml"
+    if not models_file.exists():
+        models_file.write_text(models_template(zero_config_models()), encoding="utf-8")
     cfg = Config(
         host="127.0.0.1",
         port=int(os.environ.get("FERRY_PORT", 8787)),
@@ -208,15 +311,15 @@ def load_default() -> Config:
         dictionary=dictionary,
         secret=secret,
         users={token: "local"},
-        models=models,
         max_upstream_bytes=int(os.environ.get("FERRY_MAX_UPSTREAM_BYTES", 900_000)),
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=os.environ.get("FERRY_SESSION_STORE", "memory"),
         redact=os.environ.get("FERRY_REDACT", "1").lower() not in ("0", "false", "off", "no"),
-        summary_model=os.environ.get("FERRY_SUMMARY_MODEL", "") if os.environ.get("FERRY_SUMMARY_MODEL") in models else "",
-        expose_models=os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true", "yes"),
+        models_file=models_file,
     )
+    apply_models_file(cfg, models_file)
+    cfg.models_mtime = models_file.stat().st_mtime
     finish(cfg)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     return cfg

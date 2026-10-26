@@ -56,6 +56,7 @@ def banner(cfg: Config, mode: str) -> None:
     if not cfg.redact:
         out.append("  redaction: OFF (content goes to the model as is)")
     if cfg.home:
+        out.append(f"  models: {cfg.models_file} (edit and save; applies to the next request)")
         out.append(f"  word list: {cfg.dictionary}   rules: {cfg.rules_dir}")
         out.append("  a Ferry client on this computer connects automatically; just run: ferry")
     print("\n".join(out), flush=True)

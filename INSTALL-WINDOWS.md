@@ -38,22 +38,22 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(�
 - Node.js 22 或更高（你已有 v25.8.1）。
 - Python 3.11 到 3.14 之一。在 cmd 里输入 `python --version` 能看到版本号即可；提示"不是内部或外部命令"时试 `py -3 --version`。都没有的话，从 python.org 安装，安装时勾选 "Add python.exe to PATH"。
 
-1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.6.2.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
-2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.6.2` 文件夹。
+1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.7.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
+2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.7.0` 文件夹。
 3. 在 cmd 里进入这个文件夹，运行安装命令：
 
    ```bat
-   cd /d %USERPROFILE%\Downloads\ferry-0.6.2
+   cd /d %USERPROFILE%\Downloads\ferry-0.7.0
    node client\bin\ferry.mjs install
    ```
 
    正常输出：
 
    ```
-   Installing Ferry 0.6.2
-     files     C:\Users\你\AppData\Local\Ferry\versions\0.6.2
+   Installing Ferry 0.7.0
+     files     C:\Users\你\AppData\Local\Ferry\versions\0.7.0
      server    python -m pip install ... ferry-server
-     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.6.2 ...）
+     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.7.0 ...）
      command   C:\Users\你\AppData\Roaming\npm\ferry.cmd
 
    Done. Open a NEW cmd window, go to a project folder and run:  ferry
@@ -72,13 +72,13 @@ ferry doctor
 全部正常时：
 
 ```
-Ferry 0.6.2, Node v25.8.1, win32, settings in C:\Users\你\.ferry
+Ferry 0.7.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
   info  commands run with: PowerShell (Git Bash not found)
   info  proxy: none
   info  no remote server set: using a Ferry server on this computer
   OK    server installed for python
   OK    server running at http://127.0.0.1:5xxxx
-  OK    server reachable in 3 ms (server 0.6.2, protocol 1)
+  OK    server reachable in 3 ms (server 0.7.0, protocol 1)
   OK    token accepted; the server picks the model: auto -> deepseek (deepseek-chat)
   info  conversation on the server: cached in memory only; the full history stays on this computer
   info  asking each model for a two-word answer (a few tokens)...
@@ -106,7 +106,7 @@ echo 服务器 test-host-01 的地址是 10.9.8.7 > notes.txt
 ferry
 ```
 
-进入界面后，顶部显示 `Ferry v0.6.2  server on this computer`，底部是输入框。直接打字，回车发送，比如：
+进入界面后，顶部显示 `Ferry v0.7.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
 
 ```
 读一下 notes.txt，然后新建 summary.md，用一句话总结它的内容
@@ -196,7 +196,7 @@ setx FERRY_REDACT 0
 想确认这台 Windows 上一切正常（不需要 Key，不访问外网），在解压出来的文件夹里运行：
 
 ```bat
-cd /d %USERPROFILE%\Downloads\ferry-0.6.2
+cd /d %USERPROFILE%\Downloads\ferry-0.7.0
 python selftest\run.py
 ```
 
@@ -220,20 +220,14 @@ python selftest\run.py
 
 ## 换成 Claude 或 OpenAI
 
-不用改代码，也不用写配置，设环境变量就行：
+不用改代码。服务端第一次启动时会在它的数据目录里（默认 `%USERPROFILE%\.ferry-server\`）生成 **`models.toml`**，所有模型都在这里配，**改完保存就生效，不用重启**：
 
-| 想用 | 设置 | 默认模型 | 换模型 |
-|---|---|---|---|
-| Claude | `setx ANTHROPIC_API_KEY 你的key` | `claude-sonnet-5-5` | `setx FERRY_CLAUDE_MODEL claude-opus-5-5` |
-| OpenAI | `setx OPENAI_API_KEY 你的key` | `gpt-6.1-sol` | `setx FERRY_OPENAI_MODEL 模型名` |
-| DeepSeek | `setx DEEPSEEK_API_KEY 你的key` | `deepseek-chat` | `setx FERRY_DEEPSEEK_MODEL 模型名` |
+1. 设好对应的 Key：`setx ANTHROPIC_API_KEY 你的key`（或 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`），重启服务端让它读到新的环境变量；
+2. 打开 `models.toml`，把想用的模型那几行开头的 `#` 去掉，型号写在 `model = "..."` 里；
+3. `[routing]` 里：`default` 是客户端选 `auto` 时用的模型，`summary` 是写摘要用的（可以填便宜的），`expose = true` 时客户端可以自己挑。
 
-设了几个 Key 就有几家可用。**用哪家由服务端决定**，客户端界面上只显示 `auto`：
+在 `ferry` 里：默认用 `auto`（服务端选），输入 `/model` 可以切到具体模型。`ferry doctor` 会显示 `auto -> 实际用的模型`，并给每个模型发一个小请求确认能用。
 
-- 默认按 Claude、OpenAI、DeepSeek 的顺序取第一个有 Key 的；想指定：`setx FERRY_MODEL deepseek`；
-- 上下文太长要写摘要时，可以交给便宜的模型：`setx FERRY_SUMMARY_MODEL deepseek`；
-- 想在对话里用 `/model` 自己挑：`setx FERRY_EXPOSE_MODELS 1`。
-
-设完重新打开 cmd，再跑一次 `ferry doctor` 确认，它会显示 `auto -> 实际用的模型`。
+`base_url` 不限于官方 API，任何 OpenAI 兼容接口都可以，比如你自己的中转或本机的模型服务。
 
 **注意地区限制**：Anthropic（Claude）和 OpenAI 的 API 不服务中国大陆和香港。从这些地方直接请求通常会被拒（doctor 里看到 HTTP 403），用海外中转去绕也可能违反服务条款。所以要用 Claude 或 OpenAI，Ferry 服务端应该放在它们支持的地区的服务器上（比如新加坡、日本或美国的云服务器），工作电脑执行一次 `ferry login https://服务器地址 令牌` 连过去。DeepSeek 没有这个问题，可以继续在本机模式下用。
