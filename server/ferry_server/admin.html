@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ferry 服务端</title>
+<style>
+:root {
+  --bg: #e9f0ef; --surface: #ffffff; --ink: #15333b; --muted: #5d7b81; --line: #cfdcdc;
+  --river: #1f6e7c; --river-soft: #d6e9ec; --lamp: #c4860f; --lamp-soft: #f6e7c8;
+  --bad: #b4492f; --bad-soft: #f6e0d9; --good: #2f7d55; --good-soft: #dcefe3;
+  --radius-lg: 14px; --radius-sm: 6px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1d21; --surface: #15282d; --ink: #e2eeee; --muted: #8eaaae; --line: #26413f;
+    --river: #55b3c3; --river-soft: #173a41; --lamp: #e2ad47; --lamp-soft: #3a2f17;
+    --bad: #e07a5f; --bad-soft: #3c211b; --good: #5fbf8a; --good-soft: #17352a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--font); }
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--river); outline-offset: 2px; }
+.num { font-variant-numeric: tabular-nums; }
+
+header { display: flex; align-items: center; gap: 16px; padding: 18px 28px; border-bottom: 1px solid var(--line); }
+.brand { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+.brand small { font-weight: 400; color: var(--muted); font-size: 15px; margin-left: 8px; }
+.state { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px;
+  background: var(--good-soft); color: var(--good); font-size: 14px; }
+.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.state.off { background: var(--bad-soft); color: var(--bad); }
+header .spacer { flex: 1; }
+
+.btn { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; border-radius: var(--radius-sm);
+  cursor: pointer; }
+.btn:hover { border-color: var(--river); }
+.btn.primary { background: var(--river); border-color: var(--river); color: #fff; }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .55; cursor: default; }
+
+main { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px; padding: 24px 28px 48px; max-width: 1360px; }
+main > * { min-width: 0; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 16px; } header { padding: 14px 16px; flex-wrap: wrap; } }
+
+aside .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 18px 20px; }
+aside h2 { font-size: 16px; margin: 0 0 4px; }
+aside p.hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.copyline { display: flex; gap: 6px; }
+.copyline code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--bg); border-radius: var(--radius-sm); padding: 6px 10px; font: 13px/1.6 var(--mono); }
+.cmd code { white-space: normal; word-break: break-all; }
+
+nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; overflow-x: auto; }
+nav.tabs button { border: 0; background: none; padding: 8px 14px; cursor: pointer; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--river); font-weight: 600; }
+section[hidden] { display: none; }
+
+/* traffic: the crossing */
+.crossing { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px 22px 14px; }
+.crossing-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.crossing-head h2 { margin: 0; font-size: 18px; }
+.crossing-head .range { margin-left: auto; display: flex; gap: 4px; }
+.range button { border: 1px solid var(--line); background: none; padding: 2px 10px; border-radius: 999px; cursor: pointer; font-size: 13px; }
+.range button[aria-pressed="true"] { background: var(--river); border-color: var(--river); color: #fff; }
+.legend { display: flex; gap: 18px; font-size: 13px; color: var(--muted); margin-bottom: 8px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+#chart { width: 100%; height: 260px; display: block; }
+#chart .in { fill: var(--lamp); } #chart .up { fill: var(--river); }
+#chart .axis { stroke: var(--ink); stroke-width: 1; opacity: .5; }
+#chart text { fill: var(--muted); font: 11px var(--font); }
+.ratio { margin: 18px 0 0; padding-top: 14px; border-top: 1px dashed var(--line); display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 24px; }
+@media (max-width: 700px) { .ratio { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ratio div b { display: block; font-size: 22px; font-weight: 650; }
+.ratio div span { color: var(--muted); font-size: 13px; }
+.ratio .lead b { color: var(--river); font-size: 30px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 13px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td.r, th.r { text-align: right; }
+.tablewrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); margin-top: 20px; overflow-x: auto; }
+.tablewrap h3 { margin: 0; padding: 14px 16px 6px; font-size: 16px; }
+.tag { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; background: var(--river-soft); color: var(--river); }
+.tag.summary { background: var(--lamp-soft); color: var(--lamp); }
+.tag.bad { background: var(--bad-soft); color: var(--bad); }
+.empty { padding: 28px 16px; color: var(--muted); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px 22px; margin-bottom: 20px; }
+.panel h2 { margin: 0 0 4px; font-size: 18px; }
+.panel p.hint { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+.models { display: grid; gap: 8px; margin-bottom: 16px; }
+.model { display: grid; grid-template-columns: 14px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); }
+.dot.no { background: var(--bad); }
+.model .meta { color: var(--muted); font-size: 13px; }
+.model .res { font-size: 13px; max-width: 360px; text-align: right; }
+.model .res.bad { color: var(--bad); }
+textarea.editor { width: 100%; min-height: 360px; resize: vertical; padding: 12px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--bg); font: 13px/1.6 var(--mono); tab-size: 2; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.msg { font-size: 14px; }
+.msg.ok { color: var(--good); } .msg.bad { color: var(--bad); white-space: pre-wrap; }
+
+.choice { display: grid; gap: 8px; }
+.choice label { display: grid; grid-template-columns: 20px 1fr; gap: 6px 10px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); cursor: pointer; }
+.choice label:has(input:checked) { border-color: var(--river); background: var(--river-soft); }
+.choice small { grid-column: 2; color: var(--muted); }
+.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+input[type=text], input[type=number] { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); }
+.locked { color: var(--lamp); font-size: 13px; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+  padding: 8px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Ferry<small>服务端</small></div>
+  <span id="state" class="state">连接中</span>
+  <span id="ver" class="num" style="color:var(--muted);font-size:14px"></span>
+  <span class="spacer"></span>
+  <button class="btn" id="openFolder">打开数据文件夹</button>
+  <button class="btn danger" id="stop">停止服务端</button>
+</header>
+
+<main>
+  <aside>
+    <div class="card">
+      <h2>让工作电脑连进来</h2>
+      <p class="hint">在工作电脑的 cmd 里执行下面这条命令，再运行 <b>ferry doctor</b> 检查。</p>
+      <div class="field cmd">
+        <label>登录命令</label>
+        <div class="copyline"><code id="loginCmd">先在右侧"设置"里填写外网地址</code><button class="btn" data-copy="loginCmd">复制</button></div>
+      </div>
+      <div class="field">
+        <label>外网地址</label>
+        <div class="copyline"><code id="publicUrl">未填写</code></div>
+      </div>
+      <div class="field">
+        <label>令牌</label>
+        <div class="copyline"><code id="token">••••••••••••</code><button class="btn" id="showToken">显示</button><button class="btn" data-copy="token">复制</button></div>
+      </div>
+      <div class="field">
+        <label>本机地址</label>
+        <div class="copyline"><code id="localUrl"></code></div>
+      </div>
+      <div class="field" style="margin:0">
+        <label>运行时间</label>
+        <div id="uptime" class="num"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="traffic">流量</button>
+      <button role="tab" aria-selected="false" data-tab="models">模型</button>
+      <button role="tab" aria-selected="false" data-tab="settings">设置</button>
+      <button role="tab" aria-selected="false" data-tab="rules">规则和词表</button>
+    </nav>
+
+    <section id="tab-traffic">
+      <div class="crossing">
+        <div class="crossing-head">
+          <h2>渡过来的和送出去的</h2>
+          <div class="range" role="group" aria-label="时间范围">
+            <button data-min="60" aria-pressed="true">1 小时</button>
+            <button data-min="360" aria-pressed="false">6 小时</button>
+            <button data-min="1440" aria-pressed="false">24 小时</button>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--lamp)"></i>上方：工作电脑发来的（每次只有新增部分）</span>
+          <span><i style="background:var(--river)"></i>下方：服务端拼好后发给模型的（完整上下文）</span>
+        </div>
+        <svg id="chart" role="img" aria-label="每分钟的流量"></svg>
+        <div class="ratio">
+          <div class="lead"><b id="kAmp" class="num">–</b><span>放大倍数：模型收到的 ÷ 工作电脑发来的</span></div>
+          <div><b id="kIn" class="num">–</b><span>收到（来自工作电脑）</span></div>
+          <div><b id="kUp" class="num">–</b><span>发给模型</span></div>
+          <div><b id="kChats" class="num">–</b><span>模型调用 / 请求总数</span></div>
+          <div><b id="kTok" class="num">–</b><span>token（输入 / 输出）</span></div>
+          <div><b id="kMask" class="num">–</b><span>替换的敏感词 / 删掉的旧输出</span></div>
+        </div>
+      </div>
+      <div class="tablewrap">
+        <h3>最近的模型调用</h3>
+        <table>
+          <thead><tr><th>时间</th><th>项目</th><th>模型</th><th>用途</th><th class="r">消息数</th><th class="r">发给模型</th><th class="r">脱敏</th><th class="r">耗时</th><th>结果</th></tr></thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-models" hidden>
+      <div class="panel">
+        <h2>可用的模型</h2>
+        <p class="hint" id="routingHint"></p>
+        <div class="models" id="modelList"></div>
+        <div class="row"><button class="btn" id="testAll">测试全部模型</button><span class="msg" id="testMsg"></span></div>
+      </div>
+      <div class="panel">
+        <h2>models.toml</h2>
+        <p class="hint">在这里加模型、改默认模型。保存时会先检查格式，写错了不会生效。Key 放在环境变量里，文件里只写变量名（<code>api_key_env</code>）。</p>
+        <textarea class="editor" id="modelsText" spellcheck="false" aria-label="models.toml"></textarea>
+        <div class="row"><button class="btn primary" id="saveModels">保存</button><span class="msg" id="modelsMsg"></span></div>
+      </div>
+    </section>
+
+    <section id="tab-settings" hidden>
+      <div class="panel">
+        <h2>外网地址</h2>
+        <p class="hint">工作电脑访问这台服务端用的地址，比如 Cloudflare 上配的域名。只用来生成左边的登录命令。</p>
+        <input type="text" id="setUrl" placeholder="https://ferry.example.com">
+        <div class="row"><button class="btn primary" id="saveUrl">保存</button><span class="msg" id="urlMsg"></span></div>
+      </div>
+      <div class="panel">
+        <h2>服务端保存对话吗</h2>
+        <p class="hint">完整对话始终保存在工作电脑上。这里决定服务端留不留一份副本。切换后，正在进行的对话下一轮会整段重传一次。</p>
+        <div class="choice" id="storeChoice">
+          <label><input type="radio" name="store" value="disk"><span>存在磁盘上</span><small>每轮只传新增部分，服务端重启后也不用重传。远程使用推荐。</small></label>
+          <label><input type="radio" name="store" value="memory"><span>只放在内存里</span><small>每轮只传新增部分；服务端重启后第一轮整段重传。</small></label>
+          <label><input type="radio" name="store" value="none"><span>不保存</span><small>每轮都整段重传（仍拆成小块，每次不超过 1MB），服务端处理完就丢。流量最大。</small></label>
+        </div>
+        <div class="locked" id="storeLocked" hidden>环境变量 FERRY_SESSION_STORE 已设置，重启后会以它为准。</div>
+      </div>
+      <div class="panel">
+        <h2>脱敏和请求上限</h2>
+        <label class="switch"><input type="checkbox" id="setRedact"> 发给模型前替换敏感内容（内网 IP、邮箱和词表里的词）</label>
+        <div class="field" style="margin-top:16px;max-width:280px">
+          <label for="setCap">发给模型的单个请求最大（KB，0 = 不限）</label>
+          <input type="number" id="setCap" min="0" step="50">
+        </div>
+        <div class="row"><button class="btn primary" id="saveAdv">保存</button><span class="msg" id="advMsg"></span></div>
+      </div>
+      <div class="panel" id="autoPanel">
+        <h2>开机自动启动</h2>
+        <p class="hint">登录 Windows 后在后台启动服务端，不弹窗口。</p>
+        <label class="switch"><input type="checkbox" id="setAuto"> 开机自动启动 Ferry 服务端</label>
+        <span class="msg" id="autoMsg"></span>
+      </div>
+      <div class="panel">
+        <h2>数据文件夹</h2>
+        <p class="hint" id="homePath"></p>
+        <button class="btn" id="rotate">换一个新令牌</button>
+        <span class="msg" id="rotateMsg"></span>
+      </div>
+    </section>
+
+    <section id="tab-rules" hidden>
+      <div class="panel">
+        <h2>服务端规则</h2>
+        <p class="hint">会加在每次请求的系统提示后面，下一轮就生效。比如"回复用中文""改代码前先读文件"。</p>
+        <textarea class="editor" id="rulesText" spellcheck="false" style="min-height:200px" aria-label="服务端规则"></textarea>
+        <div class="row"><button class="btn primary" data-save="rules">保存</button><span class="msg" id="rulesMsg"></span></div>
+      </div>
+      <div class="panel">
+        <h2>脱敏词表</h2>
+        <p class="hint">在 <code>terms</code> 里加公司名、项目代号、主机名等。命中的内容发给模型前会换成 [FERRY-XXXXXXXX]，回来时再换回原文。</p>
+        <textarea class="editor" id="dictionaryText" spellcheck="false" style="min-height:240px" aria-label="脱敏词表"></textarea>
+        <div class="row"><button class="btn primary" data-save="dictionary">保存</button><span class="msg" id="dictionaryMsg"></span></div>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let S = null, minutes = 60, tokenShown = false;
+
+async function api(path, method = "GET", body) {
+  const r = await fetch("/admin/api/" + path, {
+    method, headers: { "Content-Type": "application/json", "X-Ferry-Admin": "1" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("show"), 1800); }
+function say(id, text, ok = true) { const e = $(id); e.textContent = text; e.className = "msg " + (ok ? "ok" : "bad"); }
+function bytes(n) {
+  if (!n) return "0";
+  const u = ["B", "KB", "MB", "GB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + " " + u[i];
+}
+function dur(s) { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} 小时 ${m} 分` : `${m} 分钟`; }
+function hhmm(ts) { const d = new Date(ts * 1000); return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+
+function renderStatus(s) {
+  S = s;
+  $("state").textContent = "运行中"; $("state").className = "state";
+  $("ver").textContent = "v" + s.version;
+  $("uptime").textContent = dur(s.uptime);
+  $("localUrl").textContent = `http://127.0.0.1:${s.port}`;
+  $("publicUrl").textContent = s.public_url || "未填写";
+  $("token").textContent = tokenShown ? s.token : "••••••••••••";
+  $("loginCmd").textContent = s.public_url ? `ferry login ${s.public_url} ${tokenShown ? s.token : "<令牌>"}` : '先在右侧"设置"里填写外网地址';
+  if (document.activeElement !== $("setUrl")) $("setUrl").value = s.public_url;
+  for (const r of document.querySelectorAll("input[name=store]")) r.checked = r.value === s.session_store;
+  $("storeLocked").hidden = !s.locked.session_store;
+  $("setRedact").checked = s.redact;
+  if (document.activeElement !== $("setCap")) $("setCap").value = Math.round(s.max_upstream_bytes / 1000);
+  $("autoPanel").hidden = s.platform !== "win32";
+  $("setAuto").checked = s.autostart;
+  $("homePath").textContent = "令牌、会话缓存、日志、models.toml、规则和词表都在：" + s.home;
+  const r = s.routing;
+  $("routingHint").textContent = `工作电脑选 auto 时用 ${r.default}` + (r.summary ? `，写摘要用 ${r.summary}` : "") +
+    (r.expose ? "；工作电脑上也可以用 /model 自己挑。" : "；工作电脑不能自己挑（expose = false）。");
+  const list = $("modelList");
+  const prev = Object.fromEntries([...list.querySelectorAll(".res")].map((e) => [e.dataset.id, e.outerHTML]));
+  list.innerHTML = s.models.map((m) => `
+    <div class="model"><span class="dot ${m.ready ? "" : "no"}" title="${m.ready ? "有 Key" : "缺少 Key"}"></span>
+      <div><b>${m.id}</b>${m.id === r.default ? ' <span class="tag">默认</span>' : ""}${m.id === r.summary ? ' <span class="tag summary">写摘要</span>' : ""}
+        <div class="meta">${m.model} · ${m.base_url}${m.ready ? "" : ` · 需要设置环境变量 ${m.key_env}`}</div></div>
+      ${prev[m.id] || `<span class="res" data-id="${m.id}"></span>`}</div>`).join("");
+}
+
+function drawChart(t) {
+  const svg = $("chart"), W = svg.clientWidth || 800, H = 260, top = 6, mid = 118, bottom = 228, pad = 64;
+  const ser = t.series, n = ser.length;
+  const maxIn = Math.max(1, ...ser.map((x) => x.in)), maxUp = Math.max(1, ...ser.map((x) => x.up));
+  const step = (W - pad) / n, bw = Math.max(1, step - 1);
+  let g = `<line class="axis" x1="${pad}" x2="${W}" y1="${mid}" y2="${mid}"/>`;
+  ser.forEach((x, i) => {
+    const xx = pad + i * step;
+    const hi = x.in ? Math.max(2, (x.in / maxIn) * (mid - top)) : 0;
+    const hu = x.up ? Math.max(2, (x.up / maxUp) * (bottom - mid)) : 0;
+    if (hi) g += `<rect class="in" x="${xx}" y="${mid - hi}" width="${bw}" height="${hi}" rx="1"><title>${hhmm(x.t)} 收到 ${bytes(x.in)}，${x.requests} 个请求</title></rect>`;
+    if (hu) g += `<rect class="up" x="${xx}" y="${mid + 1}" width="${bw}" height="${hu}" rx="1"><title>${hhmm(x.t)} 发给模型 ${bytes(x.up)}，${x.chats} 次调用</title></rect>`;
+  });
+  g += `<text x="0" y="${top + 10}">${bytes(maxIn)}</text><text x="0" y="${mid - 4}">0</text><text x="0" y="${bottom}">${bytes(maxUp)}</text>`;
+  g += `<text x="${pad}" y="${H - 4}">${hhmm(ser[0].t).slice(0, 5)}</text><text x="${W}" y="${H - 4}" text-anchor="end">现在</text>`;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = g;
+}
+
+function renderTraffic(t) {
+  drawChart(t);
+  const k = t.totals;
+  $("kAmp").textContent = k.in ? (k.up / k.in).toFixed(1) + " 倍" : "–";
+  $("kIn").textContent = bytes(k.in); $("kUp").textContent = bytes(k.up);
+  $("kChats").textContent = `${k.chats} / ${k.requests}`;
+  $("kTok").textContent = `${k.tokens_in.toLocaleString()} / ${k.tokens_out.toLocaleString()}`;
+  $("kMask").textContent = `${k.masked} / ${k.trimmed}`;
+  const rows = t.recent.map((a) => {
+    const ok = a.status === 200;
+    const masked = Object.values(a.masked || {}).reduce((x, y) => x + y, 0);
+    return `<tr><td class="num">${hhmm(a.ts)}</td><td>${a.project || "–"}</td><td>${a.model}</td>
+      <td><span class="tag ${a.purpose === "summary" ? "summary" : ""}">${a.purpose === "summary" ? "写摘要" : "干活"}</span></td>
+      <td class="r num">${a.messages ?? "–"}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${masked}</td>
+      <td class="r num">${a.ms != null ? (a.ms / 1000).toFixed(1) + " 秒" : "–"}</td>
+      <td>${ok ? "成功" : `<span class="tag bad">HTTP ${a.status}</span>`}</td></tr>`;
+  }).join("");
+  $("recent").innerHTML = rows || `<tr><td colspan="9" class="empty">这段时间还没有模型调用。工作电脑连上并开始对话后，每一轮都会出现在这里。</td></tr>`;
+}
+
+async function refresh() {
+  try {
+    renderStatus(await api("status"));
+    if (!$("tab-traffic").hidden) renderTraffic(await api("traffic?minutes=" + minutes));
+  } catch (e) {
+    $("state").textContent = "连不上服务端"; $("state").className = "state off";
+  }
+}
+
+// tabs
+for (const b of document.querySelectorAll("nav.tabs button")) {
+  b.onclick = async () => {
+    for (const x of document.querySelectorAll("nav.tabs button")) x.setAttribute("aria-selected", x === b);
+    for (const s of document.querySelectorAll("main section")) s.hidden = s.id !== "tab-" + b.dataset.tab;
+    if (b.dataset.tab === "models") $("modelsText").value = (await api("models")).text;
+    if (b.dataset.tab === "rules") {
+      $("rulesText").value = (await api("file/rules")).text;
+      $("dictionaryText").value = (await api("file/dictionary")).text;
+    }
+    refresh();
+  };
+}
+for (const b of document.querySelectorAll(".range button")) {
+  b.onclick = () => { minutes = +b.dataset.min; for (const x of document.querySelectorAll(".range button")) x.setAttribute("aria-pressed", x === b); refresh(); };
+}
+
+// left card
+for (const b of document.querySelectorAll("[data-copy]")) {
+  b.onclick = async () => {
+    const id = b.dataset.copy;
+    let text = $(id).textContent;
+    if (S && id === "token") text = S.token;
+    if (S && id === "loginCmd") text = S.public_url ? `ferry login ${S.public_url} ${S.token}` : "";
+    if (!text) return toast("先在设置里填写外网地址");
+    await navigator.clipboard.writeText(text); toast("已复制");
+  };
+}
+$("showToken").onclick = () => { tokenShown = !tokenShown; $("showToken").textContent = tokenShown ? "隐藏" : "显示"; S && renderStatus(S); };
+
+// models
+$("saveModels").onclick = async () => {
+  try { renderStatus(await api("models", "PUT", { text: $("modelsText").value })); say("modelsMsg", "已保存，下一次请求就用新的设置"); }
+  catch (e) { say("modelsMsg", "没有保存：" + e.message, false); }
+};
+$("testAll").onclick = async () => {
+  $("testAll").disabled = true; say("testMsg", "正在给每个模型发一个小请求……");
+  try {
+    const r = await api("models/test", "POST", {});
+    for (const m of r.models) {
+      const e = document.querySelector(`.res[data-id="${CSS.escape(m.id)}"]`);
+      if (!e) continue;
+      e.className = "res " + (m.ok ? "" : "bad");
+      e.textContent = m.ok ? `能用，${m.ms} 毫秒` : m.error;
+    }
+    say("testMsg", r.models.every((m) => m.ok) ? "全部能用" : "有模型不能用，原因见上面", r.models.every((m) => m.ok));
+  } catch (e) { say("testMsg", e.message, false); }
+  $("testAll").disabled = false;
+};
+
+// settings
+$("saveUrl").onclick = async () => {
+  try { renderStatus(await api("settings", "PUT", { public_url: $("setUrl").value })); say("urlMsg", "已保存"); }
+  catch (e) { say("urlMsg", e.message, false); }
+};
+for (const r of document.querySelectorAll("input[name=store]")) {
+  r.onchange = async () => { try { renderStatus(await api("settings", "PUT", { session_store: r.value })); toast("已切换"); } catch (e) { toast(e.message); } };
+}
+$("saveAdv").onclick = async () => {
+  try {
+    renderStatus(await api("settings", "PUT", { redact: $("setRedact").checked, max_upstream_bytes: Math.max(0, +$("setCap").value) * 1000 }));
+    say("advMsg", "已保存，下一次请求生效");
+  } catch (e) { say("advMsg", e.message, false); }
+};
+$("setAuto").onchange = async () => {
+  try { renderStatus(await api("autostart", "PUT", { on: $("setAuto").checked })); say("autoMsg", $("setAuto").checked ? "已开启" : "已关闭"); }
+  catch (e) { say("autoMsg", e.message, false); $("setAuto").checked = !$("setAuto").checked; }
+};
+$("rotate").onclick = async () => {
+  if (!confirm("换令牌后，工作电脑要用新令牌重新 ferry login。继续吗？")) return;
+  try { renderStatus(await api("token/rotate", "POST", {})); say("rotateMsg", "已换新令牌，左边可以复制新的登录命令"); }
+  catch (e) { say("rotateMsg", e.message, false); }
+};
+
+// rules and word list
+for (const b of document.querySelectorAll("[data-save]")) {
+  b.onclick = async () => {
+    const n = b.dataset.save;
+    try { await api("file/" + n, "PUT", { text: $(n + "Text").value }); say(n + "Msg", "已保存，下一轮对话生效"); }
+    catch (e) { say(n + "Msg", e.message, false); }
+  };
+}
+
+// header
+$("openFolder").onclick = () => api("open-folder", "POST", {}).catch((e) => toast(e.message));
+$("stop").onclick = async () => {
+  if (!confirm("停止后，工作电脑就连不上了。要再启动，双击桌面上的 Ferry 服务端。确定停止吗？")) return;
+  await api("stop", "POST", {}).catch(() => {});
+  $("state").textContent = "已停止"; $("state").className = "state off";
+};
+
+addEventListener("resize", () => !$("tab-traffic").hidden && refresh());
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>

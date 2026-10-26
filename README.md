@@ -14,7 +14,7 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.7.0  server on this computer
+  Ferry v0.8.0  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
 
 > 读一下 notes.txt，然后新建 summary.md 总结它
@@ -62,6 +62,19 @@ ferry
 | `ferry logout` | 回到本机服务端 |
 
 对话里：`/new` 新开对话，`/compact` 手动压缩上下文，Shift+Enter（或 Ctrl+J）换行。
+
+## 服务端管理页
+
+服务端自带一个只能在它自己那台电脑上打开的管理页：双击桌面的 **Ferry 服务端** 图标（或运行 `ferry-server --ui`），服务端在后台启动（没有黑窗口），浏览器自动打开管理页。
+
+![管理页：流量](docs/images/admin-traffic.png)
+
+- **流量**：上半部分是工作电脑发来的（每次只有新增部分），下半部分是服务端拼好后发给模型的（完整上下文），还有放大倍数、token 用量、最近每一次模型调用；
+- **模型**：看哪些模型能用、一键测试，直接编辑 `models.toml`（保存前先检查格式）；
+- **设置**：外网地址（自动生成工作电脑上要敲的登录命令）、服务端存不存对话、脱敏开关、请求上限、开机自动启动、换令牌；
+- **规则和词表**：服务端规则、脱敏词表。
+
+管理页只接受本机直接打开的请求：经 Cloudflare 隧道进来的请求虽然也来自 127.0.0.1，但带着 Cloudflare 的请求头，会被拒绝；另外还要一把只在本机的钥匙（启动时自动带上）。
 
 ## 选模型：在服务端的 models.toml 里配
 

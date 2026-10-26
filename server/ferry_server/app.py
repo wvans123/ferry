@@ -17,6 +17,7 @@ import hmac
 import json
 import os
 import time
+from types import SimpleNamespace
 from collections import Counter
 
 import httpx
@@ -34,8 +35,16 @@ from .stream import restore_message, restore_sse
 
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
-    store = Store(cfg.data_dir / "ferry.db" if cfg.session_store == "disk" else ":memory:", cfg.session_ttl_days)
-    red = Redactor(cfg.dictionary if cfg.redact else None, cfg.secret, store)
+    # session store and redactor can be swapped at run time from the admin page (settings, word list)
+    live = SimpleNamespace(store=None, red=None, started=time.time())
+
+    def rebuild(store_too: bool = True) -> None:
+        if store_too or live.store is None:
+            live.store = Store(cfg.data_dir / "ferry.db" if cfg.session_store == "disk" else ":memory:",
+                               cfg.session_ttl_days)
+        live.red = Redactor(cfg.dictionary if cfg.redact else None, cfg.secret, live.store)
+
+    rebuild()
     client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=15))
     access_log = cfg.data_dir / "access.jsonl"
     audit_log = cfg.data_dir / "audit.jsonl"
@@ -68,8 +77,8 @@ def create_app(cfg: Config) -> FastAPI:
         if gate_header and gate_header not in request.headers:
             return Response(status_code=302, headers={
                 "location": "https://example.cloudflareaccess.com/cdn-cgi/access/login/ferry"})
-        if request.url.path == "/health":
-            return await call_next(request)
+        if request.url.path == "/health" or request.url.path.startswith("/admin"):
+            return await call_next(request)  # the admin page has its own, local-only sign-in
         body = await request.body()
         user = find_user(request.headers.get("authorization", ""))
         proto = request.headers.get("x-ferry-protocol")
@@ -126,14 +135,12 @@ def create_app(cfg: Config) -> FastAPI:
             return cfg.models[cfg.summary_model]
         return cfg.models[cfg.default_model]
 
-    @app.post("/v1/ferry/check")
-    async def check(request: Request):
+    async def run_check(want: str | None, user: str) -> list[dict]:
         """Ask each model (or the one named) for a two-word answer: proves the key, the network path and the model
         name work, which `ferry doctor` cannot know otherwise. Costs a few tokens."""
         reload()
-        want = (json.loads(await request.body() or b"{}") or {}).get("model")
         out = []
-        for m in cfg.models.values():
+        for m in list(cfg.models.values()):
             if want and m.id != want:
                 continue
             row = {"id": m.id, "model": m.model, "base_url": m.base_url}
@@ -154,27 +161,32 @@ def create_app(cfg: Config) -> FastAPI:
             except httpx.HTTPError as e:
                 ok, err = False, f"{type(e).__name__}: {e}"
             out.append({**row, "ok": ok, "ms": int((time.time() - t) * 1000), **({"error": err} if err else {})})
-            write(audit_log, event="check", user=request.state.user, model=m.id, ok=ok)
-        return {"models": out}
+            write(audit_log, event="check", user=user, model=m.id, ok=ok)
+        return out
+
+    @app.post("/v1/ferry/check")
+    async def check(request: Request):
+        want = (json.loads(await request.body() or b"{}") or {}).get("model")
+        return {"models": await run_check(want, request.state.user)}
 
     @app.post("/v1/ferry/upload/{upload}/{seq}")
     async def upload(upload: str, seq: int, request: Request):
-        store.put_part(key(request, upload), seq, await request.body())
+        live.store.put_part(key(request, upload), seq, await request.body())
         return {"ok": True}
 
     @app.post("/v1/ferry/commit")
     async def commit(request: Request, conv: str, base: int, base_hash: str = "", upload: str = "", parts: int = 0):
         try:
-            raw = store.take_upload(key(request, upload), parts) if upload else await request.body()
+            raw = live.store.take_upload(key(request, upload), parts) if upload else await request.body()
         except ValueError as e:
             raise HTTPException(400, str(e))
         blob = json.loads(raw.decode("utf-8"))
         counter["commits"] += 1
         if drop_every and counter["commits"] % drop_every == 0:
-            store.drop_sessions()
+            live.store.drop_sessions()
             write(audit_log, event="test_drop")
         try:
-            count, h = store.commit(key(request, conv), base, base_hash, blob.get("append") or [], blob.get("tools"))
+            count, h = live.store.commit(key(request, conv), base, base_hash, blob.get("append") or [], blob.get("tools"))
         except BaseMismatch as e:
             return JSONResponse({"error": "base mismatch", "count": e.count, "hash": e.hash}, status_code=409)
         write(audit_log, event="commit", user=request.state.user, conv=conv[:12], base=base,
@@ -189,11 +201,11 @@ def create_app(cfg: Config) -> FastAPI:
         ref = payload.pop("ferry", None)
         counter["chats"] += 1
         if ref and drop_before_chat and counter["chats"] % drop_before_chat == 0:
-            store.drop_sessions()
+            live.store.drop_sessions()
             write(audit_log, event="test_drop_before_chat")
         if ref:
             try:
-                payload["messages"], tools = store.load(key(request, ref["conv"]), ref["count"], ref["hash"],
+                payload["messages"], tools = live.store.load(key(request, ref["conv"]), ref["count"], ref["hash"],
                                                         ref.get("tools_hash"))
             except KeyError as e:
                 return JSONResponse({"error": {"message": f"{e.args[0]}; the client will resend"}}, status_code=409)
@@ -205,7 +217,7 @@ def create_app(cfg: Config) -> FastAPI:
         project = request.headers.get("x-ferry-project", "")
         apply_rules(payload, load_rules(cfg.rules_dir, project))
         user = request.state.user
-        hits: Counter = red.mask_payload(payload, user)
+        hits: Counter = live.red.mask_payload(payload, user)
         trimmed, size = cap_upstream(payload, cfg.max_upstream_bytes)
         if cfg.max_upstream_bytes and size > cfg.max_upstream_bytes:
             write(audit_log, event="chat", user=user, project=project, model=model.id, status=413, trimmed=trimmed,
@@ -229,7 +241,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         def done() -> None:
             if ref and cfg.session_store == "none":
-                store.forget(key(request, ref["conv"]))
+                live.store.forget(key(request, ref["conv"]))
 
         if not payload.get("stream"):
             r = await client.post(url, content=body, headers=headers)
@@ -237,7 +249,7 @@ def create_app(cfg: Config) -> FastAPI:
             done()
             if r.status_code != 200:
                 return Response(r.content, status_code=r.status_code, media_type="application/json")
-            return JSONResponse(restore_message(r.json(), red, user))
+            return JSONResponse(restore_message(r.json(), live.red, user))
 
         upstream = await client.send(client.build_request("POST", url, content=body, headers=headers), stream=True)
         if upstream.status_code != 200:
@@ -252,7 +264,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         async def relay():
             try:
-                async for b in restore_sse(upstream.aiter_lines(), red, usage, user):
+                async for b in restore_sse(upstream.aiter_lines(), live.red, usage, user):
                     yield b
             finally:
                 write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=usage)
@@ -260,4 +272,6 @@ def create_app(cfg: Config) -> FastAPI:
 
         return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(upstream.aclose))
 
+    from .admin import mount_admin
+    mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
     return app

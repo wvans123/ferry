@@ -193,7 +193,17 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 
 上下文管理和记忆的方案（参考 pi、Cursor、Claude Code、Codex 的做法）见 [CONTEXT-AND-MEMORY.md](CONTEXT-AND-MEMORY.md)。
 
-## 14. 路线图
+## 14. 服务端管理页
+
+`/admin` 是给运行服务端的人用的本机网页（`server/ferry_server/admin.html`，单文件，不依赖外网资源）。安全上有三道门：
+
+1. 只接受来自 127.0.0.1 / ::1、且不带任何代理或 Cloudflare 请求头（`cf-connecting-ip`、`x-forwarded-for` 等）的请求。隧道进来的请求也来自本机，但一定带这些头；
+2. 要有管理钥匙：钥匙存在服务端数据目录的 `admin-key` 里，`ferry-server --ui` 打开的链接带着它，换成 SameSite=Strict 的 cookie；
+3. 修改类请求还要带 `X-Ferry-Admin` 头，别的网站的页面发不出这种请求（会触发跨域预检）。
+
+能在页面上改的设置（外网地址、会话保存方式、脱敏、请求上限）写进数据目录的 `server.toml`，立即生效；环境变量仍然优先。会话保存方式切换时换掉会话库，正在进行的对话下一轮整段重传一次。
+
+## 15. 路线图
 
 1. 大输出写文件、自动记忆（见 CONTEXT-AND-MEMORY.md 第 4 节）。
 2. Claude 原生接口：服务端把 OpenAI 格式翻译成 Anthropic Messages API，加上提示词缓存和思考过程。

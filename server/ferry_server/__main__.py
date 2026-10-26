@@ -11,6 +11,10 @@ import argparse
 import json
 import os
 import sys
+import threading
+import time
+import urllib.request
+import webbrowser
 from pathlib import Path
 
 import uvicorn
@@ -62,11 +66,45 @@ def banner(cfg: Config, mode: str) -> None:
     print("\n".join(out), flush=True)
 
 
+def _get(url: str, timeout: float = 2) -> dict | None:
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def _stop_running(cfg: Config) -> bool:
+    """Ask a Ferry server (0.8+) already on this port to stop, using the shared admin key."""
+    from .admin import admin_key
+    req = urllib.request.Request(f"http://127.0.0.1:{cfg.port}/admin/api/stop", method="POST", data=b"{}",
+                                 headers={"Cookie": f"ferry_admin={admin_key(cfg)}", "X-Ferry-Admin": "1"})
+    try:
+        urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=3)
+    except Exception:
+        return False
+    for _ in range(30):
+        time.sleep(0.2)
+        if not _get(f"http://127.0.0.1:{cfg.port}/health", 0.5):
+            return True
+    return False
+
+
+def _quiet_output(cfg: Config) -> None:
+    """Started without a console (pythonw, a shortcut, start with Windows): write output to server.log."""
+    home = cfg.home or cfg.data_dir
+    log = open(Path(home) / "server.log", "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = log
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="ferry-server")
     ap.add_argument("--config", help="path to ferry-server.toml (default: zero-config)")
     ap.add_argument("--host")
     ap.add_argument("--port", type=int)
+    ap.add_argument("--ui", action="store_true", help="open the admin page (start the server first if needed)")
+    ap.add_argument("--background", action="store_true", help="run without a console; output goes to server.log")
     ap.add_argument("--version", action="store_true")
     a = ap.parse_args()
     if a.version:
@@ -78,9 +116,37 @@ def main() -> None:
         cfg.host = a.host
     if a.port:
         cfg.port = a.port
+    if a.ui or a.background or sys.stdout is None:
+        _quiet_output(cfg)
+
+    from .admin import admin_url
+    running = _get(f"http://127.0.0.1:{cfg.port}/health")
+    if running and running.get("version") == __version__:
+        if a.ui:
+            webbrowser.open(admin_url(cfg))  # already running: just show it
+        else:
+            print(f"A Ferry server {__version__} is already running on port {cfg.port}.", flush=True)
+        return
+    if running and not _stop_running(cfg):
+        msg = (f"Port {cfg.port} is used by Ferry server {running.get('version')}; close its window "
+               f"(or end its python process) and start again.")
+        print(msg, flush=True)
+        if a.ui:
+            webbrowser.open(f"http://127.0.0.1:{cfg.port}/health")
+        sys.exit(1)
+
     banner(cfg, f"config file {Path(path).resolve()}" if path else "zero-config")
+    print(f"  admin page (this computer only): {admin_url(cfg)}", flush=True)
     if cfg.home and not os.environ.get("FERRY_NO_DISCOVERY"):  # zero-config, started by hand: one local user
         write_local_discovery(cfg, next(iter(cfg.users)))
+    if a.ui:
+        def open_when_ready() -> None:
+            for _ in range(100):
+                time.sleep(0.2)
+                if _get(f"http://127.0.0.1:{cfg.port}/health", 0.5):
+                    webbrowser.open(admin_url(cfg))
+                    return
+        threading.Thread(target=open_when_ready, daemon=True).start()
     try:
         uvicorn.run(create_app(cfg), host=cfg.host, port=cfg.port, log_level="warning")
     except KeyboardInterrupt:

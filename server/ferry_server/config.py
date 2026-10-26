@@ -66,6 +66,8 @@ class Config:
     home: Path | None = None     # set in zero-config mode
     models_file: Path | None = None  # zero-config: models.toml, re-read whenever it changes
     models_mtime: float = 0.0
+    settings_file: Path | None = None  # zero-config: server.toml, written by the admin page
+    public_url: str = ""               # how clients reach this server, e.g. https://ferry.example.com (display only)
     users: dict[str, str] = field(default_factory=dict)  # token -> user name
     models: dict[str, ModelConfig] = field(default_factory=dict)
 
@@ -300,6 +302,14 @@ def load_default() -> Config:
         dictionary.write_text(DEFAULT_DICTIONARY, encoding="utf-8")
     secret = os.environ.get("FERRY_SECRET") or _persistent_secret(home / "secret")
     token = os.environ.get("FERRY_TOKEN") or _persistent_secret(home / "token")
+    settings_file = home / "server.toml"
+    saved = {}
+    if settings_file.exists():
+        try:
+            saved = tomllib.loads(settings_file.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as e:
+            print(f"{settings_file} ignored: {e}", flush=True)
+    env = os.environ.get
     models_file = home / "models.toml"
     if not models_file.exists():
         models_file.write_text(models_template(zero_config_models()), encoding="utf-8")
@@ -311,15 +321,30 @@ def load_default() -> Config:
         dictionary=dictionary,
         secret=secret,
         users={token: "local"},
-        max_upstream_bytes=int(os.environ.get("FERRY_MAX_UPSTREAM_BYTES", 900_000)),
+        max_upstream_bytes=int(env("FERRY_MAX_UPSTREAM_BYTES") or saved.get("max_upstream_bytes", 900_000)),
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
-        session_store=os.environ.get("FERRY_SESSION_STORE", "memory"),
-        redact=os.environ.get("FERRY_REDACT", "1").lower() not in ("0", "false", "off", "no"),
+        session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
+        redact=(env("FERRY_REDACT").lower() not in ("0", "false", "off", "no")) if env("FERRY_REDACT")
+        else bool(saved.get("redact", True)),
         models_file=models_file,
+        settings_file=settings_file,
+        public_url=saved.get("public_url", ""),
     )
     apply_models_file(cfg, models_file)
     cfg.models_mtime = models_file.stat().st_mtime
     finish(cfg)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     return cfg
+
+
+def save_settings(cfg: Config) -> None:
+    """Write the settings the admin page can change to <home>/server.toml (environment variables still win)."""
+    if not cfg.settings_file:
+        return
+    cfg.settings_file.write_text(
+        "# Ferry server settings, written by the admin page. Environment variables with the same meaning win.\n"
+        f'public_url = "{cfg.public_url}"\n'
+        f'session_store = "{cfg.session_store}"\n'
+        f"redact = {'true' if cfg.redact else 'false'}\n"
+        f"max_upstream_bytes = {int(cfg.max_upstream_bytes)}\n", encoding="utf-8")
