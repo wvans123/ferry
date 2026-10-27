@@ -10,15 +10,17 @@ function memoryCount(cwd) {
 	return n;
 }
 
-export function createBrand(cfg, version) {
+export function createBrand(cfg, version, newer = Promise.resolve("")) {
 	return (pi) => {
 		pi.on("session_start", async (_event, ctx) => {
 			if (ctx.mode !== "tui") return;
+			newer.then((v) => v && ctx.ui.notify(`Ferry ${v} is available (you have ${version}). Update with: ferry update ` +
+				"(or git pull + npm ci + install, for a git checkout)", "info")).catch(() => {});
 			const host = cfg.mode === "local" ? "on this computer" : cfg.server.replace(/^https?:\/\//, "");
 			const features = [
 				cfg.memory === false ? "memory off" : `memory: ${memoryCount(ctx.cwd ?? process.cwd())} (/memory)`,
 				cfg.subagents === false ? "subagents off" : "subagents on",
-				"ferry config to change",
+				"type / for commands (/init /review /undo /status)",
 			].join("  ·  ");
 			ctx.ui.setHeader((_tui, theme) => ({
 				render() {

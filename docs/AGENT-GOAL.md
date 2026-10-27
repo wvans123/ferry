@@ -108,3 +108,22 @@
 - 启动时遇到公司网关确认页：自动在浏览器打开，确认后继续（F37）。长期办法是请 IT 把服务端地址加入白名单。
 - 跟着 pi 更新：每周自动检查、全部测试通过才发布（`.github/workflows/update-pi.yml`）；新增终端界面冒烟测试（F38），防止 pi 更新弄坏界面。
 - 不换成 DeepSeek Harness：它还是开发预览版（会有不兼容改动），以网页和桌面界面为主，用官方 API 时默认上传会话记录。等出正式版再评估。
+
+## v0.12：从能用到好用
+
+| 新增 | 说明 | 自测 |
+|---|---|---|
+| 斜杠命令 | 内置 `/init` `/review` `/commit` `/explain` `/test` `/fix` `/pr` `/doc` `/plan` `/undo` `/remember` `/status` `/agents` `/hooks` | F39 |
+| 自己扩展 | 自己的命令（`commands/*.md`）、技能（`skills/*/SKILL.md`）、子 agent、钩子、权限规则、MCP；也认 Claude Code 的 `.claude/` 目录；例子在 `examples/` | F39 + 单元测试 |
+| 撤销 | `/undo` 恢复 agent 用 edit/write 改过的文件 | 单元测试 + 终端测试 |
+| 钩子 | `afterEdit`（失败输出交给 agent）、`onDone`；项目钩子先征得同意 | F39 |
+| 提醒 | 长请求结束时响铃加 Windows 通知 | — |
+| 新版本提醒 | 每天检查一次 GitHub，有新版本时在界面里提示 | — |
+| 文档 | README 按"选部署方式 → 装服务端 → 装客户端 → 日常使用 → 扩展 → 设置 → 排错"重写；新增 DEPLOY-WINDOWS、DEPLOY-LINUX、CUSTOMIZE | — |
+
+## 下一步候选
+
+1. 命令在沙箱里执行（Windows 受限令牌 / AppContainer），让"全部放行"也有边界。
+2. 图片输入：截图、设计稿（服务端模型支持视觉时，比如 `deepseek-flash`）。
+3. VS Code 插件或 ACP，在编辑器里用。
+4. 用量和费用：按天、按项目统计 token 和花费。

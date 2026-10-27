@@ -106,6 +106,18 @@ export function createModes(cfg) {
 			description: "Cycle permission mode",
 			handler: (ctx) => setMode(MODES[(MODES.indexOf(state.mode) + 1) % MODES.length], ctx),
 		});
+		pi.registerCommand("plan", {
+			description: "Switch to read-only plan mode and plan a task (Shift+Tab switches back to carry it out)",
+			handler: async (args, ctx) => {
+				setMode("plan", ctx);
+				const task = String(args ?? "").trim();
+				if (task) {
+					pi.sendUserMessage(`Make a plan for this task: ${task}\n\nLook at the relevant code first. Then give a ` +
+						"short, concrete plan: the steps, the files each step touches, how to verify the result, and any open " +
+						"questions for me. Do not change anything yet.");
+				}
+			},
+		});
 		pi.registerCommand("mode", {
 			description: "Permission mode: default, acceptEdits, plan, bypass",
 			handler: async (args, ctx) => {

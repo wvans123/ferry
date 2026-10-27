@@ -116,7 +116,7 @@ class Stack:
                     "DEEPSEEK_API_KEY": "x", "FERRY_TEST_DROP_EVERY": str(drop_every), "FERRY_HOME": str(self.home),
                     "FERRY_TEST_DROP_BEFORE_CHAT": str(drop_before_chat), "FERRY_AUTO_APPROVE": "1",
                     "FERRY_SERVER_HOME": str(root / "zero-config-home"), "FERRY_PYTHON": PY,
-                    "FERRY_UPSTREAM_BASE_URL": "http://127.0.0.1:9100/v1"}
+                    "FERRY_UPSTREAM_BASE_URL": "http://127.0.0.1:9100/v1", "FERRY_NO_UPDATE_CHECK": "1"}
         self.env.update(server_env or {})
         local = "127.0.0.1,localhost"
         for k in ("NO_PROXY", "no_proxy"):
@@ -239,6 +239,37 @@ def check_agent_features(root: Path, work: Path) -> None:
         projects = [a.get("project") for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "chat"]
         check("F34 中文文件夹名", c10 == 0 and "[x] step one" in o10 and "中文 项目" in projects,
               "在名字含中文和空格的文件夹里运行正常，服务端记录的项目名正确")
+    finally:
+        s.close()
+
+
+def check_diy(root: Path) -> None:
+    """Slash commands (built-in and your own), skills, hooks and /remember."""
+    proj = root.parent / "diy-project"
+    (proj / ".ferry" / "commands").mkdir(parents=True, exist_ok=True)
+    (proj / ".ferry" / "commands" / "hello.md").write_text("---\ndescription: greet someone\n---\nDIYCMD greet $1\n", encoding="utf-8")
+    (proj / ".ferry" / "skills" / "demo-skill").mkdir(parents=True, exist_ok=True)
+    (proj / ".ferry" / "skills" / "demo-skill" / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Shows that project skills are offered to the model.\n---\nSay hi.\n", encoding="utf-8")
+    s = Stack(root, proj, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "/hello Wesley")
+        before = len(jsonl(s.upstream))
+        c2, _ = s.ferry("-p", "/review src/api")
+        review = [m for m in jsonl(s.upstream)[before]["messages"] if m.get("role") == "user"] if len(jsonl(s.upstream)) > before else []
+        review_ok = c2 == 0 and review and "Review src/api" in str(review[-1]) and "Report each finding" in str(review[-1])
+        skill_ok = "demo-skill" in system_text(jsonl(s.upstream)[-1])
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "hooks.json").write_text(json.dumps({"afterEdit": [
+            {"match": "**/*.txt", "run": "echo HOOKRAN $FERRY_FILE_REL && exit 3"}]}), encoding="utf-8")
+        c3, o3 = s.ferry("-p", "EDITTEST: write a file")
+        c4, o4 = s.ferry("-p", "/remember integration tests use port 9999")
+        mem = list((s.home / "memory" / "projects").glob("*/*.md"))
+        check("F39 斜杠命令和自定义", c1 == 0 and "DIY: Wesley" in o1 and review_ok and skill_ok
+              and c3 == 0 and "HOOKRAN made-by-agent.txt" in o3 and "exit code 3" in o3
+              and c4 == 0 and any("port 9999" in m.read_text(encoding="utf-8") for m in mem),
+              "项目里自己写的 /hello 命令能用；内置 /review 展开成审查要求；项目技能出现在系统提示里；"
+              "改文件后钩子运行、失败输出交给模型；/remember 直接存进记忆")
     finally:
         s.close()
 
@@ -669,6 +700,7 @@ def main() -> int:
     check_web_browser(base / "web", work)
     check_gateway(base / "gateway", work)
     check_tui(base / "tui", work)
+    check_diy(base / "diy")
 
     print("\n[14/14] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
     check_install_update(base / "install")

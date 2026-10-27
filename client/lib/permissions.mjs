@@ -189,7 +189,7 @@ export function parseRule(rule) {
 function ruleMatches(rule, tool, subject) {
 	const r = parseRule(rule);
 	if (!r) return false;
-	const toolOk = r.tool === tool || (r.tool === "shell" && SHELL.has(tool)) || (r.tool === "edits" && EDIT.has(tool))
+	const toolOk = r.tool === tool || (r.tool === "shell" && SHELL.has(tool)) || ((r.tool === "edits" || r.tool === "edit") && EDIT.has(tool))
 		|| (r.tool.includes("*") && globToRegex(r.tool, false).test(tool)); // mcp__browser__*
 	if (!toolOk) return false;
 	if (r.pattern === undefined || r.pattern === "*" || r.pattern === "") return true;

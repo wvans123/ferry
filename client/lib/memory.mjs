@@ -178,6 +178,21 @@ export function createMemory(cfg) {
 		pi.on("before_agent_start", (event, ctx) => {
 			event.systemPromptOptions.sections.ferry_memory = memorySection(ctx?.cwd ?? process.cwd());
 		});
+		pi.registerCommand("remember", {
+			description: "Save something to memory right away: /remember [user] <text> (user = all projects, default this project)",
+			handler: async (args, ctx) => {
+				let text = String(args ?? "").trim();
+				let scope = "project";
+				if (/^(user|global)\s+/i.test(text)) {
+					scope = "user";
+					text = text.replace(/^\S+\s+/, "");
+				}
+				if (!text) return ctx.ui.notify("Usage: /remember [user] <what to remember>", "warning");
+				const name = slug(text.split(/\s+/).slice(0, 6).join("-")) || `note-${Date.now()}`;
+				const r = runMemory({ action: "save", scope, name, description: text.slice(0, 120), content: text }, ctx.cwd ?? process.cwd());
+				ctx.ui.notify(r.content[0].text, "info");
+			},
+		});
 		pi.registerCommand("memory", {
 			description: "Show what Ferry remembers and where the files are",
 			handler: async (_args, ctx) => {

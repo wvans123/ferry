@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "filesystem-docs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/team-docs"],
+      "description": "Read the team's shared documentation folder",
+      "exposure": "direct"
+    },
+    "internal-api": {
+      "url": "https://mcp.internal.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${INTERNAL_MCP_TOKEN}" },
+      "description": "Search tickets and service catalogue in the company's internal systems"
+    }
+  }
+}

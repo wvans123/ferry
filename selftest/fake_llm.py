@@ -103,6 +103,8 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "mcp__browser__browser_snapshot", {})
         return ("text", "BROWSER: " + ("pelican-42" if "pelican-42" in text_of(tools[-1]) else text_of(tools[-1])[:200]))
+    if "DIYCMD greet" in first:  # a user's own slash command, expanded by the client
+        return ("text", "DIY: " + first.split("DIYCMD greet", 1)[1].strip()[:40])
     if "GATETEST" in first:
         if not tools:
             return ("tool", "web_fetch", {"url": "http://127.0.0.1:9100/gated"})
@@ -121,7 +123,7 @@ def decide_agent(msgs):
     if "EDITTEST" in first:
         if not tools:
             return ("tool", "write", {"path": "made-by-agent.txt", "content": "hello\n"})
-        return ("text", "EDIT: " + text_of(tools[-1])[:80])
+        return ("text", "EDIT: " + text_of(tools[-1])[:400].replace("\n", " | "))
     if "GENTEST" in first:
         if not tools:
             return ("tool", "task", {"agent": "general", "description": "run a check command",

@@ -1,0 +1,10 @@
+{
+  "afterEdit": [
+    { "match": "**/*.{js,jsx,ts,tsx,json,css,md}", "run": "npx --no-install prettier --write \"$FERRY_FILE\"" },
+    { "match": "**/*.py", "run": "ruff check --fix \"$FERRY_FILE\"" },
+    { "match": "**/*.java", "run": "mvnw.cmd -q -o compile", "timeout": 120 }
+  ],
+  "onDone": [
+    { "run": "git status --short" }
+  ]
+}

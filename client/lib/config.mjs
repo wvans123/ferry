@@ -29,6 +29,9 @@ export const DEFAULTS = {
 	subagents: true, // the task tool: hand searches and side tasks to a subagent with a fresh context
 	bigOutputBytes: 8192, // longer command/search output is saved to a file; the model sees start, end and path. 0 = off
 	web: "client", // web_fetch / web_search: "client" (this computer's network), "server" (the Ferry server fetches), "off"
+	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
+	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
+	notifyAfterSeconds: 30,
 	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
@@ -41,6 +44,9 @@ export const SETTINGS = {
 	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
 	permissionMode: ["string", "permission mode at start: default (ask before edits and commands), acceptEdits (file changes go ahead), plan (read-only), bypass (nothing asks). Shift+Tab switches"],
 	web: ["string", "where web_fetch / web_search run: client (this computer, company proxy and gateway rules apply), server (the Ferry server, if its admin page allows), off"],
+	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
+	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
+	notifyAfterSeconds: ["number", "how long a request must take before that notification"],
 	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window"],

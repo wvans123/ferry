@@ -1,6 +1,6 @@
 {
   "name": "ferry-cli",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Ferry: a coding agent for restricted networks. The client keeps your files and history; the Ferry server builds the prompt and talks to the model.",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "client/bin",
     "client/lib",
+    "client/commands",
     "client/ferry.cmd"
   ],
   "engines": {

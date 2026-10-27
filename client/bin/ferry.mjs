@@ -11,7 +11,7 @@
 //
 // Without `ferry login`, every ferry window starts its own Ferry server on this computer and stops it on exit
 // (installed by `ferry install`; the server reads DEEPSEEK_API_KEY from the environment).
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	AGENT_DIR,
@@ -286,12 +286,28 @@ async function run(args) {
 	// loaded only here, so install / update / doctor work even before the agent's packages are in place
 	const { main } = await import("@earendil-works/pi-coding-agent");
 	const { createSyncProvider } = await import("../lib/sync.mjs");
-	const { createGuard, createModes } = await import("../lib/guard.mjs");
+	const { createGuard, createModes, _state: permState } = await import("../lib/guard.mjs");
 	const { createBrand } = await import("../lib/brand.mjs");
 	const { createMemory } = await import("../lib/memory.mjs");
 	const { createPrompt } = await import("../lib/prompt.mjs");
 	const { createTodo, createBigOutputs, createHistorySearch } = await import("../lib/tools.mjs");
-	const { createSubagents } = await import("../lib/subagent.mjs");
+	const { createSubagents, discoverAgents } = await import("../lib/subagent.mjs");
+	const { createCommands } = await import("../lib/commands.mjs");
+	const { createCheckpoints } = await import("../lib/checkpoint.mjs");
+	const { createHooks } = await import("../lib/hooks.mjs");
+	const { webMode } = await import("../lib/web.mjs");
+	const status = async () => {
+		const t = Date.now();
+		const h = await getJson({ server: cfg.server, headers: cfg.headers }, "/health", 5000).catch((e) => ({ error: e }));
+		const m = models[0];
+		return [
+			`Ferry ${VERSION} (agent engine pi ${PI_VERSION})`,
+			`Server: ${cfg.mode === "local" ? "on this computer" : cfg.server}  ${h.json ? `reachable in ${Date.now() - t} ms, version ${h.body.version}`
+				: `NOT reachable (${h.error?.cause?.code ?? h.error?.message ?? `HTTP ${h.status}`})`}`,
+			`Model: chosen by the server${m.routesTo ? `: ${m.routesTo} (${m.model})` : ""}`,
+			`Web tools: ${webMode(cfg) || "off"}   Browser: ${cfg.browser ? "on" : "off"}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
+		];
+	};
 	const { createWeb } = await import("../lib/web.mjs");
 	const { createBrowser } = await import("../lib/browser.mjs");
 	await main(["--offline", ...args], {
@@ -300,6 +316,9 @@ async function run(args) {
 			{ name: "ferry-prompt", factory: createPrompt(), hidden: true },
 			{ name: "ferry-modes", factory: createModes(cfg), hidden: true },
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
+			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },
+			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
+			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents }), hidden: true },
 			{ name: "ferry-memory", factory: createMemory(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
@@ -308,9 +327,41 @@ async function run(args) {
 			{ name: "ferry-browser", factory: createBrowser(cfg), hidden: true },
 			{ name: "ferry-subagents", factory: createSubagents(cfg, {
 				makeSync: () => createSyncProvider(cfg, models, { purpose: "subagent" }) }), hidden: true },
-			{ name: "ferry-brand", factory: createBrand(cfg, VERSION), hidden: true },
+			{ name: "ferry-brand", factory: createBrand(cfg, VERSION, newerRelease(cfg)), hidden: true },
 		],
 	});
+}
+
+/** The newest release on GitHub when it is newer than this one, checked at most once a day, quietly. */
+async function newerRelease(cfg) {
+	if (cfg.updateCheck === false || process.env.FERRY_NO_UPDATE_CHECK) return "";
+	const file = join(FERRY_HOME, "update-check.json");
+	let last = {};
+	try {
+		last = JSON.parse(readFileSync(file, "utf8"));
+	} catch {
+		// first time
+	}
+	let latest = last.latest ?? "";
+	if (!last.at || Date.now() - last.at > 86400_000) {
+		try {
+			const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+				headers: { "User-Agent": `ferry/${VERSION}`, Accept: "application/vnd.github+json" }, redirect: "manual",
+				signal: AbortSignal.timeout(4000) });
+			if (r.ok) latest = String((await r.json()).tag_name ?? "").replace(/^v/, "");
+		} catch {
+			// offline or blocked: try again tomorrow
+		}
+		try {
+			writeFileSync(file, JSON.stringify({ at: Date.now(), latest }), "utf8");
+		} catch {
+			// not important
+		}
+	}
+	const n = (v) => v.split(".").map((x) => parseInt(x, 10) || 0);
+	const [a, b] = [n(latest || "0"), n(VERSION)];
+	for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0) ? latest : "";
+	return "";
 }
 
 /** `ferry config`: show the client settings; `ferry config set <key> <value>` changes one. */

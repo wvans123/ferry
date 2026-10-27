@@ -1,0 +1,14 @@
+{
+  "allow": [
+    "bash(npm test*)", "bash(npm run lint*)", "bash(mvnw.cmd -q test*)", "bash(python -m pytest*)",
+    "bash(git add*)", "bash(git commit*)",
+    "edit(src/**)", "edit(test/**)",
+    "web_fetch(docs.python.org)", "web_fetch(developer.mozilla.org)"
+  ],
+  "ask": [
+    "bash(git push*)", "bash(npm install*)", "edit(src/main/resources/db/migration/**)"
+  ],
+  "deny": [
+    "bash(curl*)", "read(secrets/**)", "edit(.github/**)"
+  ]
+}

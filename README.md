@@ -1,224 +1,305 @@
 # Ferry
 
-**在受限的公司电脑上用的编码 agent，像 Cursor CLI 一样在 cmd 里对话。**
-A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work locally, a server you control builds the prompt, redacts secrets and picks the model, and every request stays under 1 MB.
+**一个能在受限的公司电脑上用的编码 agent，用法像 Claude Code / Cursor CLI：在 cmd 里输入 `ferry`，用中文说要做什么，它读代码、改文件、跑命令。**
+
+A Claude-Code-style coding agent for locked-down Windows PCs: the agent runs on the work computer, a small server you control holds the API keys, builds the prompt and calls the model, and every request leaving the PC stays under 1 MB.
 
 [![test and release](https://github.com/wvans123/ferry/actions/workflows/ci.yml/badge.svg)](https://github.com/wvans123/ferry/actions/workflows/ci.yml)
-
-适合这样的环境：
-
-- 公司电脑对外的**单个请求不能超过 1MB**；
-- **敏感信息**（项目代号、内网地址、邮箱）不应原样发给外部模型；
-- 模型的 **API Key 不想放在公司电脑上**，用哪个模型想由自己的服务器决定。
 
 ```
 C:\my-project> ferry
 
-  Ferry v0.11.0  server on this computer
+  Ferry v0.12.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
-  memory: 3 (/memory)  ·  subagents on  ·  ferry config to change
+  memory: 3 (/memory)  ·  subagents on  ·  type / for commands (/init /review /undo /status)
 
-> 读一下 notes.txt，然后新建 summary.md 总结它
-  （agent 读文件；要写文件时先弹出 Allow / Deny 让你确认）
-  已新建 summary.md。
-                                                                            (ferry) auto
+> 登录接口在密码错误时返回 500，帮我查一下原因并修好
+  ● search "password" in src ... read AuthController.java ... edit AuthService.java
+    Allow edit?  → Allow once / Allow all file changes / Deny
+  原因是 ……，已改 AuthService.java 第 42 行，并补了一个测试，mvn test 通过。
+                                                           ask before edits and commands (shift+tab)
 ```
 
-## 在 Windows 上三步用起来
+**适合这样的环境**：
+- 公司电脑对外的单个请求不能太大（Ferry 每个请求都不超过 1 MB）；
+- 公司电脑上不想放模型的 API Key；
+- 用哪个模型想由自己决定，比如 DeepSeek、Kimi、通义、智谱，或者任何 OpenAI 兼容接口。
 
-需要 Node.js 22+ 和 Python 3.11–3.14（只用来跑本机服务端；只连远程服务端时可以不装）。所有命令在 **cmd** 里执行。
+## 目录
 
-**1. 下载** [Releases](https://github.com/wvans123/ferry/releases/latest) 里的 `ferry-windows-x.y.z.zip`，右键"全部解压"。
+- [它是怎么工作的](#它是怎么工作的)
+- [先选一种部署方式](#先选一种部署方式)
+- [服务端：装在哪、怎么装](#服务端装在哪怎么装)
+- [工作电脑：装客户端](#工作电脑装客户端)
+- [日常使用](#日常使用)：命令、斜杠命令、权限、记忆、子 agent、联网、浏览器、撤销
+- [自己动手扩展](#自己动手扩展)
+- [设置一览](#设置一览)
+- [出问题了怎么办](#出问题了怎么办)
+- [安全须知](#安全须知)
+- [设计](#设计)、[开发](#开发)、[离商业级还差什么](#离商业级还差什么)
 
-**2. 安装**（离线，不需要 venv、npm、PyPI）：
+## 它是怎么工作的
 
-```bat
-cd /d %USERPROFILE%\Downloads\ferry-x.y.z
-node client\bin\ferry.mjs install
+```
+工作电脑                                       Ferry 服务端（你自己的电脑或服务器）             模型
+┌──────────────────────────────┐   只传新增部分   ┌──────────────────────────────┐            ┌──────────┐
+│ ferry（agent）                │ ── 每次 ≤ 1MB ──> │ 拼回完整对话、加团队提示词、   │ ─────────> │ DeepSeek │
+│ 读写文件、执行命令、记忆、权限 │ <── 逐字返回 ──── │ 选模型、（可选）脱敏、存 Key  │ <───────── │ Kimi ... │
+└──────────────────────────────┘                  └──────────────────────────────┘            └──────────┘
 ```
 
-**3. 设置 Key，重新打开 cmd，开始用：**
+- **干活的在工作电脑上**：agent 引擎是开源的 [pi](https://github.com/earendil-works/pi)，Ferry 在它上面加了权限、记忆、子 agent、联网、浏览器、斜杠命令等扩展。代码、对话记录、记忆都留在工作电脑上。
+- **服务端只负责"问模型"这一步**：把工作电脑传来的新增内容拼回完整对话，加上团队提示词，选模型，然后调用。API Key 只在服务端。
+- **为什么每次只传一点**：长对话的上下文会超过 1 MB，所以 Ferry 每轮只上传新增的消息，太大的拆成 512 KB 的小块，服务端再拼起来。
 
-```bat
-setx DEEPSEEK_API_KEY sk-你的key
-```
+## 先选一种部署方式
 
-```bat
-ferry doctor
-cd /d C:\你的项目
-ferry
-```
-
-`ferry doctor` 全是 OK 就说明 Key、网络、模型都没问题。逐步截图式说明和排错见 [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md)。
-
-用 `git clone` 拿到的代码没有依赖包：在文件夹里先 `npm ci`（要能访问 npm，公司网络先设好 `npm config set https-proxy ...`），再 `node client\bin\ferry.mjs install`。`install` 会从 GitHub 下载文件搜索要用的 `fd` 和 `rg`；下载不了时 `ferry doctor` 会提示，改用 Releases 里的安装包就行（已经带好）。
-
-### 常用命令
-
-| 命令 | 作用 |
-|---|---|
-| `ferry` | 在当前文件夹开始对话（快速按两次 Ctrl+C 退出） |
-| `ferry -p "问题"` | 只问一句，打印回答后退出 |
-| `ferry doctor` | 逐项检查，最后给模型发一个小请求确认能用 |
-| `ferry update` | 更新到 GitHub 上的最新版（访问不了 GitHub 时：`ferry update 下载好的.zip`） |
-| `ferry login 服务器地址 令牌` | 改用另一台机器上的服务端（前面有 Cloudflare Access 时加 `--header "CF-Access-Client-Id: ..."`） |
-| `ferry logout` | 回到本机服务端 |
-| `ferry config` | 查看客户端设置；`ferry config set memory false` 这样改 |
-
-对话里：**Shift+Tab 切换权限模式**，`/permissions` 看和删"以后都允许"的规则，`/new` 新开对话，`/compact` 手动压缩上下文，`/memory` 看记住了什么，`/settings` 改界面和压缩设置，Shift+Enter（或 Ctrl+J）换行。`ferry -c` 接着上次的对话，`ferry -r` 选一个以前的对话。
-
-## 客户端 agent 能做什么
-
-干活的 agent 跑在工作电脑上（[pi](https://github.com/earendil-works/pi) 引擎加 Ferry 的扩展），服务端只负责"问模型"这一步。所以工具、记忆、子 agent、上下文管理都在客户端，参考 Claude Code、Codex 和 pi 的做法：
-
-| 能力 | 怎么用 | 参考 |
+| 你的情况 | 部署方式 | 要多久 |
 |---|---|---|
-| **文件和命令** | `read` `edit` `write` 读写文件；`bash`（没有 Git Bash 时用 PowerShell）执行命令，命令在工作电脑上跑，和你自己在 cmd 里敲一样；`grep` `find` `ls` 搜索和浏览（自带 ripgrep 和 fd） | pi |
-| **权限** | 四种模式，Shift+Tab 切换，底栏显示当前模式：**默认**（改文件、执行命令前问）、**自动改文件**（项目里的改动不问，命令照问）、**只读规划**（只能读和搜，先出方案）、**全部放行**。确认框里可以选"以后都允许这类命令"（比如 `npm test` 开头的都放行，按项目记住）。`git status`、`dir`、`rg` 这类只读命令不问；删目录、`git push --force`、`reset --hard` 这类危险操作除了全部放行模式都会问，并说明危险在哪；写项目文件夹以外的地方总要确认。规则也可以手写，见下文 | Claude Code 的权限模式、Codex 的审批策略 |
-| **联网** | `web_search` 搜索（Bing）、`web_fetch` 读网页，默认**在工作电脑上执行**，和浏览器一样走公司代理，公司网关的规则照样生效。读网页按网站询问，可以选"以后都允许这个网站"。网关要求先确认的网站，agent 会告诉你去浏览器确认哪个地址，不会绕过。`ferry config set web server` 改为由服务端代办（服务端管理页还要打开联网），`off` 关闭 | Claude Code 的 WebFetch / WebSearch |
-| **浏览器** | `ferry config set browser true` 后，agent 能驱动工作电脑上的 Edge：打开网页、点击、填表、读页面（微软的 [Playwright MCP](https://github.com/microsoft/playwright-mcp)，安装包里带好，不下载浏览器）。走工作电脑自己的网络 | Claude in Chrome、Codex 的浏览器工具 |
-| **任务清单** | 多步任务时模型先列计划，输入框上方显示进度：`[x]` 完成、`[>]` 进行中 | Claude Code 的 TodoWrite |
-| **记忆** | 跨对话记住你的偏好、纠正、项目里的决定。分"你个人"（所有项目）和"这个项目"两层，存在工作电脑 `%USERPROFILE%\.ferry\memory`，一条一个 Markdown 文件。每次对话开头只带目录（每层最多 200 行），用到哪条再读哪条。说"记住……"或"忘掉……"即可；`/memory` 查看 | Claude Code 的 auto memory |
-| **子 agent** | `task` 工具把"在整个代码库里找……"这类活交给一个上下文全新的子 agent，只把结论带回主对话。内置 `explore`（只读搜索）和 `general`（和主 agent 一样的工具，改东西照样先问你）；几个子 agent 可以同时跑。自己的子 agent 写成 Markdown 放在项目的 `.ferry/agents/`（也认 Claude Code 的 `.claude/agents/`） | Claude Code 的 Task、pi 的 subagent 示例 |
-| **长输出写文件** | 命令或搜索输出超过 8KB 时，全文存到 `%USERPROFILE%\.ferry\outputs`，模型只看到开头、结尾和文件路径，需要时自己去读。每个请求都更小，压缩次数更少 | Cursor 的 dynamic context discovery |
-| **压缩和找回** | 上下文接近模型窗口时自动把旧内容写成摘要（`/compact` 手动触发；摘要可以由服务端交给便宜模型写）；压缩后模型用 `history_search` 在本地完整记录里找回原话、原报错 | pi、Cursor |
-| **规则** | 项目文件夹里的 `AGENTS.md`（也认 `CLAUDE.md`）每次自动带上；所有项目通用的写在 `%USERPROFILE%\.ferry\agent\AGENTS.md`；服务端还可以加团队规则 | pi、Codex、Claude Code |
+| 就一台电脑，能直接访问模型 API | **单机**：装好就用，服务端由 ferry 自动在本机启动 | 5 分钟 |
+| 公司电脑受限，家里或自己有一台 Windows 电脑 | **家里电脑当服务端** + Cloudflare 域名，工作电脑连过来 | 30 分钟 |
+| 同上，但手边是 Mac | **Mac 当服务端** + Cloudflare 域名 | 30 分钟 |
+| 要一直在线，或要用 Claude / OpenAI | **Linux 云服务器** + HTTPS | 30 分钟 |
 
-记忆、子 agent、长输出、浏览器、启动时的权限模式都在 `ferry config` 里。
+Anthropic（Claude）和 OpenAI 的 API 不服务中国大陆和香港。要用这两家，服务端要放在它们支持的地区。
 
-### 权限规则
+## 服务端：装在哪、怎么装
 
-确认框里选"以后都允许"会自动写规则；也可以手写。三个文件，禁止优先于询问，询问优先于允许：
+### 单机（服务端和客户端在同一台电脑）
 
-| 文件 | 管哪里 |
+需要 Node.js 22+ 和 Python 3.11–3.14。所有命令在 **cmd** 里执行。
+
+1. 下载 [Releases](https://github.com/wvans123/ferry/releases/latest) 里的 `ferry-windows-x.y.z.zip`，右键"全部解压"。安装包是离线的，不需要 npm、PyPI，也不需要 venv。
+2. 安装：
+   ```bat
+   cd /d %USERPROFILE%\Downloads\ferry-x.y.z
+   node client\bin\ferry.mjs install
+   ```
+3. 设置 API Key，然后**重新打开 cmd**：
+   ```bat
+   setx DEEPSEEK_API_KEY sk-你的key
+   ```
+4. 检查并开始用：
+   ```bat
+   ferry doctor
+   cd /d C:\你的项目
+   ferry
+   ```
+
+每次运行 `ferry`，它都会在本机后台启动一个服务端，退出时一起关掉。截图式的详细步骤见 [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md)。
+
+### 家里的 Windows 电脑 / Mac / Linux 服务器
+
+| 服务端在 | 步骤 |
 |---|---|
-| `%USERPROFILE%\.ferry\permissions.json` | 所有项目 |
-| `%USERPROFILE%\.ferry\projects\<文件夹名>-<编号>\permissions.json` | 一个项目，只给你自己（"以后都允许"写在这里） |
-| 项目里的 `.ferry\permissions.json` | 一个项目，可以提交进仓库给团队用 |
+| Windows | [docs/DEPLOY-WINDOWS.md](docs/DEPLOY-WINDOWS.md)：用安装包装服务端 → 桌面图标打开管理页 → 填 API Key → Cloudflare Tunnel 给它一个域名 |
+| Mac | [docs/DEPLOY-MAC.md](docs/DEPLOY-MAC.md)：`pipx install` → 开机自启脚本 → Cloudflare Tunnel |
+| Linux | [docs/DEPLOY-LINUX.md](docs/DEPLOY-LINUX.md)：`pipx install` → systemd → Caddy 自动 HTTPS |
 
-```json
-{
-  "allow": ["bash(npm test*)", "bash(git commit*)", "edit(src/**)", "mcp__browser__*"],
-  "ask":   ["bash(git push*)"],
-  "deny":  ["bash(curl*)", "read(secrets/**)"]
-}
-```
-
-`bash(...)` 里是命令开头的样子，`*` 匹配任意内容；`edit(...)` `write(...)` `read(...)` 里是项目里的路径，`**` 匹配多层目录；`shell(...)` 同时管 bash 和 PowerShell。复合命令（`a && b`）要每一段都被允许才放行。
-
-## 服务端管理页
-
-服务端自带一个只能在它自己那台电脑上打开的管理页：双击桌面的 **Ferry Server** 图标（或运行 `ferry-server --ui`），服务端在后台启动（没有黑窗口），浏览器自动打开管理页。设计思路和参考的项目见 [docs/ADMIN-DESIGN.md](docs/ADMIN-DESIGN.md)。
+都装好后，服务端有一个**管理页**，只能在服务端那台电脑上打开：Windows 上双击桌面的 Ferry Server，或者运行 `ferry-server --ui`。
 
 ![服务商和模型](docs/images/admin-providers.png)
 
-| 页面 | 能做什么 |
+| 管理页 | 能做什么 |
 |---|---|
-| 概览 | 工作电脑要敲的登录命令（一键复制）、流量图（上：工作电脑发来的新增部分；下：发给模型的完整上下文）、最近几次调用 |
-| 服务商和模型 | 选预设（DeepSeek、Kimi、智谱、通义、火山、硅基流动、各家编程套餐、Claude、OpenAI、OpenRouter、Ollama、自定义），**只填 API Key**；从服务商读取模型列表后勾选；保存后自动测试。默认模型、写摘要用的模型、工作电脑能不能自己挑，都在这里选 |
-| 提示词 | 全局提示词、按项目的提示词、写摘要时的要求；打开详细记录后，能看到模型实际收到的系统提示里服务端加了什么 |
-| 脱敏 | 敏感词一行一个、内置识别（内网 IP、邮箱、手机号、API Key）、自定义正则，"试一试"当场看替换结果 |
-| 调用记录 | 每次模型调用的项目、模型、大小、token、耗时、结果，可筛选，点开看详情 |
-| 设置 | 外网地址、服务端存不存对话、请求上限、详细记录、开机启动、换令牌；高级：直接编辑 models.toml |
+| 概览 | 工作电脑要用的登录命令（一键复制，带令牌）、流量图、最近的调用 |
+| 服务商和模型 | 选预设（DeepSeek、Kimi、智谱、通义、火山、硅基流动、各家编程套餐、Claude、OpenAI、OpenRouter、本机 Ollama、自定义），**只填 API Key**；读出服务商的模型列表，勾选要用的；选默认模型和写摘要用的模型 |
+| 提示词 | 所有工作电脑都会带上的团队提示词，可以按项目写 |
+| 脱敏 | 默认关闭。打开后，敏感词表和内网 IP、邮箱、手机号、Key 这类内容会先换成占位符再发给模型，回复里再换回来 |
+| 调用记录 | 每次调用的项目、模型、大小、token、耗时，可以点开看详情 |
+| 设置 | 外网地址、服务端存不存对话、请求上限、联网代办、开机启动、换令牌 |
 
-API Key 存在服务端数据文件夹的 `secrets.toml` 里，不会出现在 `models.toml` 和任何接口返回里（只显示末 4 位）。管理页只接受本机直接打开的请求：经 Cloudflare 隧道进来的请求虽然也来自 127.0.0.1，但带着 Cloudflare 的请求头，会被拒绝；另外还要一把只在本机的钥匙（启动时自动带上）。
+API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4 位。
 
-## 选模型：在服务端的 models.toml 里配
+## 工作电脑：装客户端
 
-用哪些模型、默认用哪个、客户端能不能自己挑，都在服务端的一个文件里配，**改完保存就生效，不用重启**，工作电脑上什么都不用动。
+工作电脑上只装客户端，需要 Node.js 22+，不需要 Python。
 
-服务端第一次启动时会生成 `models.toml`（在服务端数据目录里，默认 `%USERPROFILE%\.ferry-server\`），有哪个 Key 就把哪家写成可用，其他的写成注释，去掉 `#` 就能启用：
-
-```toml
-[routing]
-default = "deepseek"   # 客户端选 auto 时用这个
-summary = ""           # 写上下文摘要用哪个（填便宜的省钱），空 = 同 default
-expose = true          # true：客户端可以用 /model 自己挑；false：完全由服务端决定
-
-[models.deepseek]
-base_url = "https://api.deepseek.com/v1"
-api_key_env = "DEEPSEEK_API_KEY"     # Key 放在环境变量里，不写进文件
-model = "deepseek-chat"
-```
-
-`base_url` 可以是任何 OpenAI 兼容接口：官方 API、你自己的中转、本机的模型服务。客户端里：默认是 `auto`（服务端选），输入 `/model` 可以切换到具体模型。
-
-其他服务端设置用环境变量：
-
-| 环境变量 | 作用 |
-|---|---|
-| `FERRY_SERVER_HOME` | 服务端数据放哪，比如 `D:\ferry\server`（令牌、会话、日志、models.toml、规则、词表都在这里） |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | 各家的 Key；第一次生成 models.toml 时有哪个就启用哪个 |
-| `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认，只在内存）、`disk`、`none` |
-| `FERRY_REDACT` | `0` 关闭脱敏（默认开，只替换内网 IP、邮箱和词表里的词） |
-
-**多用户**时改用完整配置文件 `ferry-server.toml`（参考 `server/ferry-server.example.toml`）：
-
-```toml
-[server]
-session_store = "disk"     # disk：存磁盘，每轮只传新增部分；memory：只在内存；none：每轮整段重传，服务端不留
-redact = true              # false：不脱敏，原样发给模型
-
-[routing]
-default = "claude"         # 干活用的模型
-summary = "deepseek"       # 写摘要用的模型
-expose  = false            # true 时客户端也可以用 /model 自己选
-```
-
-Anthropic 和 OpenAI 的 API 不服务中国大陆和香港。要用它们，服务端要放在它们支持的地区（见下一节）。
-
-## 服务端放在另一台机器上
-
-工作电脑上的用法不变，只差一次 `ferry login`。**家里的 Mac + Cloudflare 域名**的完整步骤（不用证书、不用公网 IP）见 [docs/DEPLOY-MAC.md](docs/DEPLOY-MAC.md)。服务端在 Windows 上：
+**方式一：安装包**（推荐，离线，已经带好全部依赖和 fd、rg）
 
 ```bat
-cd /d ferry-x.y.z
-python -m pip install --no-index --find-links wheels ferry-server
-setx ANTHROPIC_API_KEY sk-ant-你的key
+cd /d 解压出的 ferry-x.y.z 文件夹
+node client\bin\ferry.mjs install --client-only
 ```
 
-重新打开 cmd：
+**方式二：git clone**（要能访问 npm）
 
 ```bat
-python -m ferry_server --host 0.0.0.0
-type %USERPROFILE%\.ferry-server\token
+git clone https://github.com/wvans123/ferry && cd ferry
+npm ci
+node client\bin\ferry.mjs install --client-only
 ```
 
-工作电脑上：
+公司网络要走代理的话，先执行 `npm config set https-proxy http://代理:端口`。
+
+**然后连到服务端**：在服务端管理页的"概览"里复制登录命令，粘贴到工作电脑的**新** cmd 窗口里运行，再检查一遍：
 
 ```bat
-ferry login https://服务器地址 上面显示的令牌
+ferry login https://ferry.example.com 你的令牌
 ferry doctor
 ```
 
-同一台电脑或家里局域网用 `http://` 即可；经过公司网络或公网时要加密，否则令牌和代码都是明文。Linux 服务器用 `deploy/Caddyfile`（自动证书）和 `deploy/ferry-server.service`。公司代理：`setx HTTPS_PROXY http://代理地址:端口`。
+`ferry doctor` 全是 OK 就可以用了。
 
-## 工作原理
+**更新**：用安装包装的执行 `ferry update`；git clone 的执行 `git pull`、`npm ci`，再跑一遍 `install`。有新版本时，ferry 启动时会提醒你。
 
-Ferry 的客户端是一个完整的 agent（读写文件、执行命令、保存对话，带自己的系统提示和工具），服务端负责最后一步：拼上服务端规则、脱敏、挑模型、调用。一个任务要在两边来回很多轮，每轮都由模型决定继续调用工具还是结束（详见 [docs/DESIGN.md](docs/DESIGN.md) 第 3 节）。
+**公司网关先要你确认**：如果服务端地址被公司网关拦下，要你先确认一下（"访问提醒"页），ferry 会自动在浏览器里打开那一页。你点"继续"后，它自己接着启动。想一劳永逸，就请 IT 把服务端地址加进白名单。
 
-```mermaid
-flowchart LR
-  subgraph PC["工作电脑（Windows）"]
-    CLI["ferry 命令行<br/>pi 引擎 + Ferry 扩展"]
-    FS[("项目文件")]
-    CLI <--> FS
-  end
-  subgraph SRV["Ferry 服务端"]
-    SYNC["会话缓存<br/>增量同步 / 分片重组"]
-    PROMPT["组装提示词<br/>服务端规则"]
-    RED["可逆脱敏<br/>流式还原"]
-    ADAPT["模型适配<br/>参数改写"]
-    SYNC --> PROMPT --> RED --> ADAPT
-  end
-  LLM["模型 API<br/>DeepSeek / 通义 / OpenAI 兼容"]
-  CLI -- "只传新增消息<br/>每个请求 ≤ 1MB" --> SYNC
-  ADAPT -- "完整上下文<br/>敏感词已替换" --> LLM
-  LLM -- "流式回复" --> RED
-  RED -- "逐字返回<br/>占位符已还原" --> CLI
-```
+## 日常使用
 
-## 关键设计
+在项目文件夹里输入 `ferry`，然后直接用中文说要做什么。
+
+### 键盘
+
+| 按键 | 作用 |
+|---|---|
+| Enter | 发送；Shift+Enter 或 Ctrl+J 换行 |
+| **Shift+Tab** | 切换权限模式（见下文） |
+| Esc | 打断 agent 正在做的事 |
+| Ctrl+C 连按两次 | 退出 |
+| `/` | 列出所有斜杠命令 |
+| `@` | 引用文件（输入文件名会自动补全） |
+| `!命令` | 自己执行一条命令，输出也会给 agent 看，比如 `!git status` |
+
+### 命令行
+
+| 命令 | 作用 |
+|---|---|
+| `ferry` | 在当前文件夹开始对话 |
+| `ferry -c` / `ferry -r` | 接着上次的对话 / 从以前的对话里选一个 |
+| `ferry -p "问题"` | 只问一句，打印回答后退出（适合放进脚本） |
+| `ferry doctor` | 逐项检查：网络、令牌、模型、搜索工具 |
+| `ferry config` | 查看和修改客户端设置 |
+| `ferry login <地址> <令牌>` / `ferry logout` | 连到远程服务端 / 改回本机服务端 |
+| `ferry update` | 更新到最新版 |
+| `ferry --version --all` | 显示 Ferry 和 pi 的版本 |
+
+### 斜杠命令
+
+| 命令 | 作用 |
+|---|---|
+| `/init` | 读一遍项目，写出 AGENTS.md（项目说明，以后每次对话都会带上）。**新项目先运行这个** |
+| `/review [范围]` | 审查当前改动（或某个分支、文件），按严重程度列问题 |
+| `/commit` | 按仓库的风格写提交信息并提交（不推送） |
+| `/explain <文件或问题>` | 讲清楚一段代码 |
+| `/test [范围]` | 跑测试，修好失败的 |
+| `/fix <报错>` | 找到根本原因并修好 |
+| `/pr`、`/doc <对象>` | 写合并请求说明、写文档 |
+| `/plan <任务>` | 切到只读规划模式，先出方案，不动文件 |
+| `/undo` | 把 agent 改过的文件恢复到某次请求之前的样子 |
+| `/remember [user] <内容>` | 直接记进记忆（加 `user` 表示所有项目都记得） |
+| `/memory`、`/permissions`、`/hooks`、`/agents` | 查看记忆、权限规则、钩子、子 agent |
+| `/status` | 服务端、延迟、模型、模式、工具一览 |
+| `/compact`、`/new`、`/resume`、`/model` | 压缩上下文、新对话、换对话、换模型（pi 自带） |
+
+自己写斜杠命令，见[自己动手扩展](#自己动手扩展)。
+
+### 权限：该问的才问
+
+**Shift+Tab** 在四种模式之间切换，底栏显示当前模式：
+
+| 模式 | 改文件 | 执行命令 |
+|---|---|---|
+| 默认 | 问 | 只读命令（`git status`、`dir`、`rg`……）不问，其他问 |
+| 自动改文件 | 项目文件夹里的不问 | 同上 |
+| 只读规划 | 不允许 | 只允许只读命令 |
+| 全部放行 | 不问 | 不问 |
+
+- 确认框里可以选"以后都允许这类命令"，比如以 `npm test` 开头的命令。Ferry 会按项目记住。
+- 危险操作（删整个目录、`git push --force`、`git reset --hard`、`curl … | sh`……）在除"全部放行"以外的模式下都会问，并说明危险在哪。
+- 改项目文件夹以外的文件，总要先确认。
+- `.env`、`.ssh` 这类路径永远不碰（`ferry config set blockedPaths ...` 可改）。
+- 启动时用哪种模式：`ferry config set permissionMode acceptEdits`。
+
+### agent 还能做什么
+
+| 能力 | 说明 |
+|---|---|
+| 任务清单 | 多步任务先列计划，输入框上方显示进度 |
+| 记忆 | 跨对话记住你的偏好、纠正和项目里的决定。说"记住……"或"忘掉……"即可。分你个人（所有项目）和这个项目两层，存在工作电脑 `%USERPROFILE%\.ferry\memory`，都是可以直接改的 Markdown 文件 |
+| 子 agent | "在整个代码库里找……"这类活交给上下文全新的子 agent，只把结论带回来，主对话不会被撑大。几个子 agent 可以同时跑 |
+| 联网 | `web_search`（Bing）、`web_fetch`（读网页），在工作电脑上执行，走公司代理，受公司网关管。读网页时按网站询问 |
+| 浏览器 | `ferry config set browser true` 后，agent 能操作电脑上的 Edge：打开网页、点击、填表、读页面 |
+| 长输出 | 命令输出太长时，全文存到文件，只给模型看开头和结尾，需要时它自己去读 |
+| 压缩和找回 | 对话太长时自动写摘要；之后需要原文时，用 `history_search` 在本地完整记录里找回 |
+| 撤销 | `/undo` 把文件恢复到某次请求之前。只管 agent 用 edit/write 改的文件，命令造成的改动请用 git |
+| 提醒 | 一个请求超过 30 秒才做完时，会响一声并弹出 Windows 通知 |
+
+## 自己动手扩展
+
+不用写代码，放几个文本文件就行。仓库的 [examples/](examples/) 里每样都有现成的例子，详细说明见 [docs/CUSTOMIZE.md](docs/CUSTOMIZE.md)。
+
+| 想做的事 | 放一个文件 |
+|---|---|
+| 让 agent 了解项目 | 项目根目录的 `AGENTS.md`（`/init` 自动生成） |
+| 加一个斜杠命令 | `.ferry\commands\standup.md` → `/standup` |
+| 教它一类任务的做法 | `.ferry\skills\release-notes\SKILL.md` |
+| 加一个专门的子 agent | `.ferry\agents\security-reviewer.md` |
+| 改完文件自动格式化、检查 | `.ferry\hooks.json` |
+| 哪些命令不用问、哪些禁止 | `.ferry\permissions.json` |
+| 接数据库、Jira、内部系统 | `%USERPROFILE%\.ferry\agent\mcp.json`（MCP） |
+
+- 放在项目的 `.ferry\` 下只管这个项目，可以提交进仓库给团队用；放在 `%USERPROFILE%\.ferry\` 下对你所有项目生效。
+- Claude Code 的 `.claude\commands`、`.claude\agents`、`.claude\skills`、`CLAUDE.md` 也直接能用。
+
+## 设置一览
+
+**客户端**：`ferry config` 查看，`ferry config set <名字> <值>` 修改。
+
+| 名字 | 默认 | 作用 |
+|---|---|---|
+| `permissionMode` | `default` | 启动时的权限模式：`default` / `acceptEdits` / `plan` / `bypass` |
+| `memory` | `true` | 跨对话的记忆 |
+| `subagents` | `true` | 子 agent（task 工具） |
+| `web` | `client` | 联网工具在哪执行：`client`（这台电脑）/ `server`（服务端代办，需服务端开启）/ `off` |
+| `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome）；`browserPath` 指定别的浏览器，`browserHeadless` 不显示窗口 |
+| `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
+| `bigOutputBytes` | `8192` | 输出超过多少字节就存文件（0 = 不存） |
+| `notify` / `notifyAfterSeconds` | `true` / `30` | 长请求结束时响铃加通知 |
+| `updateCheck` | `true` | 每天看一次 GitHub 上有没有新版本 |
+| `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
+
+界面、上下文压缩这类 agent 本身的设置，在 ferry 里输入 `/settings`，或改 `%USERPROFILE%\.ferry\agent\settings.json`。
+
+**服务端**：大多在管理页里改，存在服务端数据目录的 `server.toml`。也可以用环境变量：
+
+| 环境变量 | 作用 |
+|---|---|
+| `FERRY_SERVER_HOME` | 数据放哪，比如 `D:\ferry\server`（令牌、Key、models.toml、日志） |
+| `DEEPSEEK_API_KEY` 等 | 也可以用环境变量给 Key（优先于管理页里填的） |
+| `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
+| `FERRY_REDACT` | `1` 打开脱敏（默认关闭） |
+| `FERRY_WEB` | `1` 允许服务端替工作电脑联网（默认关闭） |
+
+多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](server/ferry-server.example.toml)。
+
+## 出问题了怎么办
+
+先运行 `ferry doctor`，它会逐项检查，并告诉你下一步该做什么。
+
+| 看到 | 原因和办法 |
+|---|---|
+| `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry`，它会在浏览器里打开确认页；长期办法是请 IT 加白名单 |
+| `cannot reach the server` | 浏览器能打开但 ferry 连不上，通常是浏览器走了公司代理。执行 `setx HTTPS_PROXY http://代理:端口`，然后重开 cmd |
+| `unable to get local issuer certificate` | 公司代理会解开 HTTPS 再加密。把公司根证书导出成 .pem，执行 `setx NODE_EXTRA_CA_CERTS C:\路径\证书.pem` |
+| `a Cloudflare Access login page answered` | 服务端地址前挡着 Cloudflare 的登录页，见 [DEPLOY-MAC.md](docs/DEPLOY-MAC.md#关于那个-cloudflare-登录页) |
+| `token rejected` | 令牌不对或换过了。到管理页复制新的登录命令 |
+| `HTTP 502 / 530` | 服务端那台电脑睡眠了，或者服务端、cloudflared 没在运行 |
+| `model ... HTTP 401 / 402 / 403` | Key 不对 / 账户没余额 / 服务商不服务你所在的地区 |
+| `fd and rg not found` | 用安装包装一次，或者把安装包里 `vendor\win32-x64\` 下的两个 exe 拷到 `%USERPROFILE%\.ferry\agent\bin\` |
+| 命令输出是乱码 | 告诉我是哪条命令。PowerShell 和 Python 已经强制 UTF-8 |
+| 联网返回 `000` 或连不上 | 工作电脑的命令行上不了外网。让 agent 用 `web_fetch`，不要用 curl |
+
+## 安全须知
+
+- **服务端能看到对话原文**（`session_store = "none"` 时处理完就丢），所以服务端必须是你信得过的机器，并且只用 HTTPS 访问。
+- **脱敏默认关闭**。打开后，也只有词表和内置规则命中的内容会被替换，其他信息照样会发给模型。脱敏能降低风险，但不是保证。公司明确不允许外发的内容，就不要交给 agent。
+- **联网默认在工作电脑上执行**，受公司网关管，Ferry 不会替你点掉网关的确认页。改成服务端代办（`web = server`），等于让工作电脑经你的服务端访问外网，开启前请确认公司规定允许。
+- **令牌**存在工作电脑的 `%USERPROFILE%\.ferry\config.json` 里。泄露了就在管理页换一个新的。
+- 试用时请先拿一个测试文件夹和编的内容。
+
+## 设计
+
 
 | 问题 | 做法 | 代码位置 |
 |---|---|---|
@@ -239,13 +320,19 @@ flowchart LR
 | 联网 | 默认在客户端执行，走公司代理，识别网关的确认页（按地址和页面文字）并报告，不点击通过；可选服务端代办：只允许 http(s)，拒绝本机和内网地址（管理页信任本机来的请求，不能让网页请求绕到它），每次跳转都重新检查，可设网站白名单 | `client/lib/web.mjs`、`server/ferry_server/web.py` |
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，也会重新打开并提示重发 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
+| 斜杠命令和自定义 | 内置命令是 Markdown 模板（`client/commands/`）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户、用户覆盖内置 | `client/lib/commands.mjs` |
+| 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/undo` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
+| 钩子 | `afterEdit` 在工具结果出来后运行，失败输出追加到工具结果里交给模型；项目的钩子文件按内容哈希征得同意，改了要重新同意 | `client/lib/hooks.mjs` |
 | 公司代理 | 客户端所有请求统一走代理（环境变量或配置项），支持 NO_PROXY | `client/lib/config.mjs` |
 | 好装、好更新 | 离线安装包 + `ferry install`；`ferry update` 从 GitHub 发布页取最新版；没登录远程服务端时自动在本机启动服务端 | `client/lib/setup.mjs` |
 | 不重复造轮子 | Agent 循环、工具和终端界面直接用开源的 [pi](https://github.com/earendil-works/pi)（MIT），通过它公开的 `main()` 和扩展接口嵌入，不 fork 内核 | `client/bin/ferry.mjs` |
 
 更细的协议和取舍见 [docs/DESIGN.md](docs/DESIGN.md)。
 
-## 和 Cursor 的对应关系
+
+更细的协议和取舍：[docs/DESIGN.md](docs/DESIGN.md)；上下文和记忆的方案：[docs/CONTEXT-AND-MEMORY.md](docs/CONTEXT-AND-MEMORY.md)；客户端 agent 的目标和进度：[docs/AGENT-GOAL.md](docs/AGENT-GOAL.md)；管理页的设计：[docs/ADMIN-DESIGN.md](docs/ADMIN-DESIGN.md)。
+
+### 和 Cursor 的对应关系
 
 | | Cursor | Ferry |
 |---|---|---|
@@ -259,57 +346,52 @@ flowchart LR
 | 权限 | 有 | 四种模式、按项目记住的规则、只读命令白名单、危险命令总是问（参考 Claude Code） |
 | 读网页、搜索 | 服务端执行 | 默认在工作电脑上执行（受公司网关管），可选服务端代办 |
 
+
 ## 开发
 
 ```bash
 git clone https://github.com/wvans123/ferry && cd ferry
 npm ci
 pip install -e server pytest
-pytest server/tests            # 服务端单元测试
-node --test "client/test/*.test.mjs"   # 客户端单元测试（权限、联网）
-python selftest/run.py         # 端到端：假模型 + 服务端 + 客户端 + 假代理，跑完 GOAL.md 里的全部检查，不需要 Key
-node client/bin/ferry.mjs      # 直接从源码运行
+pytest server/tests                     # 服务端单元测试
+node --test "client/test/*.test.mjs"    # 客户端单元测试（权限、联网、钩子、撤销……）
+python selftest/run.py                  # 端到端：假模型 + 服务端 + 客户端 + 假代理 + 假网关，跑完 GOAL.md 里的全部检查，不需要 Key
+node client/bin/ferry.mjs               # 直接从源码运行
 ```
 
-每次推送，GitHub Actions 在 Linux 和 Windows 上各跑一遍；main 上 `package.json` 的版本号变了，测试通过后自动打包 Windows 安装包并发布，`ferry update` 就能取到。
-
-**跟着 pi 更新**：每周一自动检查 pi 有没有新版本（`.github/workflows/update-pi.yml`，也可以在 Actions 页面手动运行，指定版本）。有新版本就换上，在 Linux 和 Windows 上跑全部测试，都通过才提交到 main 并发布 Ferry 新版本（补丁号加 1）；没通过什么都不改，GitHub 会发邮件通知。`ferry --version --all` 显示正在用的 pi 版本。
-
-## 目录
+- 每次推送，GitHub Actions 在 Linux 和 Windows 上各跑一遍全部测试。
+- main 上 `package.json` 的版本号变了，测试通过后自动打包 Windows 离线安装包并发布，`ferry update` 就能取到。
+- **跟着 pi 更新**：每周一自动检查 pi 的新版本（[update-pi.yml](.github/workflows/update-pi.yml)，也可以手动运行）。有新版本就换上，跑全部测试（含终端界面测试），都通过才发布；没通过什么都不改，GitHub 会发邮件通知。Ferry 只用 pi 公开的扩展接口，不 fork、不改 pi 本身。
 
 ```
-client/     ferry 命令行（Node.js）：bin/ferry.mjs 入口；lib/ 下是同步（sync）、安全规则（guard）、记忆（memory）、
-            子 agent（subagent）、任务清单和长输出（tools）、权限（permissions、guard）、系统提示（prompt）、
-            联网（web）、浏览器（browser）、fd/rg（toolbins）、安装和更新（setup）
-server/     ferry-server（Python / FastAPI）：会话缓存、提示词组装、脱敏、流式还原、模型适配
-selftest/   端到端自测：假模型、假代理、run.py
-deploy/     部署：Mac 开机自启（mac/autostart.sh）、Linux systemd 服务、Caddy HTTPS
-scripts/    构建 Windows 离线安装包
-.github/    CI（Linux + Windows）和发布流程
-docs/       设计说明（DESIGN.md）、上下文和记忆方案（CONTEXT-AND-MEMORY.md）
+client/      ferry 命令行（Node.js）
+  bin/       入口 ferry.mjs
+  lib/       同步 sync · 权限 permissions + guard · 系统提示 prompt · 记忆 memory · 子 agent subagent
+             任务清单和长输出 tools · 联网 web · 公司网关 gateway · 浏览器 browser · 撤销 checkpoint
+             钩子 hooks · 斜杠命令 commands · fd/rg toolbins · 安装和更新 setup
+  commands/  内置斜杠命令（Markdown）
+  test/      客户端单元测试
+server/      ferry-server（Python / FastAPI）：会话缓存、提示词组装、脱敏、流式还原、模型适配、管理页、联网代办
+examples/    自己扩展用的例子：命令、技能、子 agent、钩子、权限、MCP
+selftest/    端到端自测：假模型、假代理、run.py
+deploy/      部署：Mac 开机自启、Linux systemd、Caddy
+scripts/     打包 Windows 离线安装包、跟进 pi 版本
+docs/        部署指南、扩展指南、设计文档
 ```
 
 ## 离商业级还差什么
 
-v0.11 是一个可以自用、可以演示的原型：41 个单元测试（服务端 31、客户端 10）和 39 项端到端测试覆盖。离商业产品还差下面这些：
+v0.12 是一个可以自用、可以演示的原型：46 个单元测试（服务端 31、客户端 15）和 40 项端到端测试覆盖，在 Linux 和 Windows 上自动跑。离商业产品还差这些：
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|
-| 核心功能 | 增量同步、服务端组装提示词和选模型、可逆脱敏、流式还原、三层上下文管理、记忆、子 agent、任务清单、权限模式、联网、浏览器 | Claude 原生接口（提示词缓存）、服务端摘要、会话结束后自动整理记忆、命令在沙箱里跑（Codex 的做法） |
-| 可靠性 | 缓存丢失自动恢复（含调用模型前一刻）、版本协商 | 多实例部署（目前单机 SQLite）、数据备份 |
-| 安全 | 多用户隔离、恒定时间令牌比较、拒绝弱密钥、HTTPS 警告、日志不含正文 | 限流、令牌过期与轮换、客户端令牌存进系统凭据库（现在是配置文件明文） |
-| 脱敏 | 词表 + 正则，覆盖正文、工具参数、流式输出 | 自动识别人名和机构名（NER），图片内容 |
-| 真实环境 | Linux 和 GitHub 的 Windows 机器上用假模型、假代理验证 | 真实公司电脑、真实模型、真实公司代理 |
-| 交付 | 离线安装包、一条命令安装和更新、CI 覆盖 Windows | 代码签名、安装向导（.msi） |
-| 运营 | 访问日志、审计日志 | 管理界面（用户、用量、费用）、监控告警 |
-
-## 限制
-
-- 脱敏默认关闭，在管理页打开。打开后也只有词表和正则里的内容会被替换；没有列入的信息仍会发给模型。脱敏是降低风险，不是保证。
-- 联网默认在工作电脑上执行、受公司网关管。改成服务端代办（`web = server`）等于让工作电脑经你的服务端访问外网，绕开了公司网关对这些网址的检查，打开前请确认公司规定允许。
-- 服务端在处理请求时能看到完整会话原文（`session_store = "none"` 时处理完就丢），所以服务端本身必须可信，并只通过 HTTPS 访问。
-- 还没在真实的公司电脑、真实模型和公司代理下验证过。
+| agent | 权限模式、记忆、子 agent、任务清单、斜杠命令、技能、钩子、撤销、联网、浏览器、三层上下文管理 | 命令在沙箱里跑（Codex 的做法）、图片输入、IDE 插件 |
+| 服务端 | 增量同步、组装提示词、选模型、可逆脱敏、流式还原、管理页 | Claude 原生接口（提示词缓存）、服务端摘要、用量和费用统计 |
+| 可靠性 | 缓存丢失自动恢复、版本协商、自动跟进 pi 更新 | 多实例部署（目前是单机 SQLite）、数据备份 |
+| 安全 | 多用户隔离、恒定时间令牌比较、拒绝弱密钥、日志不含正文、管理页只限本机 | 限流、令牌过期、客户端令牌存进系统凭据库 |
+| 真实环境 | Linux 和 Windows 上用假模型、假代理、假网关验证；作者的工作电脑经 Cloudflare 连通 | 更多公司网络环境下的验证 |
+| 交付 | 离线安装包、一条命令安装和更新、自动发版 | 代码签名、安装向导（.msi） |
 
 ## 致谢
 
-[pi](https://github.com/earendil-works/pi)（MIT）· [FastAPI](https://fastapi.tiangolo.com/) · [HTTPX](https://www.python-httpx.org/) · [undici](https://github.com/nodejs/undici)
+[pi](https://github.com/earendil-works/pi)（MIT）· [Playwright MCP](https://github.com/microsoft/playwright-mcp) · [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd) · [FastAPI](https://fastapi.tiangolo.com/) · [HTTPX](https://www.python-httpx.org/) · [undici](https://github.com/nodejs/undici)

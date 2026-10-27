@@ -1,14 +1,19 @@
-# systemd 服务（Linux 云服务器）：放到 /etc/systemd/system/，然后 systemctl enable --now ferry-server
+# systemd 服务（Linux 服务器），见 docs/DEPLOY-LINUX.md：
+#   放到 /etc/systemd/system/，然后 systemctl enable --now ferry-server
+# 数据（令牌、API Key、models.toml、日志）在 /var/lib/ferry/server；API Key 在管理页里填。
 [Unit]
 Description=Ferry server
 After=network-online.target
+Wants=network-online.target
 
 [Service]
-WorkingDirectory=/opt/ferry/server
-EnvironmentFile=/opt/ferry/server/.env
-ExecStart=/opt/ferry/venv/bin/ferry-server --config /opt/ferry/server/ferry-server.toml --host 127.0.0.1
-Restart=on-failure
 User=ferry
+Environment=FERRY_SERVER_HOME=/var/lib/ferry/server
+Environment=FERRY_SESSION_STORE=disk
+# 服务器上网要走代理时：
+# Environment=HTTPS_PROXY=http://proxy:port
+ExecStart=/var/lib/ferry/.local/bin/ferry-server --host 127.0.0.1
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target

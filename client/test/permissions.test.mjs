@@ -83,3 +83,7 @@ test("web_fetch asks per site, rules cover subdomains", () => {
 	assert.equal(d("web_fetch", { url: "http://evil.example/a" }, "bypass", rules), "deny");
 	assert.equal(P.hostOf("docs.python.org/3/"), "docs.python.org");
 });
+
+test("edit(...) rules cover write too", () => {
+	assert.equal(d("write", { path: "src/new.js" }, "default", { allow: ["edit(src/**)"], ask: [], deny: [] }), "allow");
+});
