@@ -127,3 +127,18 @@
 2. 图片输入：截图、设计稿（服务端模型支持视觉时，比如 `deepseek-flash`）。
 3. VS Code 插件或 ACP，在编辑器里用。
 4. 用量和费用：按天、按项目统计 token 和花费。
+
+## v0.13：向 Claude Code 看齐，偏"干活"而不只是写代码
+
+用户反馈：主要用 Claude Opus 和 GPT；不主要写代码；goal 最重要，后台任务、压缩、记忆也要；斜杠命令照 Claude Code 的基础命令来。
+
+| 新增 | 说明 | 自测 |
+|---|---|---|
+| 斜杠命令 | `/help /clear /compact /resume /rename /exit /cost /context /status /doctor /config /skills /todos /tasks /rewind /add-dir /goal`；编码命令移到 examples | F38 |
+| /goal | 连续工作到完成；要证据；token 预算、轮数上限；暂停、继续、清除；底栏状态；随会话保存 | F41 |
+| 后台任务 | `job_start/job_output/job_stop`，后台子 agent，`/tasks` | F42 |
+| Claude 原生接口 | pi 自带的 Anthropic 提供方 + 服务端转发；提示词缓存；思考；读图 | F40 |
+| 用量和费用 | 每次调用按价格算费用；`/cost`；管理页"用量和费用" | F40 + 单元测试 |
+| pi 扩展包 | `ferry pkg install/list/remove` | 手动 |
+
+不做：沙箱、贴截图（告诉它图片路径即可）、VS Code 插件。

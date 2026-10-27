@@ -1,4 +1,4 @@
-// /undo: put files back the way they were before the agent changed them (like Claude Code's checkpoints / rewind).
+// /rewind (also /undo): put files back the way they were before the agent changed them (like Claude Code's checkpoints / rewind).
 //
 // Before the first edit or write of a file in each request you send, its content is copied to
 // <FERRY_HOME>/checkpoints/<session>/. /undo lists your recent requests that changed files; pick one and every file
@@ -101,11 +101,11 @@ export function createCheckpoints() {
 			}
 			return undefined;
 		});
-		pi.registerCommand("undo", {
-			description: "Put files back the way they were before one of your recent requests (file edits only)",
+		const rewind = {
+			description: "Put files back the way they were before one of your recent requests (edits by the agent; not commands)",
 			handler: async (_args, ctx) => {
 				const runs = (store?.runs ?? []).filter((r) => r.files.length).slice(-15).reverse();
-				if (!runs.length) return ctx.ui.notify("Nothing to undo: the agent has not changed files with edit or write in this conversation.", "info");
+				if (!runs.length) return ctx.ui.notify("Nothing to rewind: the agent has not changed files with edit or write in this conversation.", "info");
 				const time = (t) => new Date(t).toLocaleTimeString();
 				const pick = await ctx.ui.select("Undo the file changes of this request and everything after it:",
 					[...runs.map((r) => `${time(r.at)}  ${r.label || "(request)"}  (${r.files.length} file${r.files.length > 1 ? "s" : ""})`), "Cancel"]);
@@ -119,6 +119,8 @@ export function createCheckpoints() {
 					content: `The user undid the file changes made since their request "${run.label}". These files are back to ` +
 						`their earlier state:\n${list}\nRe-read files before relying on their content.` }, { deliverAs: "nextTurn" });
 			},
-		});
+		};
+		pi.registerCommand("rewind", rewind);
+		pi.registerCommand("undo", { ...rewind, description: "Same as /rewind" });
 	};
 }

@@ -30,7 +30,8 @@ const EDIT = new Set(["edit", "write"]);
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
 // tools that only look, or that are fenced in by themselves (memory: its own folder; task: the subagent's
 // tools are checked one by one; web_*: the server's own allow list)
-const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "web_search"]);
+const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "web_search",
+	"job_output", "job_stop", "goal_update"]);
 // reads, but from a site the user may not want contacted: asked per site (like Claude Code's WebFetch), also in plan mode
 const NET = new Set(["web_fetch"]);
 
@@ -277,7 +278,7 @@ function relPath(cwd, p) {
  * The verdict for one tool call: { action: "allow" | "ask" | "deny", reason, danger, segments }.
  * readOnlyTool(name): extra tools known to only read (from their annotations).
  */
-export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false }) {
+export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [] }) {
 	const shell = SHELL.has(tool);
 	const target = PATH_TOOLS.has(tool) ? input.path : shell ? input.command : undefined;
 	const low = typeof target === "string" ? target.toLowerCase() : "";
@@ -305,7 +306,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	if (readOnly) return { action: "allow" };
 
 	if (EDIT.has(tool)) {
-		if (!insideProject(cwd, input.path)) return { action: "ask", outside: true };
+		if (![cwd, ...extraDirs].some((d) => insideProject(d, resolve(cwd, String(input.path ?? ""))))) return { action: "ask", outside: true };
 		if (mode === "acceptEdits" || any(rules.allow)) return { action: "allow" };
 		return { action: "ask" };
 	}

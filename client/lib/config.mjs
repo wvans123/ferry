@@ -29,6 +29,8 @@ export const DEFAULTS = {
 	subagents: true, // the task tool: hand searches and side tasks to a subagent with a fresh context
 	bigOutputBytes: 8192, // longer command/search output is saved to a file; the model sees start, end and path. 0 = off
 	web: "client", // web_fetch / web_search: "client" (this computer's network), "server" (the Ferry server fetches), "off"
+	goalBudget: "0", // token budget for /goal, e.g. "2m"; "0" = none (the turn limit still applies)
+	goalMaxTurns: 100, // /goal stops after this many turns and reports progress
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
@@ -44,6 +46,8 @@ export const SETTINGS = {
 	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
 	permissionMode: ["string", "permission mode at start: default (ask before edits and commands), acceptEdits (file changes go ahead), plan (read-only), bypass (nothing asks). Shift+Tab switches"],
 	web: ["string", "where web_fetch / web_search run: client (this computer, company proxy and gateway rules apply), server (the Ferry server, if its admin page allows), off"],
+	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
+	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
 	notifyAfterSeconds: ["number", "how long a request must take before that notification"],

@@ -56,8 +56,28 @@ def adapt_params(payload: dict, m: ModelConfig) -> dict:
 TRIM_NOTE = "[Ferry: this earlier tool output was removed to keep the request small. Run the tool again if you need it.]"
 
 
+_IMAGE_DATA = re.compile(r"data:image/[\w.+-]+;base64,[A-Za-z0-9+/=]+")
+
+
 def body_size(payload: dict) -> int:
-    return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    """Size of the request without embedded pictures (they would otherwise push out all text history)."""
+    return len(_IMAGE_DATA.sub("data:image", json.dumps(payload, ensure_ascii=False)).encode("utf-8"))
+
+
+def restore_cache_marks(payload: dict, marks: list) -> None:
+    """Put back the prompt-cache markers the client took out before syncing (they move every turn, so they are not
+    part of the synced conversation). marks: [[message index, block index or -1 for a plain string, cache_control]]."""
+    msgs = payload.get("messages") or []
+    for idx, blk, cc in marks:
+        if not (0 <= idx < len(msgs)):
+            continue
+        m = msgs[idx]
+        if isinstance(m.get("content"), str):
+            m["content"] = [{"type": "text", "text": m["content"]}]
+            blk = 0
+        blocks = m.get("content") or []
+        if -len(blocks) <= blk < len(blocks) and isinstance(blocks[blk], dict):
+            blocks[blk]["cache_control"] = cc
 
 
 def cap_upstream(payload: dict, max_bytes: int, keep_last: int = 6) -> tuple[int, int]:

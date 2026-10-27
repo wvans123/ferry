@@ -28,7 +28,7 @@ test("a project command replaces a built-in one with the same name", () => {
 	writeFileSync(join(proj, ".ferry", "commands", "review.md"), "our review");
 	const files = commandFiles(proj);
 	assert.ok(files.some((f) => f.endsWith("init.md")));
-	assert.deepEqual(files.filter((f) => f.endsWith("review.md")), [join(proj, ".ferry", "commands", "review.md")]);
+	assert.deepEqual(files.filter((f) => /[\\/]review\.md$/.test(f)), [join(proj, ".ferry", "commands", "review.md")]);
 });
 
 test("undo restores changed files and removes created ones", () => {

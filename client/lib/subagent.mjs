@@ -15,10 +15,12 @@ import { AGENT_DIR, FERRY_HOME } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
 import { createPrompt } from "./prompt.mjs";
 import { createWeb } from "./web.mjs";
+import { startSubagentJob } from "./jobs.mjs";
 import { createBigOutputs } from "./tools.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
-const NOT_FOR_SUBAGENTS = new Set(["task", "todo"]); // no nesting; the task list belongs to the main agent
+// no nesting; the task list, goal and background jobs belong to the main agent
+const NOT_FOR_SUBAGENTS = new Set(["task", "todo", "goal_update", "job_start", "job_output", "job_stop"]);
 
 const BUILTIN = [
 	{
@@ -77,6 +79,8 @@ const Params = Type.Object({
 	description: Type.String({ description: "3 to 6 words saying what the subagent does (shown to the user)" }),
 	prompt: Type.String({ description: "The complete task. The subagent sees nothing of this conversation, so include " +
 		"every detail it needs and say exactly what to report back." }),
+	background: Type.Optional(Type.Boolean({ description: "true: start it and return at once; you are told when it is " +
+		"done (job_output shows the report). Use it for long side tasks while you go on with other work." })),
 });
 
 const short = (v) => {
@@ -111,6 +115,13 @@ export function createSubagents(cfg, deps) {
 				const cwd = ctx?.cwd ?? process.cwd();
 				const agent = discoverAgents(cwd).find((a) => a.name === (params.agent || "general"));
 				if (!agent) throw new Error(`No agent named "${params.agent}". Available: ${discoverAgents(cwd).map((a) => a.name).join(", ")}`);
+				if (params.background) {
+					const job = startSubagentJob(`${agent.name}: ${params.description}`, (sig) =>
+						runSubagent({ cfg, deps, agent, params, signal: sig, onUpdate: undefined, ctx, cwd, pi })
+							.then((r) => r.content[0].text));
+					return { content: [{ type: "text", text: `Started background subagent ${job.id} (${job.name}). You will be told ` +
+						"when it is done; job_output shows its report." }], details: { id: job.id } };
+				}
 				return runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cwd, pi });
 			},
 		});

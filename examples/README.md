@@ -7,6 +7,7 @@
 | `AGENTS.md` | 项目根目录 | 每次对话都带上的项目说明（也可以在 ferry 里输入 `/init` 让它自己写） |
 | `commands/standup.md` | 项目的 `.ferry\commands\` 或 `%USERPROFILE%\.ferry\commands\` | 新命令 `/standup` |
 | `commands/translate.md` | 同上 | 新命令 `/translate 文件名 [语言]` |
+| `commands/commit.md` `test.md` `fix.md` `explain.md` `pr.md` `doc.md` | 同上 | 写代码常用的 `/commit` `/test` `/fix` `/explain` `/pr` `/doc` |
 | `agents/security-reviewer.md` | 项目的 `.ferry\agents\` 或 `%USERPROFILE%\.ferry\agents\` | 新的子 agent，主 agent 可以把安全审查交给它 |
 | `skills/release-notes/` | 项目的 `.ferry\skills\` 或 `%USERPROFILE%\.ferry\skills\` | 写发布说明的技能，相关任务时自动加载，也可以 `/skill:release-notes` |
 | `hooks.json` | `%USERPROFILE%\.ferry\hooks.json` 或项目的 `.ferry\hooks.json` | 改完文件自动格式化 / 检查，失败信息交给 agent 修 |

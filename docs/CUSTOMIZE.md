@@ -56,18 +56,7 @@ argument-hint: "[天数，默认 1]"
 
 含空格的参数用引号括起来：`/translate "my doc.md" 日文`。
 
-Ferry 自带了这些命令，都可以用同名文件覆盖：
-
-| 命令 | 做什么 |
-|---|---|
-| `/init` | 读项目，写或改进 AGENTS.md |
-| `/review [范围]` | 审查改动，按严重程度列问题，不改文件 |
-| `/commit [说明]` | 照仓库的风格写提交信息并提交，不推送 |
-| `/explain <文件或问题>` | 讲清楚一段代码，带文件和行号 |
-| `/test [范围]` | 跑测试，失败的找原因并修好 |
-| `/fix <报错>` | 找到根本原因，用最小的改动修好并验证 |
-| `/pr [基准分支]` | 写合并请求的说明 |
-| `/doc <对象>` | 写或更新文档 |
+Ferry 自带三个模板命令：`/init`（读项目，写 AGENTS.md）、`/review`、`/security-review`，都可以用同名文件覆盖。写代码常用的 `/commit`、`/test`、`/fix`、`/explain`、`/pr`、`/doc` 放在 examples 里，需要的话拷过去用。
 
 例子：[examples/commands/](../examples/commands/)。
 
@@ -181,6 +170,18 @@ You are a security reviewer. ...
 这一项在服务端，作用于所有连上来的工作电脑：
 - **提示词**：管理页 → 提示词。可以写全局提示词，也可以按项目写（项目名就是工作电脑上的文件夹名），还有写摘要时的要求。
 - **模型**：管理页 → 服务商和模型，选默认模型和写摘要用的模型。
+
+## 装 pi 的扩展包
+
+pi 生态里有别人做好的扩展、技能和命令包，用 `ferry pkg` 安装（需要能访问 npm 或 git）：
+
+```bat
+ferry pkg install npm:<包名>
+ferry pkg list
+ferry pkg remove npm:<包名>
+```
+
+扩展包会在 ferry 进程里运行代码，装之前先看看它的源码。
 
 ## 更多：写 pi 扩展
 

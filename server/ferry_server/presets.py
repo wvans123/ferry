@@ -7,15 +7,21 @@ format. `base_url` either is a base (".../v1", "/chat/completions" is appended) 
 """
 from __future__ import annotations
 
-# (model name, context window in tokens, max output tokens)
-Model = tuple[str, int, int]
+# (model name, context window in tokens, max output tokens[, extras]); extras: vision (takes images) and
+# price (USD per million tokens: input, output, cache_read, cache_write), from the providers' price pages.
+Model = tuple
+
+CLAUDE = {"vision": True}
+OPUS_55 = {**CLAUDE, "price": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5}}
+SONNET_55 = {**CLAUDE, "price": {"input": 2, "output": 10, "cache_read": 0.1, "cache_write": 2.5}}
+HAIKU_55 = {**CLAUDE, "price": {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125}}
 
 PRESETS: list[dict] = [
     {
         "id": "deepseek", "name": "DeepSeek", "group": "国内",
         "base_url": "https://api.deepseek.com",
         "key_hint": "platform.deepseek.com → API Keys", "key_url": "https://platform.deepseek.com/api_keys",
-        "models": [("deepseek-flash", 128_000, 8_192), ("deepseek-v4-pro", 128_000, 8_192)],
+        "models": [("deepseek-flash", 128_000, 8_192, {"vision": True}), ("deepseek-v4-pro", 128_000, 8_192)],
         "drop_params": ["store"], "rename_params": {"max_completion_tokens": "max_tokens"},
     },
     {
@@ -73,19 +79,22 @@ PRESETS: list[dict] = [
     },
     {
         "id": "claude", "name": "Claude（Anthropic）", "group": "海外",
-        "base_url": "https://api.anthropic.com/v1",
+        "base_url": "https://api.anthropic.com", "api": "anthropic",  # native Messages API: prompt caching, thinking
         "key_hint": "console.anthropic.com → API Keys。不服务中国大陆和香港，服务端要在支持的地区",
         "key_url": "https://console.anthropic.com/settings/keys",
-        "models": [("claude-sonnet-5-5", 200_000, 32_000), ("claude-opus-5-5", 200_000, 32_000),
-                   ("claude-haiku-5-5", 200_000, 32_000)],
-        "drop_params": ["store", "temperature", "top_p"], "rename_params": {},
+        "models": [("claude-opus-5-5", 1_000_000, 64_000, OPUS_55), ("claude-sonnet-5-5", 1_000_000, 64_000, SONNET_55),
+                   ("claude-haiku-5-5", 1_000_000, 64_000, HAIKU_55)],
+        "drop_params": ["temperature", "top_p"], "rename_params": {},
     },
     {
         "id": "openai", "name": "OpenAI", "group": "海外",
         "base_url": "https://api.openai.com/v1",
         "key_hint": "platform.openai.com → API keys。不服务中国大陆和香港，服务端要在支持的地区",
         "key_url": "https://platform.openai.com/api-keys",
-        "models": [("gpt-6.1-sol", 200_000, 32_000)], "drop_params": [], "rename_params": {},
+        "models": [("gpt-6.1-sol", 400_000, 64_000, {"vision": True, "price": {"input": 2, "output": 10, "cache_read": 0.1}}),
+                   ("gpt-6-astra", 400_000, 64_000, {"vision": True, "price": {"input": 10, "output": 50, "cache_read": 1}}),
+                   ("gpt-6.1-terra", 400_000, 64_000, {"vision": True, "price": {"input": 1, "output": 5, "cache_read": 0.05}})],
+        "drop_params": [], "rename_params": {},
     },
     {
         "id": "openrouter", "name": "OpenRouter", "group": "海外",
@@ -113,8 +122,18 @@ BY_ID = {p["id"]: p for p in PRESETS}
 def public() -> list[dict]:
     """What the admin page needs to show the catalog."""
     return [{**{k: v for k, v in p.items() if k != "models"},
-             "models": [{"model": m, "context_window": c, "max_tokens": o} for m, c, o in p["models"]]}
+             "models": [{"model": m[0], "context_window": m[1], "max_tokens": m[2], **(m[3] if len(m) > 3 else {})}
+                        for m in p["models"]]}
             for p in PRESETS]
+
+
+def model_extras(model: str) -> dict:
+    """vision and price of a model name any preset knows, else {}."""
+    for p in PRESETS:
+        for m in p["models"]:
+            if m[0] == model and len(m) > 3:
+                return dict(m[3])
+    return {}
 
 
 def chat_url(base_url: str) -> str:
@@ -127,3 +146,11 @@ def models_url(base_url: str) -> str:
     if base.endswith("/chat/completions"):
         base = base[: -len("/chat/completions")]
     return f"{base}/models"
+
+
+def anthropic_url(base_url: str) -> str:
+    """The Messages API address for a base such as https://api.anthropic.com (or one ending in /v1)."""
+    base = base_url.rstrip("/")
+    if base.endswith("/v1/messages"):
+        return base
+    return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"

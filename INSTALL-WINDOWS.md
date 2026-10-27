@@ -38,22 +38,22 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(�
 - Node.js 22 或更高（你已有 v25.8.1）。
 - Python 3.11 到 3.14 之一。在 cmd 里输入 `python --version` 能看到版本号即可；提示"不是内部或外部命令"时试 `py -3 --version`。都没有的话，从 python.org 安装，安装时勾选 "Add python.exe to PATH"。
 
-1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.12.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
-2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.12.0` 文件夹。
+1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.13.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
+2. 右键 → 全部解压，比如解压到"下载"文件夹，得到 `ferry-0.13.0` 文件夹。
 3. 在 cmd 里进入这个文件夹，运行安装命令：
 
    ```bat
-   cd /d %USERPROFILE%\Downloads\ferry-0.12.0
+   cd /d %USERPROFILE%\Downloads\ferry-0.13.0
    node client\bin\ferry.mjs install
    ```
 
    正常输出：
 
    ```
-   Installing Ferry 0.12.0
-     files     C:\Users\你\AppData\Local\Ferry\versions\0.12.0
+   Installing Ferry 0.13.0
+     files     C:\Users\你\AppData\Local\Ferry\versions\0.13.0
      server    python -m pip install ... ferry-server
-     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.12.0 ...）
+     ...（pip 的安装输出，最后是 Successfully installed ... ferry-server-0.13.0 ...）
      command   C:\Users\你\AppData\Roaming\npm\ferry.cmd
 
    Done. Open a NEW cmd window, go to a project folder and run:  ferry
@@ -88,14 +88,14 @@ ferry doctor
 全部正常时：
 
 ```
-Ferry 0.12.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
+Ferry 0.13.0, Node v25.8.1, win32, settings in C:\Users\你\.ferry
   info  commands run with: PowerShell (Git Bash not found)
   OK    search tools: fd and rg (C:\Users\你\.ferry\agent\bin)
   info  proxy: none
   info  no remote server set: using a Ferry server on this computer
   OK    server installed for python
   OK    server running at http://127.0.0.1:5xxxx
-  OK    server reachable in 3 ms (server 0.12.0, protocol 1)
+  OK    server reachable in 3 ms (server 0.13.0, protocol 1)
   OK    token accepted; the server picks the model: auto -> deepseek (deepseek-chat)
   info  conversation on the server: cached in memory only; the full history stays on this computer
   info  asking each model for a two-word answer (a few tokens)...
@@ -123,7 +123,7 @@ echo 服务器 test-host-01 的地址是 10.9.8.7 > notes.txt
 ferry
 ```
 
-进入界面后，顶部显示 `Ferry v0.12.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
+进入界面后，顶部显示 `Ferry v0.13.0  server on this computer`，底部是输入框。直接打字，回车发送，比如：
 
 ```
 读一下 notes.txt，然后新建 summary.md，用一句话总结它的内容
@@ -215,7 +215,7 @@ setx FERRY_REDACT 0
 想确认这台 Windows 上一切正常（不需要 Key，不访问外网），在解压出来的文件夹里运行：
 
 ```bat
-cd /d %USERPROFILE%\Downloads\ferry-0.12.0
+cd /d %USERPROFILE%\Downloads\ferry-0.13.0
 python selftest\run.py
 ```
 

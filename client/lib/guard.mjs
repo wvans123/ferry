@@ -1,9 +1,10 @@
 // The permission gate: every tool call passes through decide() (permissions.mjs) before it runs.
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
+import { findBash } from "./config.mjs";
 import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule, removeRule, ruleFiles } from "./permissions.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
-const state = { mode: "default", queue: Promise.resolve() };
+const state = { mode: "default", queue: Promise.resolve(), extraDirs: [] }; // extraDirs: folders added with /add-dir
 
 export function initialMode(cfg) {
 	if (process.env.FERRY_AUTO_APPROVE === "1") return "bypass";
@@ -60,8 +61,10 @@ export function createGuard(cfg, opts = {}) {
 			const cwd = ctx?.cwd ?? process.cwd();
 			const ui = opts.ui ?? (ctx.hasUI ? ctx.ui : null);
 			const run = async () => {
-				const verdict = decide({ tool: event.toolName, input: event.input, mode: state.mode, cwd,
-					rules: loadRules(cwd), blockedPaths: cfg.blockedPaths ?? [], readOnlyTool });
+				// a background job is a shell command like any other
+				const tool = event.toolName === "job_start" ? (findBash() ? "bash" : "powershell") : event.toolName;
+				const verdict = decide({ tool, input: event.input, mode: state.mode, cwd,
+					rules: loadRules(cwd), blockedPaths: cfg.blockedPaths ?? [], readOnlyTool, extraDirs: state.extraDirs });
 				if (verdict.action === "allow") return undefined;
 				if (verdict.action === "deny") {
 					if (verdict.blocked && ui) ui.notify(`Ferry blocked ${event.toolName} on a protected path (${verdict.blocked})`, "warning");
@@ -69,7 +72,7 @@ export function createGuard(cfg, opts = {}) {
 				}
 				if (!ui) return { block: true, reason: "This needs the user's approval and no terminal is available. " +
 					"Run ferry interactively, or allow it with a rule (ferry config) or mode." };
-				return ask(ui, verdict, event, cwd, opts.label ? ` (${opts.label})` : "");
+				return ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ? ` (${opts.label})` : "");
 			};
 			// one question at a time: parallel tool calls wait, and see rules saved by the previous answer
 			const result = state.queue.then(run, run);
@@ -115,6 +118,10 @@ export function createModes(cfg) {
 					pi.sendUserMessage(`Make a plan for this task: ${task}\n\nLook at the relevant code first. Then give a ` +
 						"short, concrete plan: the steps, the files each step touches, how to verify the result, and any open " +
 						"questions for me. Do not change anything yet.");
+					if (!ctx.hasUI) { // print mode: stay until the answer is in
+						await new Promise((r) => setTimeout(r, 50));
+						await ctx.waitForIdle();
+					}
 				}
 			},
 		});

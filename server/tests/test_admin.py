@@ -109,3 +109,36 @@ def test_providers_keys_prompts_redaction(tmp_path, monkeypatch):
             assert bad.status_code == 400
 
     run(go())
+
+
+def test_usage_and_cost(tmp_path, monkeypatch):
+    import json
+    import time
+
+    from ferry_server.usage import cost, normalize
+
+    # both APIs' usage in one shape; cached input is cheaper
+    assert normalize({"prompt_tokens": 1000, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 800}}) == \
+        {"input": 200, "cache_read": 800, "cache_write": 0, "output": 10}
+    a = normalize({"input_tokens": 5, "cache_read_input_tokens": 1_000_000, "cache_creation_input_tokens": 0, "output_tokens": 1000})
+    assert cost(a, {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5}) == round((5 * 4 + 1e6 * 0.2 + 1000 * 20) / 1e6, 6)
+    assert cost(a, {}) is None
+
+    cfg, app = make(tmp_path, monkeypatch)
+    key = (tmp_path / "admin-key").read_text().strip()
+    log = cfg.data_dir / "audit.jsonl"
+    now = time.time()
+    rows = [dict(event="chat", ts=now, status=200, project="a", model="claude", tokens={"input": 10, "cache_read": 90, "cache_write": 0, "output": 5}, cost=0.5),
+            dict(event="chat", ts=now, status=200, project="b", model="deepseek", tokens={"input": 100, "output": 1}, cost=None),
+            dict(event="chat", ts=now, status=500, project="a", model="claude", tokens={}, cost=None)]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    async def go():
+        async with client(app) as c:
+            c.cookies.set("ferry_admin", key)
+            u = (await c.get("/admin/api/usage?days=7")).json()
+            assert u["total"]["calls"] == 2 and u["total"]["cost"] == 0.5 and u["total"]["priced"] is False
+            assert u["models"][0]["key"] == "claude" and u["models"][0]["cache_read"] == 90
+            assert len(u["days"]) == 1
+
+    run(go())

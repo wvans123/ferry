@@ -243,6 +243,46 @@ def check_agent_features(root: Path, work: Path) -> None:
         s.close()
 
 
+CLAUDE_TOML = ('\n[models.claude]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
+               'model = "claude-opus-5-5"\ncontext_window = 1000000\nmax_tokens = 64000\nvision = true\n'
+               'price = { input = 4, output = 20, cache_read = 0.2, cache_write = 5 }\n\n[routing]\ndefault = "claude"\n')
+PNG_1PX = __import__("base64").b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+
+
+def check_claude_goal_jobs(root: Path, work: Path) -> None:
+    """Claude through the Anthropic Messages API (sync, prompt-cache markers, pictures, cost), /goal, background jobs."""
+    (work / "pic.png").write_bytes(PNG_1PX)
+    s = Stack(root, work, "agent", extra_toml=CLAUDE_TOML)
+    try:
+        c1, o1 = s.ferry("-p", "TASKTEST: explore the data folder")
+        c2, o2 = s.ferry("-p", "IMGTEST: look at pic.png")
+        c3, _ = s.ferry("doctor")
+        ups = jsonl(s.upstream)
+        audit = jsonl(s.data / "audit.jsonl")
+        chats = [a for a in audit if a.get("event") == "chat"]
+        commits = [a for a in audit if a.get("event") == "commit"]
+        valid = ups and all(str(u.get("model", "")).startswith("claude-") and isinstance(u.get("system"), list) for u in ups if "Reply with OK" not in json.dumps(u))
+        check("F40 Claude 原生接口", c1 == 0 and "EXPLORE REPORT" in o1 and c2 == 0 and "IMG: picture received" in o2 and c3 == 0
+              and valid and any((a.get("base") or 0) > 0 for a in commits)
+              and all(a.get("status") == 200 and (a.get("cost") or 0) > 0 and a["tokens"]["cache_read"] > 0 for a in chats),
+              "主 agent 和子 agent 都经 Anthropic Messages API；对话仍然增量同步（缓存标记不打乱同步）；"
+              "图片文件交给模型；每次调用都算出缓存命中和费用；doctor 能测 Claude 模型")
+        c4, o4 = s.ferry("-p", "/goal GOALTEST write three notes")
+        notes = sorted(p.name for p in work.glob("goal-note*.txt"))
+        cont = sum(1 for u in jsonl(s.upstream)[-1:] for m in u.get("messages", []) if "Continue working toward the goal" in json.dumps(m))
+        check("F41 /goal 长任务", c4 == 0 and "GOAL REPORT" in o4 and notes == ["goal-note1.txt", "goal-note2.txt", "goal-note3.txt"]
+              and cont == 3, "设定目标后 agent 每停一次就被催着继续（3 次），直到它用 goal_update 报告完成并给出证据")
+        c5, o5 = s.ferry("-p", "JOBTEST: start a background job")
+        check("F42 后台任务", c5 == 0 and "ticker-done" in o5 and "command done" in o5,
+              "job_start 在后台跑命令并立即返回；job_output 看到它的输出和结束状态")
+    finally:
+        s.close()
+        for p in work.glob("goal-note*.txt"):
+            p.unlink()
+        (work / "pic.png").unlink(missing_ok=True)
+
+
 def check_diy(root: Path) -> None:
     """Slash commands (built-in and your own), skills, hooks and /remember."""
     proj = root.parent / "diy-project"
@@ -313,6 +353,14 @@ def check_tui(root: Path, work: Path) -> None:
         os.write(fd, b"\r")
         answered = wait_for("TODO: [x] step one", 60)
         widget = "Tasks (1/2 done)" in plain(seen)
+        os.write(fd, b"/cost")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        cost_shown = wait_for("Model calls:", 20)
+        os.write(fd, b"/help")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        help_shown = wait_for("Ferry commands", 20)
         os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
@@ -322,9 +370,9 @@ def check_tui(root: Path, work: Path) -> None:
             os.waitpid(pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
-        check("F38 交互界面", started and answered and widget,
-              "终端界面能启动、显示权限模式、收发消息、显示任务清单" if started and answered and widget
-              else f"started={started} answered={answered} widget={widget}: {plain(seen)[-300:]!r}")
+        ok = started and answered and widget and cost_shown and help_shown
+        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示任务清单，/cost 和 /help 能用" if ok
+              else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown}: {plain(seen)[-300:]!r}")
     finally:
         s.close()
 
@@ -701,6 +749,7 @@ def main() -> int:
     check_gateway(base / "gateway", work)
     check_tui(base / "tui", work)
     check_diy(base / "diy")
+    check_claude_goal_jobs(base / "claude", work)
 
     print("\n[14/14] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
     check_install_update(base / "install")

@@ -388,7 +388,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                                   "key_source": "env" if key else "", "models": []}
             views[pid]["models"].append({"id": m.id, "model": m.model, "name": m.name,
                                          "context_window": m.context_window, "max_tokens": m.max_tokens,
-                                         "ready": m.ready})
+                                         "ready": m.ready, "api": m.api, "vision": m.vision, "price": m.price})
         return list(views.values())
 
     @app.get("/admin/api/presets")
@@ -418,11 +418,14 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                             if m.base_url.rstrip("/") == base.rstrip("/") and m.api_key), "")
         if not base:
             return JSONResponse({"error": "请先填写接口地址"}, 400)
+        anthropic = (b.get("preset") == "claude") or "anthropic.com" in base
+        url = presets_mod.anthropic_url(base).replace("/messages", "/models") if anthropic else presets_mod.models_url(base)
+        auth = ({"x-api-key": key, "anthropic-version": "2023-06-01"} if anthropic else {"Authorization": f"Bearer {key}"}) if key else {}
         try:
             async with httpx.AsyncClient(timeout=20) as c:
-                r = await c.get(presets_mod.models_url(base), headers={"Authorization": f"Bearer {key}"} if key else {})
+                r = await c.get(url, headers=auth)
         except httpx.HTTPError as e:
-            return JSONResponse({"error": f"连不上 {presets_mod.models_url(base)}：{type(e).__name__}"}, 502)
+            return JSONResponse({"error": f"连不上 {url}：{type(e).__name__}"}, 502)
         if r.status_code != 200:
             hint = {401: "Key 不对或已失效", 403: "没有权限，或者这个地区不能用"}.get(r.status_code, "")
             return JSONResponse({"error": f"HTTP {r.status_code} {hint}".strip(), "detail": r.text[:300]}, 502)
@@ -452,7 +455,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             entry = {"id": pid, "name": p.get("name") or pre.get("name", pid), "preset": p.get("preset", ""),
                      "base_url": (p.get("base_url") or pre.get("base_url", "")).strip(),
                      "api_key_env": (p.get("api_key_env") or "").strip(),
-                     "drop_params": pre.get("drop_params", ["store"]),
+                     "drop_params": pre.get("drop_params", ["store"]), "api": pre.get("api", "openai"),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:
                 return JSONResponse({"error": f"{entry['name']}：接口地址不能为空"}, 400)
@@ -469,9 +472,15 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                 if mid in used:
                     mid = f"{pid}-{mid}"
                 used.add(mid)
+                # vision and price: as sent, else as this model had them, else what a preset knows
+                had = next((x for x in cfg.models.values() if x.model == name and x.provider == pid), None)
+                known = presets_mod.model_extras(name)
                 models.append({"id": mid, "provider": pid, "model": name, "name": m.get("name", ""),
                                "context_window": int(m.get("context_window") or 128_000),
-                               "max_tokens": int(m.get("max_tokens") or 8_192)})
+                               "max_tokens": int(m.get("max_tokens") or 8_192),
+                               "vision": bool(m["vision"]) if "vision" in m else (had.vision if had else bool(known.get("vision"))),
+                               "price": m["price"] if isinstance(m.get("price"), dict) else (had.price if had and had.price
+                                                                                             else known.get("price", {}))})
         if not models:
             return JSONResponse({"error": "至少要启用一个模型"}, 400)
         r = b.get("routing", {})
@@ -619,6 +628,32 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         for o in out:
             o["has_details"] = o.get("id") in have
         return {"calls": out, "record_details": cfg.record_details}
+
+    @app.get("/admin/api/usage")
+    async def usage(request: Request, days: int = 30):
+        """Tokens and cost per day, per project and per model, from the audit log."""
+        if not allowed(request):
+            return denied()
+        since = time.time() - max(1, min(days, 366)) * 86400
+        empty = lambda: {"calls": 0, "input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "cost": 0.0, "priced": True}  # noqa: E731
+        by_day, by_project, by_model, total = {}, {}, {}, empty()
+        for a in _tail_jsonl(audit_log, 50_000_000):
+            if a.get("event") != "chat" or a.get("status") != 200 or (a.get("ts") or 0) < since:
+                continue
+            t = a.get("tokens") or {}
+            day = time.strftime("%Y-%m-%d", time.localtime(a["ts"]))
+            for bucket in (by_day.setdefault(day, empty()), by_project.setdefault(a.get("project") or "–", empty()),
+                           by_model.setdefault(a.get("model") or "–", empty()), total):
+                bucket["calls"] += 1
+                for k in ("input", "cache_read", "cache_write", "output"):
+                    bucket[k] += int(t.get(k) or 0)
+                if a.get("cost") is None:
+                    bucket["priced"] = False
+                else:
+                    bucket["cost"] = round(bucket["cost"] + a["cost"], 6)
+        rows = lambda d: [{"key": k, **v} for k, v in d.items()]  # noqa: E731
+        return {"days": sorted(rows(by_day), key=lambda r: r["key"]), "projects": sorted(rows(by_project), key=lambda r: -r["cost"]),
+                "models": sorted(rows(by_model), key=lambda r: -r["cost"]), "total": total}
 
     @app.get("/admin/api/calls/{call_id}")
     async def call_detail(call_id: str, request: Request):

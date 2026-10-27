@@ -6,7 +6,7 @@
 // calls the model. If the server has lost its copy, the client re-uploads everything automatically.
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
+import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { PROTOCOL, serverHeaders } from "./config.mjs";
 import { gatewayPage, openInBrowser } from "./gateway.mjs";
 
@@ -14,13 +14,35 @@ let lastOpened = 0;
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const SALT = randomUUID();
-const SUMMARY = /^\{"role":"(system|developer)","content":"You are a context summarization assistant/; // pi's summary prompt // per process, so two sessions with the same opening never share a server copy
+const SUMMARY_TEXT = "You are a context summarization assistant"; // pi's summary prompt
+
+/**
+ * Anthropic requests carry prompt-cache markers on the last message, which move every turn. Take them out (and
+ * write a one-block text message as a plain string, as pi does for older messages) so the synced conversation
+ * stays the same from turn to turn; the server puts the markers back. Returns [[message, block, cache_control]].
+ */
+export function takeCacheMarks(list) {
+	const marks = [];
+	list.forEach((m, i) => {
+		if (!Array.isArray(m.content) || m.role === "__system__") return;
+		m.content.forEach((b, j) => {
+			if (b && typeof b === "object" && b.cache_control) {
+				marks.push([i, j, b.cache_control]);
+				delete b.cache_control;
+			}
+		});
+		const only = m.content.length === 1 ? m.content[0] : null;
+		if (only?.type === "text" && Object.keys(only).length === 2) m.content = only.text;
+	});
+	return marks;
+} // pi's summary prompt // per process, so two sessions with the same opening never share a server copy
 
 export class FerryError extends Error {}
 
 /** opts.purpose: "agent" (default) or "subagent"; tells the server what the requests are for. */
 export function createSyncProvider(cfg, models, opts = {}) {
 	const known = new Map(); // conv -> { count, hash } the server has acknowledged
+	const byId = new Map(models.map((m) => [m.id, m]));
 	const knownTools = new Set();
 	const project = process.env.FERRY_PROJECT ?? basename(process.cwd());
 
@@ -50,13 +72,19 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		return post(`/v1/ferry/commit?${q}`, "", signal);
 	}
 
-	async function shrink(payload, signal) {
+	async function shrink(payload, signal, api = "openai") {
 		if (!payload || !Array.isArray(payload.messages)) return payload;
 		if (cfg.sessionStore === "none") { // the server keeps nothing between calls: always send everything
 			known.clear();
 			knownTools.clear();
 		}
-		const msgs = payload.messages.map((m) => JSON.stringify(m));
+		let list = payload.messages;
+		let marks = [];
+		if (api === "anthropic") { // the system prompt is a separate field there: sync it as the first item
+			list = structuredClone([...(payload.system !== undefined ? [{ role: "__system__", content: payload.system }] : []), ...payload.messages]);
+			marks = takeCacheMarks(list);
+		}
+		const msgs = list.map((m) => JSON.stringify(m));
 		const conv = sha(SALT + (msgs[0] ?? "") + (msgs[1] ?? ""));
 		const chain = [""];
 		for (const s of msgs) chain.push(sha(chain[chain.length - 1] + s));
@@ -92,10 +120,12 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		}
 		known.set(conv, ack);
 		if (toolsHash) knownTools.add(toolsHash);
-		const { messages: _m, tools: _t, ...rest } = payload;
+		const { messages: _m, tools: _t, system: _s, ...rest } = payload;
+		if (api !== "anthropic" && _s !== undefined) rest.system = _s;
 		// tell the server what this request is for, so it can send context summaries to a cheaper model
-		const purpose = SUMMARY.test(msgs[0] ?? "") ? "summary" : (opts.purpose ?? "agent");
-		return { ...rest, messages: [], ferry: { conv, count: ack.count, hash: ack.hash, tools_hash: toolsHash, purpose } };
+		const purpose = (msgs[0] ?? "").slice(0, 300).includes(SUMMARY_TEXT) ? "summary" : (opts.purpose ?? "agent");
+		return { ...rest, messages: [], ferry: { conv, count: ack.count, hash: ack.hash, tools_hash: toolsHash, purpose,
+			...(marks.length ? { cache: marks } : {}) } };
 	}
 
 	function errorEvent(model, message) {
@@ -121,15 +151,20 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	function streamFerry(model, context, options) {
 		if (!cfg.server || !cfg.token) return errorStream(model, "Ferry is not set up. Run: ferry login <server> <token>");
 		const userOnPayload = options?.onPayload;
-		const inner = { ...model, api: "openai-completions", baseUrl: `${cfg.server}/v1` };
-		const attempt = () => openAICompletionsApi().streamSimple(inner, context, {
+		// the server says which API its model speaks: Claude through Anthropic's own, everything else OpenAI-style
+		const api = byId.get(model.id)?.api === "anthropic" ? "anthropic" : "openai";
+		const inner = api === "anthropic"
+			? { ...model, api: "anthropic-messages", baseUrl: `${cfg.server}/anthropic` }
+			: { ...model, api: "openai-completions", baseUrl: `${cfg.server}/v1` };
+		const streamer = api === "anthropic" ? anthropicMessagesApi() : openAICompletionsApi();
+		const attempt = () => streamer.streamSimple(inner, context, {
 			...options,
 			apiKey: cfg.token,
 			headers: { ...(options?.headers ?? {}), ...(cfg.headers ?? {}), "x-ferry-project": encodeURIComponent(project), // headers must be ASCII; folder names may not be
 				"x-ferry-protocol": PROTOCOL },
 			onPayload: async (payload, m) => {
 				const replaced = userOnPayload ? await userOnPayload(payload, m) : undefined;
-				return shrink(replaced ?? payload, options?.signal);
+				return shrink(replaced ?? payload, options?.signal, api);
 			},
 		});
 		const out = createAssistantMessageEventStream();
@@ -174,8 +209,11 @@ export function createSyncProvider(cfg, models, opts = {}) {
 				id: m.id,
 				name: `Ferry ${m.id}`,
 				reasoning: false,
-				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				// pictures go to models that take them (the agent reads image files with the read tool)
+				input: m.vision ? ["text", "image"] : ["text"],
+				// USD per million tokens, from the server's price list: pi adds up the cost (/cost, the footer)
+				cost: { input: m.price?.input ?? 0, output: m.price?.output ?? 0,
+					cacheRead: m.price?.cache_read ?? m.price?.input ?? 0, cacheWrite: m.price?.cache_write ?? m.price?.input ?? 0 },
 				contextWindow: m.contextWindow ?? 128000,
 				maxTokens: m.maxTokens ?? 8192,
 			})),

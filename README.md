@@ -9,9 +9,9 @@ A Claude-Code-style coding agent for locked-down Windows PCs: the agent runs on 
 ```
 C:\my-project> ferry
 
-  Ferry v0.12.0  server ferry.example.com
+  Ferry v0.13.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
-  memory: 3 (/memory)  ·  subagents on  ·  type / for commands (/init /review /undo /status)
+  memory: 3 (/memory)  ·  subagents on  ·  /help for commands (/goal /tasks /cost /rewind)
 
 > 登录接口在密码错误时返回 500，帮我查一下原因并修好
   ● search "password" in src ... read AuthController.java ... edit AuthService.java
@@ -61,7 +61,12 @@ C:\my-project> ferry
 | 同上，但手边是 Mac | **Mac 当服务端** + Cloudflare 域名 | 30 分钟 |
 | 要一直在线，或要用 Claude / OpenAI | **Linux 云服务器** + HTTPS | 30 分钟 |
 
-Anthropic（Claude）和 OpenAI 的 API 不服务中国大陆和香港。要用这两家，服务端要放在它们支持的地区。
+**用哪家模型**：在服务端管理页里选，工作电脑不用管。
+- **Claude**（Opus 5.5 / Sonnet 5.5 / Haiku 5.5）：走 Anthropic 自己的接口，带提示词缓存。agent 的长对话里每轮重复发送的前缀按缓存价计费，Opus 5.5 缓存命中的价格是正常输入的 1/20。
+- **GPT**（gpt-6.1-sol 等）：走 OpenAI 接口，OpenAI 会自动缓存。
+- 也可以用 DeepSeek、Kimi、通义、智谱，或者任何 OpenAI 兼容接口。
+
+Anthropic 和 OpenAI 的 API 不对中国大陆和香港提供服务。要用这两家，服务端得放在它们支持的地区，比如海外的云服务器，见 [DEPLOY-LINUX.md](docs/DEPLOY-LINUX.md)。
 
 ## 服务端：装在哪、怎么装
 
@@ -105,7 +110,7 @@ Anthropic（Claude）和 OpenAI 的 API 不服务中国大陆和香港。要用�
 | 概览 | 工作电脑要用的登录命令（一键复制，带令牌）、流量图、最近的调用 |
 | 服务商和模型 | 选预设（DeepSeek、Kimi、智谱、通义、火山、硅基流动、各家编程套餐、Claude、OpenAI、OpenRouter、本机 Ollama、自定义），**只填 API Key**；读出服务商的模型列表，勾选要用的；选默认模型和写摘要用的模型 |
 | 提示词 | 所有工作电脑都会带上的团队提示词，可以按项目写 |
-| 脱敏 | 默认关闭。打开后，敏感词表和内网 IP、邮箱、手机号、Key 这类内容会先换成占位符再发给模型，回复里再换回来 |
+| 脱敏 | 默认关闭。打开后，敏感词表和内网 IP、邮箱、手机号、Key 这类内容会先换成占位符再发给模型，回复里再换回来（只对 OpenAI 兼容接口生效，Claude 原生接口不做脱敏） |
 | 调用记录 | 每次调用的项目、模型、大小、token、耗时，可以点开看详情 |
 | 设置 | 外网地址、服务端存不存对话、请求上限、联网代办、开机启动、换令牌 |
 
@@ -172,27 +177,45 @@ ferry doctor
 | `ferry config` | 查看和修改客户端设置 |
 | `ferry login <地址> <令牌>` / `ferry logout` | 连到远程服务端 / 改回本机服务端 |
 | `ferry update` | 更新到最新版 |
+| `ferry pkg install npm:<包名>` | 安装 pi 生态的扩展包（扩展、技能、命令）；`ferry pkg list` / `remove` |
 | `ferry --version --all` | 显示 Ferry 和 pi 的版本 |
 
 ### 斜杠命令
 
-| 命令 | 作用 |
-|---|---|
-| `/init` | 读一遍项目，写出 AGENTS.md（项目说明，以后每次对话都会带上）。**新项目先运行这个** |
-| `/review [范围]` | 审查当前改动（或某个分支、文件），按严重程度列问题 |
-| `/commit` | 按仓库的风格写提交信息并提交（不推送） |
-| `/explain <文件或问题>` | 讲清楚一段代码 |
-| `/test [范围]` | 跑测试，修好失败的 |
-| `/fix <报错>` | 找到根本原因并修好 |
-| `/pr`、`/doc <对象>` | 写合并请求说明、写文档 |
-| `/plan <任务>` | 切到只读规划模式，先出方案，不动文件 |
-| `/undo` | 把 agent 改过的文件恢复到某次请求之前的样子 |
-| `/remember [user] <内容>` | 直接记进记忆（加 `user` 表示所有项目都记得） |
-| `/memory`、`/permissions`、`/hooks`、`/agents` | 查看记忆、权限规则、钩子、子 agent |
-| `/status` | 服务端、延迟、模型、模式、工具一览 |
-| `/compact`、`/new`、`/resume`、`/model` | 压缩上下文、新对话、换对话、换模型（pi 自带） |
+和 Claude Code 的基础命令一样，输入 `/` 可以挑选，`/help` 列出全部：
 
-自己写斜杠命令，见[自己动手扩展](#自己动手扩展)。
+| 分类 | 命令 |
+|---|---|
+| 对话 | `/clear` 重新开始 · `/compact [保留什么]` 压缩上下文 · `/resume` 回到以前的对话 · `/rename` · `/fork` · `/export` · `/copy` · `/exit` |
+| 干活 | **`/goal <目标>`** 一直做到完成（见下文）· `/plan <任务>` 先出方案 · `/tasks` 后台任务 · `/todos` 任务清单 · `/rewind` 把文件恢复到某次请求之前 |
+| 知识 | `/init` 读项目写 AGENTS.md · `/memory` · `/remember <内容>` · `/skills` |
+| 审查 | `/review [范围]` · `/security-review [范围]` |
+| 信息 | `/cost` 花了多少 token 和钱 · `/context` 上下文被什么占满 · `/status` · `/doctor` |
+| 设置 | `/config` · `/permissions` · `/hooks` · `/agents` · `/mcp` · `/model` · `/add-dir <文件夹>` |
+
+写代码用的 `/commit`、`/test`、`/fix`、`/pr` 等放在 [examples/commands/](examples/commands/)，需要的话拷进 `%USERPROFILE%\.ferry\commands\`。自己写命令见[自己动手扩展](#自己动手扩展)。
+
+### /goal：给一个目标，它一直做到完成
+
+```
+> /goal 把 docs 文件夹里所有文档的术语统一成《术语表.md》里的写法，改完列出改了哪些文件
+```
+
+- 设定后 agent 自己连续干：每停一次，Ferry 就让它对照目标检查做完了什么、接着做下一步。
+- 完成要有证据（文件内容、命令输出、测试结果）。它用 `goal_update` 报告"完成"或"卡住了需要你"，才会停下。
+- 底栏一直显示：`◎ goal pursuing · 12m · 340k/2M tokens · 7 turns`。
+- `/goal` 查看状态，`/goal pause` / `resume` / `clear` 暂停、继续、清除。
+- `/goal budget 2m` 设 token 预算，用完了它会写一份进度报告再停。另外默认最多 100 轮（`ferry config set goalMaxTurns ...`）。
+- 目标写起来长的话，先写进一个文件，再 `/goal 目标.md`。
+- 按 Esc 会暂停目标；目标进行中你也可以随时插话纠正方向。
+
+参考了 Codex 的 goal mode 和 Claude Code 的 `/goal`。
+
+### 后台任务和子任务
+
+- **后台命令**：长时间运行的命令（开发服务器、监听、长时间的构建或测试）用 `job_start` 放到后台，agent 接着干别的，用 `job_output` 查看进度。
+- **后台子 agent**：`task` 加上 `background`，子 agent 在后台做一件独立的事，做完自动把报告交回来。
+- `/tasks` 查看全部后台任务，可以看输出、停止。任务结束时会通知你，agent 在你下一条消息时也会知道。退出 ferry 时，后台任务一起停掉。
 
 ### 权限：该问的才问
 
@@ -222,7 +245,9 @@ ferry doctor
 | 浏览器 | `ferry config set browser true` 后，agent 能操作电脑上的 Edge：打开网页、点击、填表、读页面 |
 | 长输出 | 命令输出太长时，全文存到文件，只给模型看开头和结尾，需要时它自己去读 |
 | 压缩和找回 | 对话太长时自动写摘要；之后需要原文时，用 `history_search` 在本地完整记录里找回 |
-| 撤销 | `/undo` 把文件恢复到某次请求之前。只管 agent 用 edit/write 改的文件，命令造成的改动请用 git |
+| 撤销 | `/rewind`（也可以用 `/undo`）把文件恢复到某次请求之前。只管 agent 用 edit/write 改的文件，命令造成的改动请用 git |
+| 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型（模型要支持看图，Claude、GPT、deepseek-flash 都支持） |
+| 花费 | 底栏显示本次对话花了多少钱；`/cost` 看明细；服务端管理页的"用量和费用"按天、按项目、按模型汇总 |
 | 提醒 | 一个请求超过 30 秒才做完时，会响一声并弹出 Windows 通知 |
 
 ## 自己动手扩展
@@ -255,6 +280,7 @@ ferry doctor
 | `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome）；`browserPath` 指定别的浏览器，`browserHeadless` 不显示窗口 |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
 | `bigOutputBytes` | `8192` | 输出超过多少字节就存文件（0 = 不存） |
+| `goalBudget` / `goalMaxTurns` | `0` / `100` | `/goal` 的 token 预算（如 `2m`，0 = 不限）和最多轮数 |
 | `notify` / `notifyAfterSeconds` | `true` / `30` | 长请求结束时响铃加通知 |
 | `updateCheck` | `true` | 每天看一次 GitHub 上有没有新版本 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
@@ -321,8 +347,12 @@ ferry doctor
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，也会重新打开并提示重发 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 斜杠命令和自定义 | 内置命令是 Markdown 模板（`client/commands/`）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户、用户覆盖内置 | `client/lib/commands.mjs` |
-| 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/undo` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
+| 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/rewind` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
 | 钩子 | `afterEdit` 在工具结果出来后运行，失败输出追加到工具结果里交给模型；项目的钩子文件按内容哈希征得同意，改了要重新同意 | `client/lib/hooks.mjs` |
+| /goal | 目标存成会话里的一条记录（恢复对话时还在）；agent 每次要停下时（pi 的 `agent_before_settle`），如果目标还在进行，就补一条"对照目标继续"的消息并要求再跑一轮；agent 用 `goal_update` 报告完成或卡住；token 预算和轮数上限到了就要求它写进度报告 | `client/lib/goal.mjs` |
+| 后台任务 | 后台命令的输出写到文件，`job_output` 读末尾；后台子 agent 是不等结果的子会话；结束时提示你，并在你下一条消息里告诉 agent | `client/lib/jobs.mjs` |
+| Claude 原生接口 | 客户端按服务端说的接口类型，用 pi 自带的 Anthropic 提供方（思考、图片、缓存标记都由它处理）；同步前把每轮都会移动的缓存标记取下、服务端再放回，所以照样只传新增部分；服务端把请求转给 Anthropic，并从事件流里记下用量 | `client/lib/sync.mjs`、`server/ferry_server/app.py` |
+| 费用 | 价格写在服务端的模型配置里（预设已填好 Claude 和 GPT），随模型列表下发给客户端，pi 自己累计；服务端按每次调用的用量另算一份，管理页汇总 | `server/ferry_server/usage.py` |
 | 公司代理 | 客户端所有请求统一走代理（环境变量或配置项），支持 NO_PROXY | `client/lib/config.mjs` |
 | 好装、好更新 | 离线安装包 + `ferry install`；`ferry update` 从 GitHub 发布页取最新版；没登录远程服务端时自动在本机启动服务端 | `client/lib/setup.mjs` |
 | 不重复造轮子 | Agent 循环、工具和终端界面直接用开源的 [pi](https://github.com/earendil-works/pi)（MIT），通过它公开的 `main()` 和扩展接口嵌入，不 fork 内核 | `client/bin/ferry.mjs` |
@@ -381,12 +411,12 @@ docs/        部署指南、扩展指南、设计文档
 
 ## 离商业级还差什么
 
-v0.12 是一个可以自用、可以演示的原型：46 个单元测试（服务端 31、客户端 15）和 40 项端到端测试覆盖，在 Linux 和 Windows 上自动跑。离商业产品还差这些：
+v0.13 是一个可以自用、可以演示的原型：47 个单元测试（服务端 32、客户端 15）和 43 项端到端测试覆盖，在 Linux 和 Windows 上自动跑。离商业产品还差这些：
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|
-| agent | 权限模式、记忆、子 agent、任务清单、斜杠命令、技能、钩子、撤销、联网、浏览器、三层上下文管理 | 命令在沙箱里跑（Codex 的做法）、图片输入、IDE 插件 |
-| 服务端 | 增量同步、组装提示词、选模型、可逆脱敏、流式还原、管理页 | Claude 原生接口（提示词缓存）、服务端摘要、用量和费用统计 |
+| agent | /goal 长任务、后台任务、权限模式、记忆、子 agent、任务清单、斜杠命令、技能、钩子、撤销、联网、浏览器、读图、三层上下文管理 | 命令在沙箱里跑（Codex 的做法） |
+| 服务端 | 增量同步、组装提示词、选模型、Claude 原生接口和提示词缓存、用量和费用、可逆脱敏（OpenAI 兼容接口）、管理页 | GPT 的 Responses 接口、服务端摘要 |
 | 可靠性 | 缓存丢失自动恢复、版本协商、自动跟进 pi 更新 | 多实例部署（目前是单机 SQLite）、数据备份 |
 | 安全 | 多用户隔离、恒定时间令牌比较、拒绝弱密钥、日志不含正文、管理页只限本机 | 限流、令牌过期、客户端令牌存进系统凭据库 |
 | 真实环境 | Linux 和 Windows 上用假模型、假代理、假网关验证；作者的工作电脑经 Cloudflare 连通 | 更多公司网络环境下的验证 |

@@ -43,6 +43,10 @@ class ModelConfig:
     name: str = ""                                      # display name (admin page only)
     no_key: bool = False                                # e.g. a local Ollama
     key_value: str = field(default="", repr=False)      # key entered on the admin page (secrets.toml)
+    api: str = "openai"                                 # "openai" (chat completions) or "anthropic" (Messages API)
+    vision: bool = False                                # takes images (the agent can read picture files)
+    # USD per million tokens: input, output, cache_read, cache_write. Used for the cost in /cost and the usage page.
+    price: dict = field(default_factory=dict)
 
     @property
     def api_key(self) -> str:
@@ -66,6 +70,7 @@ class Provider:
     rename_params: dict[str, str] = field(default_factory=dict)
     no_key: bool = False
     key: str = field(default="", repr=False)
+    api: str = "openai"
 
     @property
     def api_key(self) -> str:
@@ -191,9 +196,9 @@ def _persistent_secret(path: Path) -> str:
 # Context windows are kept at 200K tokens for Claude and OpenAI even where the model takes more: the agent then
 # summarises old history before a request reaches the ~1 MB size limit, and every turn costs less.
 PROVIDERS = [
-    ("claude", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1", "claude-sonnet-5-5", 200_000, 32_000,
-     ["store", "temperature", "top_p"], {}),
-    ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "gpt-6.1-sol", 200_000, 32_000, [], {}),
+    ("claude", "ANTHROPIC_API_KEY", "https://api.anthropic.com", "claude-opus-5-5", 1_000_000, 64_000,
+     ["temperature", "top_p"], {}),
+    ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "gpt-6.1-sol", 400_000, 64_000, [], {}),
     ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", 128_000, 8_192,
      ["store"], {"max_completion_tokens": "max_tokens"}),
 ]
@@ -219,7 +224,12 @@ def zero_config_models() -> dict[str, ModelConfig]:
             max_tokens=max_out,
             drop_params=list(drop),
             rename_params=dict(rename),
+            api="anthropic" if pid == "claude" else "openai",
         )
+        from .presets import model_extras
+        extras = model_extras(found[pid].model)
+        found[pid].vision = bool(extras.get("vision"))
+        found[pid].price = extras.get("price", {})
     if len(found) > 1 and not os.environ.get("DEEPSEEK_API_KEY"):
         found.pop("deepseek")  # only shown as a hint when nothing else is configured
     first = os.environ.get("FERRY_MODEL")
@@ -244,6 +254,12 @@ def _model_block(m: ModelConfig, commented: bool = False, note: str = "") -> str
     lines = [f"# {note}"] if note else []
     body = [f"[models.{m.id}]", f"base_url = {_toml_value(m.base_url)}", f"api_key_env = {_toml_value(m.api_key_env)}",
             f"model = {_toml_value(m.model)}", f"context_window = {m.context_window}", f"max_tokens = {m.max_tokens}"]
+    if m.api != "openai":
+        body.append(f"api = {_toml_value(m.api)}")
+    if m.vision:
+        body.append("vision = true")
+    if m.price:
+        body.append(f"price = {_toml_value(m.price)}")
     if m.drop_params:
         body.append(f"drop_params = {_toml_value(m.drop_params)}")
     if m.rename_params:
@@ -326,7 +342,8 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             id=pid, base_url=base, name=p.get("name") or pre.get("name") or pid, preset=p.get("preset", ""),
             api_key_env=p.get("api_key_env", ""), drop_params=list(p.get("drop_params", pre.get("drop_params", []))),
             rename_params=dict(p.get("rename_params", pre.get("rename_params", {}))),
-            no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""))
+            no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
+            api=p.get("api") or pre.get("api", "openai"))
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
         m = dict(m)
@@ -340,6 +357,7 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             m.setdefault("drop_params", prov.drop_params)
             m.setdefault("rename_params", prov.rename_params)
             m.setdefault("no_key", prov.no_key)
+            m.setdefault("api", prov.api)
             m["key_value"] = prov.key
         try:
             models[mid] = ModelConfig(id=mid, provider=pid, **m)
@@ -378,13 +396,13 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]
-        for k in ("name", "preset", "base_url", "api_key_env", "drop_params", "rename_params", "no_key"):
+        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
     for m in models:
         out += ["", f"[models.{_toml_key(m['id'])}]"]
-        for k in ("provider", "model", "name", "context_window", "max_tokens", "base_url", "api_key_env",
-                  "drop_params", "rename_params"):
+        for k in ("provider", "model", "name", "context_window", "max_tokens", "vision", "price", "base_url",
+                  "api_key_env", "drop_params", "rename_params"):
             if m.get(k) not in (None, "", [], {}):
                 out.append(f"{k} = {_toml_value(m[k])}")
     return "\n".join(out) + "\n"

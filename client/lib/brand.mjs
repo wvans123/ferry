@@ -20,7 +20,7 @@ export function createBrand(cfg, version, newer = Promise.resolve("")) {
 			const features = [
 				cfg.memory === false ? "memory off" : `memory: ${memoryCount(ctx.cwd ?? process.cwd())} (/memory)`,
 				cfg.subagents === false ? "subagents off" : "subagents on",
-				"type / for commands (/init /review /undo /status)",
+				"/help for commands (/goal /tasks /cost /rewind)",
 			].join("  ·  ");
 			ctx.ui.setHeader((_tui, theme) => ({
 				render() {

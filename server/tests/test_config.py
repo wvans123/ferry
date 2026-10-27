@@ -21,7 +21,8 @@ def test_one_model_per_key_claude_first(monkeypatch):
     env(monkeypatch, ANTHROPIC_API_KEY="a", OPENAI_API_KEY="o", DEEPSEEK_API_KEY="d")
     m = zero_config_models()
     assert list(m) == ["claude", "openai", "deepseek"]
-    assert m["claude"].base_url == "https://api.anthropic.com/v1" and "temperature" in m["claude"].drop_params
+    assert m["claude"].base_url == "https://api.anthropic.com" and "temperature" in m["claude"].drop_params
+    assert m["claude"].api == "anthropic" and m["claude"].vision and m["claude"].price["cache_read"] == 0.2
     assert m["deepseek"].rename_params == {"max_completion_tokens": "max_tokens"}
 
 

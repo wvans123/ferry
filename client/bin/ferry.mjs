@@ -11,8 +11,10 @@
 //
 // Without `ferry login`, every ferry window starts its own Ferry server on this computer and stops it on exit
 // (installed by `ferry install`; the server reads DEEPSEEK_API_KEY from the environment).
+import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	AGENT_DIR,
 	applyProxy,
@@ -295,6 +297,8 @@ async function run(args) {
 	const { createCommands } = await import("../lib/commands.mjs");
 	const { createCheckpoints } = await import("../lib/checkpoint.mjs");
 	const { createHooks } = await import("../lib/hooks.mjs");
+	const { createGoal } = await import("../lib/goal.mjs");
+	const { createJobs } = await import("../lib/jobs.mjs");
 	const { webMode } = await import("../lib/web.mjs");
 	const status = async () => {
 		const t = Date.now();
@@ -317,8 +321,19 @@ async function run(args) {
 			{ name: "ferry-modes", factory: createModes(cfg), hidden: true },
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },
+			{ name: "ferry-goal", factory: createGoal(cfg), hidden: true },
+			{ name: "ferry-jobs", factory: createJobs(), hidden: true },
 			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
-			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents }), hidden: true },
+			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents,
+				doctor: () => new Promise((done) => {
+					execFile(process.execPath, [fileURLToPath(import.meta.url), "doctor"], { timeout: 120000, windowsHide: true },
+						(_e, out, err) => done(`${out}${err}`.trim()));
+				}),
+				addDir: (d) => {
+					const abs = resolve(d);
+					if (!permState.extraDirs.includes(abs)) permState.extraDirs.push(abs);
+					return abs;
+				} }), hidden: true },
 			{ name: "ferry-memory", factory: createMemory(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
@@ -412,6 +427,18 @@ const exit = () => process.exit(process.exitCode ?? 0); // also stops a server t
 if (cmd === "login") await login(rest).then(exit);
 else if (cmd === "logout") logout();
 else if (cmd === "config") config(rest);
+else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | remove <source> | update
+	if (!["install", "remove", "list", "update"].includes(rest[0])) {
+		console.log("usage: ferry pkg install npm:<package>|git:<repo>|<folder>   ferry pkg list   ferry pkg remove <source>   ferry pkg update\n" +
+			"Installs pi extensions, skills and prompt packages for Ferry (needs access to npm or git for remote sources).");
+	} else {
+		ensureAgentDir((readModelsCache() ?? [{ id: "auto" }])[0].id);
+		process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
+		await applyProxy(loadConfig());
+		const { main } = await import("@earendil-works/pi-coding-agent");
+		await main(rest);
+	}
+}
 else if (cmd === "doctor") await doctor().then(exit);
 else if (cmd === "install") {
 	await applyProxy(loadConfig());
@@ -439,6 +466,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry logout                      go back to a Ferry server on this computer
   ferry config                      show the client settings (memory, subagents, approvals, blocked paths...)
   ferry config set <key> <value>    change one, e.g. ferry config set memory false
+  ferry pkg install npm:<package>   add a pi package (extensions, skills, commands); ferry pkg list | remove
   ferry update [file.zip]           install the latest release from GitHub (or a zip you downloaded)
   ferry install [--client-only]     install from an unpacked Ferry folder (--client-only: no local server)
   ferry --pi-help                   all agent options`);

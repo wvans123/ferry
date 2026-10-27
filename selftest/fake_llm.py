@@ -68,12 +68,28 @@ def decide(msgs):
     return ("text", f"READ {n} FILES")
 
 
+def decide_goal(msgs):
+    """A /goal run: write note1..3 over several turns (stopping after each), then report the goal achieved."""
+    calls = [tc["function"]["name"] for m in msgs if m.get("role") == "assistant" for tc in (m.get("tool_calls") or [])]
+    last = msgs[-1]
+    if "goal_update" in calls:
+        return ("text", "GOAL REPORT: all three notes written and checked")
+    writes = calls.count("write")
+    if last.get("role") == "tool":
+        return ("text", f"wrote note{writes}")  # end the turn; Ferry should send the agent on
+    if writes < 3:
+        return ("tool", "write", {"path": f"goal-note{writes + 1}.txt", "content": f"note {writes + 1}\n"})
+    return ("tool", "goal_update", {"status": "achieved", "summary": "three notes written", "evidence": "goal-note1..3.txt exist"})
+
+
 def decide_agent(msgs):
     system = text_of(msgs[0]) if msgs else ""
     system += " ".join(text_of(m) for m in msgs if m.get("role") in ("system", "developer"))
     last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"], default=0)
     tools = [m for m in msgs[last_user:] if m.get("role") == "tool"]  # this request's tool results
     first = text_of(msgs[last_user]) if msgs else ""  # the latest user message picks the scenario
+    if any("GOALTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
+        return decide_goal(msgs)
     if "<ferry_subagent>" in system:  # a subagent's own conversation
         if "SUBRUN" in first:  # a general subagent that runs a command (needs the user's approval)
             if not tools:
@@ -92,6 +108,11 @@ def decide_agent(msgs):
         return ("text", "SAVED: " + text_of(tools[-1]))
     if "MEMTEST-RECALL" in first:
         return ("text", "INDEX HAS test-db" if "[test-db](test-db.md)" in system else "NO MEMORY")
+    if "SUBBGTEST" in first:
+        if not tools:
+            return ("tool", "task", {"agent": "explore", "description": "look around", "background": True,
+                                     "prompt": "List the data folder and read the start of f03.txt."})
+        return ("text", "BG: " + text_of(tools[-1])[:120])
     if "TASKTEST" in first:
         if not tools:
             return ("tool", "task", {"agent": "explore", "description": "look at the data folder",
@@ -109,6 +130,10 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "web_fetch", {"url": "http://127.0.0.1:9100/gated"})
         return ("text", "GATE: " + text_of(tools[-1])[:160])
+    if "IMGTEST" in first:  # the agent reads a picture file; a vision model gets the picture itself
+        if not tools:
+            return ("tool", "read", {"path": "pic.png"})
+        return ("text", "IMG: " + ("picture received" if "[an image]" in text_of(tools[-1]) else "no picture: " + text_of(tools[-1])[:80]))
     if "WEBTEST" in first:
         if not tools:
             return ("tool", "web_search", {"query": "ferry"})
@@ -124,6 +149,12 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "write", {"path": "made-by-agent.txt", "content": "hello\n"})
         return ("text", "EDIT: " + text_of(tools[-1])[:400].replace("\n", " | "))
+    if "JOBTEST" in first:
+        if not tools:
+            return ("tool", "job_start", {"command": "for i in 1 2 3; do echo tick-$i; sleep 0.4; done; echo ticker-done", "name": "ticker"})
+        if len(tools) == 1:
+            return ("tool", "job_output", {"id": 1})
+        return ("text", "JOB: " + text_of(tools[-1]).replace("\n", " | ")[:200])
     if "GENTEST" in first:
         if not tools:
             return ("tool", "task", {"agent": "general", "description": "run a check command",
@@ -142,7 +173,95 @@ def decide_agent(msgs):
     return ("text", "OK")
 
 
+def anthropic_problems(body, headers):
+    """What a strict Messages API would reject in this request."""
+    problems = []
+    if headers.get("x-api-key") != "x":
+        problems.append("wrong x-api-key")
+    if not str(body.get("model", "")).startswith("claude-"):
+        problems.append(f"model {body.get('model')!r}")
+    if "ferry" in body:
+        problems.append("ferry field leaked")
+    msgs = body.get("messages", [])
+    if not msgs or msgs[0].get("role") != "user":
+        problems.append("first message is not a user message")
+    if any(m.get("role") not in ("user", "assistant") for m in msgs):
+        problems.append("role other than user/assistant")
+    if any(a.get("role") == b.get("role") for a, b in zip(msgs, msgs[1:])):
+        problems.append("roles do not alternate")
+    marks = json.dumps(body).count('"cache_control"')
+    if marks > 4:
+        problems.append(f"{marks} cache_control markers")
+    return problems
+
+
+def anthropic_to_openai(body):
+    """The Anthropic request as OpenAI-style messages, so the same decide() drives both."""
+    system = body.get("system")
+    text = system if isinstance(system, str) else " ".join(b.get("text", "") for b in (system or []))
+    out = [{"role": "system", "content": text}]
+    for m in body.get("messages", []):
+        blocks = m["content"] if isinstance(m["content"], list) else [{"type": "text", "text": m["content"]}]
+        if m["role"] == "assistant":
+            calls = [{"id": b["id"], "type": "function", "function": {"name": b["name"], "arguments": json.dumps(b.get("input", {}))}}
+                     for b in blocks if b.get("type") == "tool_use"]
+            out.append({"role": "assistant", "content": " ".join(b.get("text", "") for b in blocks if b.get("type") == "text"),
+                        **({"tool_calls": calls} if calls else {})})
+            continue
+        texts = []
+        for b in blocks:
+            if b.get("type") == "tool_result":
+                c = b.get("content")
+                c = c if isinstance(c, str) else " ".join(x.get("text", "") if x.get("type") == "text" else "[an image]"
+                                                          for x in (c or []) if isinstance(x, dict))
+                out.append({"role": "tool", "tool_call_id": b.get("tool_use_id"), "content": c})
+            elif b.get("type") == "text":
+                texts.append(b["text"])
+            elif b.get("type") == "image":
+                texts.append("[an image]")
+        if texts:
+            out.append({"role": "user", "content": " ".join(texts)})
+    return out
+
+
 class H(BaseHTTPRequestHandler):
+    def anthropic(self, body, raw):
+        problems = anthropic_problems(body, self.headers)
+        if problems:
+            return self.send_json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "; ".join(problems)}})
+        kind, *rest = decide(anthropic_to_openai(body))
+        size = len(raw) // 4
+        marked = '"cache_control"' in json.dumps(body.get("messages", []))
+        usage = {"input_tokens": 10, "cache_read_input_tokens": size - 60 if marked else 0,
+                 "cache_creation_input_tokens": 50 if marked else size - 10, "output_tokens": 0}
+        events = [("message_start", {"type": "message_start", "message": {"id": "msg_1", "type": "message", "role": "assistant",
+                                                                           "model": body["model"], "content": [], "stop_reason": None,
+                                                                           "usage": usage}})]
+        if kind == "text":
+            text = rest[0]
+            events.append(("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}))
+            for i in range(0, len(text), 3):
+                events.append(("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                                       "delta": {"type": "text_delta", "text": text[i:i + 3]}}))
+            stop = "end_turn"
+        else:
+            name, args = rest
+            a = json.dumps(args)
+            events.append(("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {
+                "type": "tool_use", "id": f"toolu_{name}_{len(body['messages'])}", "name": name, "input": {}}}))
+            for part in (a[:12], a[12:]):
+                events.append(("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                                       "delta": {"type": "input_json_delta", "partial_json": part}}))
+            stop = "tool_use"
+        events += [("content_block_stop", {"type": "content_block_stop", "index": 0}),
+                   ("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 7}}),
+                   ("message_stop", {"type": "message_stop"})]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for ev, data in events:
+            self.wfile.write(f"event: {ev}\ndata: {json.dumps(data)}\n\n".encode())
+
     def log_message(self, *a):
         pass
 
@@ -184,6 +303,8 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(raw)
         with open(LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(body, ensure_ascii=False) + "\n")
+        if self.path.endswith("/v1/messages"):
+            return self.anthropic(body, raw)
         bad = [k for k in REJECT if k in body]
         if bad:
             return self.send_json(400, {"error": {"message": f"unsupported parameter: {bad[0]}"}})

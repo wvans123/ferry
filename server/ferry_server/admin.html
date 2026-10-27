@@ -159,6 +159,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
     <a href="#prompts" data-page="prompts">提示词</a>
     <a href="#redaction" data-page="redaction">脱敏</a>
     <a href="#calls" data-page="calls">调用记录</a>
+    <a href="#usage" data-page="usage">用量和费用</a>
     <a href="#settings" data-page="settings">设置</a>
     <div class="grow"></div>
     <button class="btn danger stop" id="stop">停止服务端</button>
@@ -305,6 +306,20 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
     </section>
 
     <!-- calls -->
+    <section data-view="usage" hidden>
+      <h1>用量和费用</h1>
+      <p class="lead">按每次调用的 token 数和模型价格算出来的估算，以服务商的账单为准。价格在 models.toml 里每个模型的 <code>price</code> 设置（美元 / 百万 token），预设里的模型已经填好。</p>
+      <div class="row" style="margin-bottom:12px">
+        <select id="uDays" style="width:auto"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option></select>
+      </div>
+      <div class="grid3" id="uTotal"></div>
+      <div class="card" style="margin-top:14px"><h2>每天</h2><div id="uDaysChart"></div></div>
+      <div class="grid2" style="margin-top:14px">
+        <div class="card tablecard"><h2 style="padding:8px 10px 0">按项目</h2><table><thead><tr><th>项目</th><th class="r">调用</th><th class="r">token</th><th class="r">费用</th></tr></thead><tbody id="uProjects"></tbody></table></div>
+        <div class="card tablecard"><h2 style="padding:8px 10px 0">按模型</h2><table><thead><tr><th>模型</th><th class="r">调用</th><th class="r">token</th><th class="r">缓存命中</th><th class="r">费用</th></tr></thead><tbody id="uModels"></tbody></table></div>
+      </div>
+    </section>
+
     <section data-view="calls" hidden>
       <h1>调用记录</h1>
       <p class="lead">每一次发给模型的请求。只记大小、耗时和用量，不记对话内容；想检查提示词，到"设置"里打开详细记录。</p>
@@ -461,7 +476,7 @@ function show(name) {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   for (const s of document.querySelectorAll("[data-view]")) s.hidden = s.dataset.view !== name;
   for (const a of document.querySelectorAll(".side a")) a.toggleAttribute("aria-current", a.dataset.page === name), a.dataset.page === name && a.setAttribute("aria-current", "page");
-  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, redaction: loadRedaction, calls: loadCalls, settings: loadSettings })[name]?.();
+  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, redaction: loadRedaction, calls: loadCalls, usage: loadUsage, settings: loadSettings })[name]?.();
 }
 addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
 
@@ -688,6 +703,25 @@ $("rdSave").onclick = async () => { try { RD = await api("redaction", "PUT", col
 
 /* ---------- calls ---------- */
 let CALLS = [];
+/* ---------- usage ---------- */
+const tok = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n || 0);
+const usd = (r) => r.priced || r.cost ? "$" + (r.cost < 1 ? r.cost.toFixed(4) : r.cost.toFixed(2)) + (r.priced ? "" : "+") : "未设价格";
+const allIn = (r) => r.input + r.cache_read + r.cache_write;
+async function loadUsage() {
+  const u = await api("usage?days=" + $("uDays").value);
+  const t = u.total;
+  const hit = allIn(t) ? Math.round(t.cache_read / allIn(t) * 100) : 0;
+  $("uTotal").innerHTML = [["费用", usd(t)], ["token（输入 / 输出）", tok(allIn(t)) + " / " + tok(t.output)], ["缓存命中", hit + "%"]]
+    .map(([k, v]) => `<div class="card"><div class="muted" style="font-size:13px">${k}</div><div style="font-size:26px;font-weight:600;margin-top:4px">${esc(v)}</div></div>`).join("");
+  const max = Math.max(...u.days.map((d) => d.cost || allIn(d) / 1e6), 1e-9);
+  $("uDaysChart").innerHTML = u.days.length ? u.days.map((d) => { const v = d.cost || allIn(d) / 1e6;
+    return `<div class="row" style="gap:10px;margin:3px 0;font-size:13px"><span class="mono" style="width:90px">${esc(d.key)}</span><span style="flex:1;background:var(--line);border-radius:3px;height:12px"><span style="display:block;height:12px;border-radius:3px;background:var(--river);width:${Math.max(1, v / max * 100)}%"></span></span><span class="mono" style="width:150px;text-align:right">${usd(d)} · ${tok(allIn(d) + d.output)}</span></div>`; }).join("")
+    : '<p class="muted">这段时间还没有调用。</p>';
+  $("uProjects").innerHTML = u.projects.map((r) => `<tr><td>${esc(r.key)}</td><td class="r num">${r.calls}</td><td class="r num">${tok(allIn(r) + r.output)}</td><td class="r num">${usd(r)}</td></tr>`).join("");
+  $("uModels").innerHTML = u.models.map((r) => `<tr><td>${esc(r.key)}</td><td class="r num">${r.calls}</td><td class="r num">${tok(allIn(r) + r.output)}</td><td class="r num">${allIn(r) ? Math.round(r.cache_read / allIn(r) * 100) : 0}%</td><td class="r num">${usd(r)}</td></tr>`).join("");
+}
+$("uDays").onchange = loadUsage;
+
 async function loadCalls() {
   CALLS = (await api("calls?limit=500")).calls;
   const models = [...new Set(CALLS.map((c) => c.model))];
