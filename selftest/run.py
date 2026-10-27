@@ -243,6 +243,74 @@ def check_agent_features(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_tui(root: Path, work: Path) -> None:
+    """The interactive terminal UI starts, takes a message, shows the answer and the task list (Linux and macOS)."""
+    if WINDOWS:
+        print("  SKIP  F38 交互界面（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    s = Stack(root, work, "agent")
+    seen = b""
+    try:
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.3)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen):
+                    return True
+            return False
+
+        started = wait_for("Ferry v", 60) and wait_for("shift+tab", 20)
+        os.write(fd, b"TODOTEST from the terminal")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        answered = wait_for("TODO: [x] step one", 60)
+        widget = "Tasks (1/2 done)" in plain(seen)
+        os.write(fd, b"\x03")
+        time.sleep(0.3)
+        os.write(fd, b"\x03")
+        time.sleep(1)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        check("F38 交互界面", started and answered and widget,
+              "终端界面能启动、显示权限模式、收发消息、显示任务清单" if started and answered and widget
+              else f"started={started} answered={answered} widget={widget}: {plain(seen)[-300:]!r}")
+    finally:
+        s.close()
+
+
+def check_gateway(root: Path, work: Path) -> None:
+    gate = root / "confirmed.txt"
+    s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
+    try:
+        c0, o0 = s.ferry("doctor", "--no-model")
+        c1, o1 = s.ferry("-p", "TODOTEST: plan it", env_extra={"FERRY_TEST_OPENED_FILE": str(gate)})
+        check("F37 公司网关要先确认", c0 != 0 and "company network gateway" in o0 and c1 == 0 and "[x] step one" in o1
+              and "proxycontrolwarn" in gate.read_text(encoding="utf-8"),
+              "doctor 指出是公司网关在等确认；ferry 启动时自动在浏览器打开确认页，确认后自己接着运行")
+    finally:
+        s.close()
+
+
 def find_browser() -> str:
     """A Chrome/Chromium/Edge for the browser test, or "" (the test is then skipped)."""
     cands = [os.environ.get("FERRY_TEST_BROWSER", ""), r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -252,29 +320,32 @@ def find_browser() -> str:
 
 
 def check_web_browser(root: Path, work: Path) -> None:
-    s = Stack(root, work, "agent", server_env={"FERRY_WEB": "0"})
+    pages = {"FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100"}
+    s = Stack(root, work, "agent", server_env={"FERRY_WEB": "1", "FERRY_TEST_WEB_LOCAL": "1", **pages})
     try:
-        c0, o0 = s.ferry("-p", "WEBTEST: look it up")
-        off_ok = c0 == 0 and "web_search" not in json.dumps(jsonl(s.upstream)[-1].get("tools", []))
-        code, status = s.http("POST", "/v1/ferry/web/fetch", {"url": "http://example.com"})
-        refused = code == 403 and "switched off" in json.dumps(status)
-    finally:
-        s.close()
-    s = Stack(root.parent / (root.name + "-on"), work, "agent", server_env={
-        "FERRY_WEB": "1", "FERRY_TEST_WEB_LOCAL": "1", "FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100"})
-    try:
-        c1, o1 = s.ferry("-p", "WEBTEST: look it up")
-        web = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "web"]
-        check("F35 联网由服务端代办", off_ok and refused and c1 == 0 and "pelican-42" in o1
-              and [a.get("kind") for a in web] == ["search", "fetch"],
-              "关闭时工作电脑看不到联网工具、接口拒绝；打开后搜索和读网页都由服务端完成，调用记录里有两条联网记录")
+        c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)  # default: on this computer
+        on_server = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "web"]
+        client_ok = c1 == 0 and "pelican-42" in o1 and not on_server
+        c2, o2 = s.ferry("-p", "GATETEST: read the gated site", env_extra=pages)
+        gate_ok = c2 == 0 and "company network gateway" in o2
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "config.json").write_text(json.dumps({"web": "server"}), encoding="utf-8")
+        c3, o3 = s.ferry("-p", "WEBTEST: look it up")
+        on_server = [a.get("kind") for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "web"]
+        (s.home / "config.json").write_text(json.dumps({"web": "off"}), encoding="utf-8")
+        s.ferry("-p", "TODOTEST: plan it")
+        off_ok = "web_fetch" not in json.dumps(jsonl(s.upstream)[-1].get("tools", []))
+        (s.home / "config.json").unlink()
+        check("F35 联网工具", client_ok and gate_ok and c3 == 0 and "pelican-42" in o3 and on_server == ["search", "fetch"]
+              and off_ok, "默认在工作电脑上搜索和读网页（服务端没有联网记录）；公司网关要确认的网站会说明去哪确认；"
+              "设成 server 时由服务端代办；设成 off 时没有联网工具")
         browser = find_browser()
         if not browser:
             print("  SKIP  F36 浏览器（这台机器上没有 Chrome / Edge）")
             return
         s.home.mkdir(parents=True, exist_ok=True)
-        root = hasattr(os, "geteuid") and os.geteuid() == 0
-        extra = ["--no-sandbox"] if root or os.environ.get("CI") else []  # CI and root: no Chrome sandbox
+        is_root = hasattr(os, "geteuid") and os.geteuid() == 0
+        extra = ["--no-sandbox"] if is_root or os.environ.get("CI") else []  # CI and root: no Chrome sandbox
         (s.home / "config.json").write_text(json.dumps({"browser": True, "browserHeadless": True,
                                                         "browserPath": browser, "browserArgs": extra}), encoding="utf-8")
         c2, o2 = s.ferry("-p", "BROWSERTEST: open the page", timeout=300)
@@ -594,8 +665,10 @@ def main() -> int:
     print("\n[12/14] 客户端 agent：记忆、子 agent、长输出、任务清单、权限、系统提示、中文路径", flush=True)
     check_agent_features(base / "agent", work)
 
-    print("\n[13/14] 联网（服务端代办）和浏览器", flush=True)
+    print("\n[13/14] 联网、公司网关、浏览器", flush=True)
     check_web_browser(base / "web", work)
+    check_gateway(base / "gateway", work)
+    check_tui(base / "tui", work)
 
     print("\n[14/14] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
     check_install_update(base / "install")

@@ -72,3 +72,14 @@ test("always-allow answers persist per project", () => {
 	assert.ok(P.removeRule(cwd, "allow", "bash(npm test*)"));
 	assert.equal(d("bash", { command: "npm test" }, "default", P.loadRules(cwd)), "ask");
 });
+
+test("web_fetch asks per site, rules cover subdomains", () => {
+	assert.equal(d("web_fetch", { url: "https://github.com/x" }), "ask");
+	assert.equal(d("web_fetch", { url: "https://github.com/x" }, "plan"), "ask"); // not refused in plan mode
+	assert.equal(d("web_search", { query: "x" }), "allow");
+	const rules = { allow: ["web_fetch(github.com)"], ask: [], deny: ["web_fetch(evil.example)"] };
+	assert.equal(d("web_fetch", { url: "https://api.github.com/repos" }, "default", rules), "allow");
+	assert.equal(d("web_fetch", { url: "https://notgithub.com" }, "default", rules), "ask");
+	assert.equal(d("web_fetch", { url: "http://evil.example/a" }, "bypass", rules), "deny");
+	assert.equal(P.hostOf("docs.python.org/3/"), "docs.python.org");
+});

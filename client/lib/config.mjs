@@ -28,6 +28,7 @@ export const DEFAULTS = {
 	memory: true, // remember things across conversations, stored in <FERRY_HOME>/memory
 	subagents: true, // the task tool: hand searches and side tasks to a subagent with a fresh context
 	bigOutputBytes: 8192, // longer command/search output is saved to a file; the model sees start, end and path. 0 = off
+	web: "client", // web_fetch / web_search: "client" (this computer's network), "server" (the Ferry server fetches), "off"
 	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
@@ -39,6 +40,7 @@ export const SETTINGS = {
 	subagents: ["boolean", "let the agent hand searches and side tasks to subagents with their own context"],
 	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
 	permissionMode: ["string", "permission mode at start: default (ask before edits and commands), acceptEdits (file changes go ahead), plan (read-only), bypass (nothing asks). Shift+Tab switches"],
+	web: ["string", "where web_fetch / web_search run: client (this computer, company proxy and gateway rules apply), server (the Ferry server, if its admin page allows), off"],
 	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window"],

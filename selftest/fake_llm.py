@@ -103,6 +103,10 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "mcp__browser__browser_snapshot", {})
         return ("text", "BROWSER: " + ("pelican-42" if "pelican-42" in text_of(tools[-1]) else text_of(tools[-1])[:200]))
+    if "GATETEST" in first:
+        if not tools:
+            return ("tool", "web_fetch", {"url": "http://127.0.0.1:9100/gated"})
+        return ("text", "GATE: " + text_of(tools[-1])[:160])
     if "WEBTEST" in first:
         if not tools:
             return ("tool", "web_search", {"query": "ferry"})
@@ -160,6 +164,11 @@ class H(BaseHTTPRequestHandler):
         if self.path.startswith("/search"):  # a Bing-like results page, for web_search
             return self.send_html('<ol><li class="b_algo"><h2><a href="http://127.0.0.1:9100/page.html">Ferry test page</a>'
                                   '</h2><div class="b_caption"><p>A page about ferries.</p></div></li></ol>')
+        if self.path == "/gated":  # a site the company gateway wants confirmed first
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:9100/proxycontrolwarn?url=gated")
+            self.end_headers()
+            return
         if self.path == "/page.html":
             return self.send_html("<html><head><title>Ferry page</title><script>var x=1;</script></head><body>"
                                   "<h1>Ferry</h1><p>The secret word is <b>pelican-42</b>.</p>"

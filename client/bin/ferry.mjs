@@ -29,9 +29,17 @@ import {
 } from "../lib/config.mjs";
 import { APP_ROOT, findPython, install, startLocalServer, update } from "../lib/setup.mjs";
 import { BIN_DIR, installBundled, toolStatus } from "../lib/toolbins.mjs";
+import { gatewayOf, waitThroughGateway } from "../lib/gateway.mjs";
 
 const PKG = JSON.parse(readFileSync(join(APP_ROOT, "package.json"), "utf8"));
 const VERSION = PKG.version;
+const PI_VERSION = (() => {
+	try {
+		return JSON.parse(readFileSync(join(APP_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"), "utf8")).version;
+	} catch {
+		return "not installed";
+	}
+})();
 const REPO = /github\.com[/:]([^/]+\/[^/.]+)/.exec(PKG.repository?.url ?? "")?.[1] ?? "wvans123/ferry";
 const [cmd, ...rest] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -54,6 +62,11 @@ function notFerry(r) {
 		return "a Cloudflare Access login page answered instead of the Ferry server. Either remove the Access policy from " +
 			"this hostname (the Ferry token already protects it), or create an Access service token and run:\n" +
 			"        ferry login <url> <token> --header \"CF-Access-Client-Id: ...\" --header \"CF-Access-Client-Secret: ...\"";
+	}
+	const gw = gatewayOf(r);
+	if (gw) {
+		return `the company network gateway wants a confirmation first (${gw}). Run ferry: it opens that page in your ` +
+			"browser and continues once you confirm. If the gateway does not allow confirming, ask IT to allow the server address.";
 	}
 	if (r.status >= 300 && r.status < 400) return `the server address redirects to ${r.location || "another page"}; use the final https address`;
 	return `HTTP ${r.status} with a web page instead of the Ferry server: check the address (and the proxy settings)`;
@@ -84,20 +97,26 @@ async function ensureServer(cfg) {
 
 // ---------- commands ----------
 
-async function fetchModels(cfg) {
+async function fetchModels(cfg, waited = false) {
 	try {
 		const r = await getJson(cfg, "/v1/ferry/models", 5000);
+		const gw = !r.json && gatewayOf(r);
+		if (gw && !waited) {
+			const through = await waitThroughGateway(gw, cfg.server,
+				async () => (await getJson(cfg, "/v1/ferry/models", 5000).catch(() => null))?.json === true);
+			if (through) return fetchModels(cfg, true);
+		}
 		if (!r.json) throw new Error(`${notFerry(r)}\n  (run "ferry doctor" for details)`);
 		if (r.status === 200 && r.body.models?.length) {
 			cfg.sessionStore = r.body.sessionStore;
-			cfg.web = r.body.web === true;
+			cfg.serverWeb = r.body.web === true;
 			writeModelsCache(r.body.models);
 			return r.body.models;
 		}
 		if (r.status === 401) throw new Error(cfg.mode === "remote" ? "token rejected: run ferry login again"
 			: "the local server rejected the saved token: restart it");
 	} catch (e) {
-		if (/^(token|the local|a Cloudflare|the server address|HTTP \d)/.test(e.message)) throw e;
+		if (/^(token|the local|a Cloudflare|the server address|the company|HTTP \d)/.test(e.message)) throw e;
 		// offline or server down: fall back to the last list we saw
 	}
 	return readModelsCache() ?? [{ id: "main" }];
@@ -142,7 +161,7 @@ async function doctor() {
 	const ok = (m) => console.log(`  OK    ${m}`);
 	const info = (m) => console.log(`  info  ${m}`);
 	const bad = (m) => { console.log(`  FAIL  ${m}`); process.exitCode = 1; };
-	console.log(`Ferry ${VERSION}, Node ${process.version}, ${process.platform}, settings in ${FERRY_HOME}`);
+	console.log(`Ferry ${VERSION} (agent engine pi ${PI_VERSION}), Node ${process.version}, ${process.platform}, settings in ${FERRY_HOME}`);
 	const bash = findBash();
 	info(`commands run with: ${bash ? `bash (${bash})` : "PowerShell (Git Bash not found)"}`);
 	installBundled(APP_ROOT);
@@ -191,7 +210,9 @@ async function doctor() {
 		ok(`token accepted; the server picks the model: ${r.body.models.map(label).join(", ")}`);
 		const store = { disk: "cached on disk", memory: "cached in memory only", none: "not kept (full upload every turn)" };
 		info(`conversation on the server: ${store[r.body.sessionStore] ?? "cached"}; the full history stays on this computer`);
-		info(r.body.web ? "web access: on (web_fetch and web_search run on the server)" : "web access: off (switch it on in the server's admin page if you need it)");
+		const webSetting = cfg.web ?? "client";
+		info(webSetting === "server" ? (r.body.web ? "web tools: on the server" : "web tools: set to run on the server, but the server has web access off")
+			: webSetting === "off" ? "web tools: off" : "web tools: on this computer, through its normal network (ferry config set web server|off to change)");
 		for (const m of r.body.models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);
 		}
@@ -313,6 +334,10 @@ function config(args) {
 		} else if (spec[0] === "list") {
 			value = raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 		} else value = raw;
+		if (key === "web" && !["client", "server", "off"].includes(value)) {
+			console.error("web is one of: client, server, off");
+			return process.exit(2);
+		}
 		if (key === "permissionMode" && !["default", "acceptEdits", "plan", "bypass"].includes(value)) {
 			console.error("permissionMode is one of: default, acceptEdits, plan, bypass");
 			return process.exit(2);
@@ -349,7 +374,7 @@ else if (cmd === "update") {
 		process.exitCode = 1;
 	});
 	exit();
-} else if (cmd === "--version" || cmd === "version") console.log(VERSION);
+} else if (cmd === "--version" || cmd === "version") console.log(rest.includes("--all") ? `ferry ${VERSION}\npi ${PI_VERSION}` : VERSION);
 else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
 	console.log(`Ferry ${VERSION}
 

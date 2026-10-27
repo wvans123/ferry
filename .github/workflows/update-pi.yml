@@ -1,0 +1,95 @@
+name: follow pi updates
+
+# Every Monday (or by hand): if pi (the agent engine inside Ferry) has a new version, move Ferry to it, run every
+# test on Linux and Windows, and only when all pass, commit to main and publish a Ferry release with it.
+# If a test fails, nothing changes and GitHub e-mails the repository owner about the failed run.
+on:
+  schedule:
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "pi version (empty = latest)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      pi: ${{ steps.v.outputs.pi }}
+      new: ${{ steps.v.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: v
+        run: |
+          want="${{ github.event.inputs.version }}"
+          [ -n "$want" ] || want=$(npm view @earendil-works/pi-coding-agent version)
+          have=$(node -p "require('./package.json').dependencies['@earendil-works/pi-coding-agent']")
+          echo "pi $have -> $want"
+          echo "pi=$want" >> "$GITHUB_OUTPUT"
+          if [ "$want" != "$have" ]; then echo "new=true" >> "$GITHUB_OUTPUT"; else echo "new=false" >> "$GITHUB_OUTPUT"; fi
+
+  test:
+    needs: check
+    if: needs.check.outputs.new == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: node scripts/bump_pi.mjs ${{ needs.check.outputs.pi }}
+      - run: npm install
+      - run: python -m pip install -e server pytest
+      - name: unit tests
+        run: |
+          python -m pytest -q server/tests
+          node --test "client/test/*.test.mjs"
+      - name: end-to-end self-test
+        run: python selftest/run.py
+
+  publish:
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: bump
+        run: echo "ferry=$(node scripts/bump_pi.mjs ${{ needs.check.outputs.pi }})" >> "$GITHUB_OUTPUT"
+      - run: npm install
+      - name: commit to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Ferry ${{ steps.bump.outputs.ferry }}: pi ${{ needs.check.outputs.pi }}"
+          git push origin HEAD:main
+      - name: build the offline Windows package
+        run: python scripts/build_bundle.py --platform win
+      - name: publish
+        run: |
+          gh release create "v${{ steps.bump.outputs.ferry }}" dist/ferry-windows-*.zip --target main \
+            --title "Ferry v${{ steps.bump.outputs.ferry }}" \
+            --notes "pi (the agent engine) updated to ${{ needs.check.outputs.pi }}. All tests passed on Linux and Windows before release."

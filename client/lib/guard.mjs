@@ -1,6 +1,6 @@
 // The permission gate: every tool call passes through decide() (permissions.mjs) before it runs.
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
-import { addRule, decide, loadRules, MODE_LABEL, MODES, prefixRule, removeRule, ruleFiles } from "./permissions.mjs";
+import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule, removeRule, ruleFiles } from "./permissions.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
 const state = { mode: "default", queue: Promise.resolve() };
@@ -16,16 +16,18 @@ const short = (s, n = 300) => (s.length > n ? `${s.slice(0, n)}...` : s);
 async function ask(ui, verdict, event, cwd, who) {
 	const tool = event.toolName;
 	const input = event.input ?? {};
-	const detail = short(String(input.command ?? input.path ?? JSON.stringify(input)));
+	const detail = short(String(input.command ?? input.path ?? input.url ?? JSON.stringify(input)));
 	const head = verdict.danger ? `Careful: this ${verdict.danger}.\n\n` : verdict.outside ? "This is outside the project folder.\n\n" : "";
 	const isShell = tool === "bash" || tool === "powershell";
 	const isEdit = tool === "edit" || tool === "write";
 	const rules = isShell ? [...new Set((verdict.pending ?? verdict.segments ?? [input.command ?? ""]).map((s) => prefixRule(tool, s)))]
+		: tool === "web_fetch" ? [`web_fetch(${hostOf(input.url)})`] // one site
 		: [tool.startsWith("mcp__") ? `${tool.split("__").slice(0, 2).join("__")}__*` : tool]; // a whole MCP server
+	const scope = tool === "web_fetch" ? "user" : "project"; // a site you trust, you trust everywhere
 	const options = ["Allow once"];
 	if (!verdict.danger && !verdict.outside) {
 		if (isEdit) options.push("Allow all file changes from now on (auto-edit mode)");
-		else options.push(`Always allow in this project: ${rules.join(", ")}`);
+		else options.push(scope === "user" ? `Always allow this site: ${hostOf(input.url)}` : `Always allow in this project: ${rules.join(", ")}`);
 	}
 	options.push("Deny", "Deny, and tell the agent what to do instead");
 	const choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options);
@@ -36,7 +38,7 @@ async function ask(ui, verdict, event, cwd, who) {
 		return undefined;
 	}
 	if (choice?.startsWith("Always allow")) {
-		for (const r of rules) addRule(cwd, "allow", r);
+		for (const r of rules) addRule(cwd, "allow", r, scope);
 		ui.notify(`Saved: ${rules.join(", ")} (see /permissions)`, "info");
 		return undefined;
 	}

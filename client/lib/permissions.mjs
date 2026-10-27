@@ -30,7 +30,17 @@ const EDIT = new Set(["edit", "write"]);
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
 // tools that only look, or that are fenced in by themselves (memory: its own folder; task: the subagent's
 // tools are checked one by one; web_*: the server's own allow list)
-const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "web_fetch", "web_search"]);
+const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "web_search"]);
+// reads, but from a site the user may not want contacted: asked per site (like Claude Code's WebFetch), also in plan mode
+const NET = new Set(["web_fetch"]);
+
+export function hostOf(url) {
+	try {
+		return new URL(/^https?:\/\//i.test(String(url)) ? String(url) : `https://${url}`).hostname.toLowerCase();
+	} catch {
+		return "";
+	}
+}
 const WIN = process.platform === "win32";
 
 // ---------- shell commands ----------
@@ -184,6 +194,10 @@ function ruleMatches(rule, tool, subject) {
 	if (!toolOk) return false;
 	if (r.pattern === undefined || r.pattern === "*" || r.pattern === "") return true;
 	if (subject === undefined) return false;
+	if (NET.has(tool)) { // web_fetch(github.com) covers github.com and its subdomains
+		const p = r.pattern.trim().toLowerCase().replace(/^\*\./, "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+		return subject === p || subject.endsWith(`.${p}`) || globToRegex(p, false).test(subject);
+	}
 	return globToRegex(r.pattern.trim(), !SHELL.has(tool)).test(subject.trim());
 }
 
@@ -272,14 +286,14 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	const cmd = shell ? String(input.command ?? "") : "";
 	const segments = shell ? splitCommand(cmd) : [];
-	const subject = shell ? cmd : relPath(cwd, input.path);
+	const subject = shell ? cmd : NET.has(tool) ? hostOf(input.url) : relPath(cwd, input.path);
 	const any = (list) => list.find((r) => (shell ? segments.some((s) => ruleMatches(r, tool, s)) || ruleMatches(r, tool, cmd)
 		: ruleMatches(r, tool, subject)));
 	const denied = any(rules.deny);
 	if (denied) return { action: "deny", reason: `Not allowed by the rule ${denied}` };
 
 	const readOnly = shell ? segments.every(isReadOnlySegment) : READ_ONLY.has(tool) || readOnlyTool(tool);
-	if (mode === "plan" && !readOnly) {
+	if (mode === "plan" && !readOnly && !NET.has(tool)) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
 			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
 	}

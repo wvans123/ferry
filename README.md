@@ -14,7 +14,7 @@ A Cursor-style coding agent for locked-down Windows PCs: the CLI does the work l
 ```
 C:\my-project> ferry
 
-  Ferry v0.10.0  server on this computer
+  Ferry v0.11.0  server on this computer
   Files and history stay on this machine. The server builds the prompt and calls the model.
   memory: 3 (/memory)  ·  subagents on  ·  ferry config to change
 
@@ -75,7 +75,7 @@ ferry
 |---|---|---|
 | **文件和命令** | `read` `edit` `write` 读写文件；`bash`（没有 Git Bash 时用 PowerShell）执行命令，命令在工作电脑上跑，和你自己在 cmd 里敲一样；`grep` `find` `ls` 搜索和浏览（自带 ripgrep 和 fd） | pi |
 | **权限** | 四种模式，Shift+Tab 切换，底栏显示当前模式：**默认**（改文件、执行命令前问）、**自动改文件**（项目里的改动不问，命令照问）、**只读规划**（只能读和搜，先出方案）、**全部放行**。确认框里可以选"以后都允许这类命令"（比如 `npm test` 开头的都放行，按项目记住）。`git status`、`dir`、`rg` 这类只读命令不问；删目录、`git push --force`、`reset --hard` 这类危险操作除了全部放行模式都会问，并说明危险在哪；写项目文件夹以外的地方总要确认。规则也可以手写，见下文 | Claude Code 的权限模式、Codex 的审批策略 |
-| **联网** | `web_search` 搜索、`web_fetch` 读网页。工作电脑上不了外网，所以由服务端代为访问，只把文字传回来。服务端管理页"设置 → 联网"里打开，默认关闭，可以只放行指定网站 | Cursor、Claude Code 的网页工具 |
+| **联网** | `web_search` 搜索（Bing）、`web_fetch` 读网页，默认**在工作电脑上执行**，和浏览器一样走公司代理，公司网关的规则照样生效。读网页按网站询问，可以选"以后都允许这个网站"。网关要求先确认的网站，agent 会告诉你去浏览器确认哪个地址，不会绕过。`ferry config set web server` 改为由服务端代办（服务端管理页还要打开联网），`off` 关闭 | Claude Code 的 WebFetch / WebSearch |
 | **浏览器** | `ferry config set browser true` 后，agent 能驱动工作电脑上的 Edge：打开网页、点击、填表、读页面（微软的 [Playwright MCP](https://github.com/microsoft/playwright-mcp)，安装包里带好，不下载浏览器）。走工作电脑自己的网络 | Claude in Chrome、Codex 的浏览器工具 |
 | **任务清单** | 多步任务时模型先列计划，输入框上方显示进度：`[x]` 完成、`[>]` 进行中 | Claude Code 的 TodoWrite |
 | **记忆** | 跨对话记住你的偏好、纠正、项目里的决定。分"你个人"（所有项目）和"这个项目"两层，存在工作电脑 `%USERPROFILE%\.ferry\memory`，一条一个 Markdown 文件。每次对话开头只带目录（每层最多 200 行），用到哪条再读哪条。说"记住……"或"忘掉……"即可；`/memory` 查看 | Claude Code 的 auto memory |
@@ -236,7 +236,9 @@ flowchart LR
 | 子 agent | 在同一个进程里另起一个 pi 会话（内存里，不存盘），作为一个独立对话同步到服务端；审批对话框借用主窗口 | `client/lib/subagent.mjs` |
 | 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |
 | 系统提示 | 用 Ferry 自己的开场和工作方式代替 pi 的（不再提 pi 文档，避免模型去翻 agent 自己的配置），保留 pi 的工具说明，加上操作系统、shell、日期、是否 git 仓库 | `client/lib/prompt.mjs` |
-| 联网 | 服务端代为访问；只允许 http(s)，拒绝本机和内网地址（管理页信任本机来的请求，不能让网页请求绕到它），每次跳转都重新检查；可设网站白名单 | `server/ferry_server/web.py` |
+| 联网 | 默认在客户端执行，走公司代理，识别网关的确认页（按地址和页面文字）并报告，不点击通过；可选服务端代办：只允许 http(s)，拒绝本机和内网地址（管理页信任本机来的请求，不能让网页请求绕到它），每次跳转都重新检查，可设网站白名单 | `client/lib/web.mjs`、`server/ferry_server/web.py` |
+| 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，也会重新打开并提示重发 | `client/lib/gateway.mjs` |
+| 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 公司代理 | 客户端所有请求统一走代理（环境变量或配置项），支持 NO_PROXY | `client/lib/config.mjs` |
 | 好装、好更新 | 离线安装包 + `ferry install`；`ferry update` 从 GitHub 发布页取最新版；没登录远程服务端时自动在本机启动服务端 | `client/lib/setup.mjs` |
 | 不重复造轮子 | Agent 循环、工具和终端界面直接用开源的 [pi](https://github.com/earendil-works/pi)（MIT），通过它公开的 `main()` 和扩展接口嵌入，不 fork 内核 | `client/bin/ferry.mjs` |
@@ -255,7 +257,7 @@ flowchart LR
 | 记忆 | Memories（服务端生成，需批准） | 客户端文件，模型用 `memory` 工具读写，你可以直接改 |
 | 子 agent | 有 | `task` 工具，内置 explore / general，可自定义 |
 | 权限 | 有 | 四种模式、按项目记住的规则、只读命令白名单、危险命令总是问（参考 Claude Code） |
-| 读网页、搜索 | 服务端执行 | 服务端执行，默认关闭 |
+| 读网页、搜索 | 服务端执行 | 默认在工作电脑上执行（受公司网关管），可选服务端代办 |
 
 ## 开发
 
@@ -263,12 +265,15 @@ flowchart LR
 git clone https://github.com/wvans123/ferry && cd ferry
 npm ci
 pip install -e server pytest
-pytest server/tests            # 单元测试
+pytest server/tests            # 服务端单元测试
+node --test "client/test/*.test.mjs"   # 客户端单元测试（权限、联网）
 python selftest/run.py         # 端到端：假模型 + 服务端 + 客户端 + 假代理，跑完 GOAL.md 里的全部检查，不需要 Key
 node client/bin/ferry.mjs      # 直接从源码运行
 ```
 
 每次推送，GitHub Actions 在 Linux 和 Windows 上各跑一遍；main 上 `package.json` 的版本号变了，测试通过后自动打包 Windows 安装包并发布，`ferry update` 就能取到。
+
+**跟着 pi 更新**：每周一自动检查 pi 有没有新版本（`.github/workflows/update-pi.yml`，也可以在 Actions 页面手动运行，指定版本）。有新版本就换上，在 Linux 和 Windows 上跑全部测试，都通过才提交到 main 并发布 Ferry 新版本（补丁号加 1）；没通过什么都不改，GitHub 会发邮件通知。`ferry --version --all` 显示正在用的 pi 版本。
 
 ## 目录
 
@@ -286,7 +291,7 @@ docs/       设计说明（DESIGN.md）、上下文和记忆方案（CONTEXT-AND
 
 ## 离商业级还差什么
 
-v0.10 是一个可以自用、可以演示的原型：37 个单元测试（服务端 31、客户端权限 6）和 37 项端到端测试覆盖。离商业产品还差下面这些：
+v0.11 是一个可以自用、可以演示的原型：41 个单元测试（服务端 31、客户端 10）和 39 项端到端测试覆盖。离商业产品还差下面这些：
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|
@@ -301,7 +306,7 @@ v0.10 是一个可以自用、可以演示的原型：37 个单元测试（服�
 ## 限制
 
 - 脱敏默认关闭，在管理页打开。打开后也只有词表和正则里的内容会被替换；没有列入的信息仍会发给模型。脱敏是降低风险，不是保证。
-- 联网工具让工作电脑经你的服务端访问外网，绕开了公司网关对这些网址的检查。打开前请确认公司规定允许。
+- 联网默认在工作电脑上执行、受公司网关管。改成服务端代办（`web = server`）等于让工作电脑经你的服务端访问外网，绕开了公司网关对这些网址的检查，打开前请确认公司规定允许。
 - 服务端在处理请求时能看到完整会话原文（`session_store = "none"` 时处理完就丢），所以服务端本身必须可信，并只通过 HTTPS 访问。
 - 还没在真实的公司电脑、真实模型和公司代理下验证过。
 

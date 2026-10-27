@@ -27,11 +27,12 @@ function style(webTools) {
 		"- Never print secrets, passwords or keys you come across.",
 		"- Be concise. Reply in the language the user writes in. Show file paths clearly.",
 		"",
-		"Network: this computer usually cannot reach the internet directly (a company gateway blocks it). Do not use curl,",
-		"wget, Invoke-WebRequest or other commands to fetch web pages or downloads.",
+		"Network: commands on this computer often cannot reach the internet (a company proxy or gateway sits in",
+		"between), so do not use curl, wget, Invoke-WebRequest or similar to fetch web pages or downloads.",
 		webTools
-			? "To read a web page or search the web, use web_fetch and web_search: they run on the Ferry server, which has internet access."
-			: "You have no web access in this session; if you need information from the internet, say so and ask the user.",
+			? "To read a web page or search the web, use web_fetch and web_search. If one reports that the company gateway " +
+				"wants a confirmation, tell the user which address to confirm; never try to get around the gateway."
+			: "You have no web tools in this session; if you need information from the internet, say so and ask the user.",
 	].join("\n");
 }
 

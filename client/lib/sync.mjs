@@ -8,6 +8,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { PROTOCOL, serverHeaders } from "./config.mjs";
+import { gatewayPage, openInBrowser } from "./gateway.mjs";
+
+let lastOpened = 0;
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const SALT = randomUUID();
@@ -69,6 +72,15 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (res.status === 401) throw new FerryError("Ferry token rejected by the server. Run: ferry login <server> <token>");
 		if (res.status === 426) throw new FerryError(`Ferry client and server versions do not match: ${await res.text()}`);
 		if (!res.headers.get("content-type")?.includes("json")) {
+			const loc = res.headers.get("location") ?? "";
+			if (gatewayPage(loc)) { // the gateway's confirmation ran out mid-session
+				if (Date.now() - lastOpened > 60000) {
+					lastOpened = Date.now();
+					openInBrowser(loc);
+				}
+				throw new FerryError("The company network gateway wants a confirmation again. It is open in your browser " +
+					`(${loc}): confirm there, then send your message again.`);
+			}
 			throw new FerryError(`Ferry sync failed: HTTP ${res.status} from something that is not the Ferry server ` +
 				'(a login page or proxy in between?). Run "ferry doctor".');
 		}

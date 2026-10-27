@@ -218,6 +218,8 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 
 系统提示变化（记忆更新、工具变化）由 pi 以增量的方式记进对话，第一条系统消息不变，所以 Ferry 的增量同步不受影响。
 
+跟着 pi 更新：Ferry 不 fork pi，只依赖它公开的接口（`main()` 的 `extensionFactories`、扩展事件、SDK）。`update-pi.yml` 每周把依赖换成 pi 最新版，跑全部测试（含伪终端里的界面冒烟测试 F38），通过才发布。接口如果有不兼容的改动，测试会失败，发布就不会发生。
+
 ## 16. 路线图
 
 1. Claude 原生接口：服务端把 OpenAI 格式翻译成 Anthropic Messages API，加上提示词缓存和思考过程。
