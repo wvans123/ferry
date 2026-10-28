@@ -165,7 +165,8 @@ ferry doctor
 | Enter | 发送；Shift+Enter 或 Ctrl+J 换行 |
 | **Shift+Tab** | 切换权限模式（见下文） |
 | Esc | 打断 agent 正在做的事 |
-| Ctrl+C | 清空输入框；连按两次退出 |
+| Ctrl+C | 清空输入框；两秒内再按一次退出（Ctrl+D 也能退出） |
+| `?` | 只输入一个问号回车：显示命令和快捷键 |
 | Ctrl+O / Ctrl+T | 展开或收起工具输出 / 模型的思考过程 |
 | Ctrl+L | 选模型 |
 | `/` | 列出斜杠命令 |
@@ -203,6 +204,7 @@ ferry doctor
 
 - **`/rewind`**：选你之前发的一条消息，回到它发出之前。可以选只退对话、只退文件，或两样一起退（像 Claude Code）。那条消息会放回输入框，改一改再发。退回去的那段对话还留在记录里。文件只管 agent 用 edit/write 改的，命令造成的改动请用 git。
 - **`/memory`** 不带内容是查看，带内容是存一条（默认存在这个项目；`/memory user 内容` 存到所有项目）。平时直接说"记住……"也行。
+- 底栏的 `23%/500k (auto)`：上下文用了 23%，上限 500k；`(auto)` 表示快满时自动写摘要压缩。右边的 `auto` 是模型名，意思是"由服务端选模型"（管理页里设的默认模型）。
 - **`/context 400k`** 改当前模型的上下文长度，马上生效并记住；`/context auto` 回到服务端的设置。上下文越大，压缩前能留的历史越多，但每次请求越贵。不能超过模型本身支持的长度。
 
 pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`……）不再列出，用不上。写代码用的 `/init`、`/review`、`/commit`、`/test` 等放在 [examples/commands/](examples/commands/)，需要的话拷进 `%USERPROFILE%\.ferry\commands\`。自己写命令见[自己动手扩展](#自己动手扩展)。
@@ -322,7 +324,7 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry`，它会在浏览器里打开确认页；长期办法是请 IT 加白名单 |
 | `cannot reach the server` | 浏览器能打开但 ferry 连不上，通常是浏览器走了公司代理。执行 `setx HTTPS_PROXY http://代理:端口`，然后重开 cmd |
 | `unable to get local issuer certificate` | 公司代理会解开 HTTPS 再加密。把公司根证书导出成 .pem，执行 `setx NODE_EXTRA_CA_CERTS C:\路径\证书.pem` |
-| `The Ferry server did not get this request: ...` | 请求在半路被挡了，后面那句会说是谁：**Cloudflare 的机器人防护**（按提示在 Cloudflare 后台关掉 Bot Fight Mode，或给 Ferry 的域名加一条跳过规则）、**公司网关**（Ferry 会在浏览器里打开服务端地址，网关的确认页会出现在那里，确认后重发）、或公司代理。服务端的调用记录里看不到这类请求 |
+| `The Ferry server did not get this request: ...` | 请求在半路被挡了，服务端的调用记录里看不到。详情记在 `%USERPROFILE%\.ferry\logs\blocked.log`；`ferry doctor --upload` 测多大的上传能通过（小的能过、大的不行，就按它的提示把 `chunkBytes` 调小）。后面那句会说是谁：**Cloudflare 的机器人防护**（按提示在 Cloudflare 后台关掉 Bot Fight Mode，或给 Ferry 的域名加一条跳过规则）、**公司网关**（Ferry 会在浏览器里打开服务端地址，网关的确认页会出现在那里，确认后重发）、或公司代理。服务端的调用记录里看不到这类请求 |
 | `a Cloudflare Access login page answered` | 服务端地址前挡着 Cloudflare 的登录页，见 [DEPLOY-MAC.md](docs/DEPLOY-MAC.md#关于那个-cloudflare-登录页) |
 | `token rejected` | 令牌不对或换过了。到管理页复制新的登录命令 |
 | `HTTP 502 / 530` | 服务端那台电脑睡眠了，或者服务端、cloudflared 没在运行 |

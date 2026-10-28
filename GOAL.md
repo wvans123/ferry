@@ -49,6 +49,7 @@
 | F44 | MCP 导入和查看 | `ferry mcp import` 从别的应用的配置文件导入（不支持的 SSE 说明原因跳过）；`ferry mcp list` 列出自己的和项目的服务器 |
 | F45 | 项目自带的 MCP | 项目 `.ferry/mcp.json` 里的服务器先问一次，同意后 agent 能调用它的工具，答复记住 |
 | F46 | 读以前的对话 | agent 用 `past_conversations` 搜到另一个对话并读出里面的内容 |
+| F47 | 接着以前的对话只传新内容 | 重开 ferry 接着同一个对话，服务端还有的消息只发引用（上传量不到第一次的 30%）；`ferry doctor --upload` 测出多大的上传能通过 |
 | F24 | 安装和更新 | `ferry install` 后命令可用；`ferry update` 从（模拟的）GitHub 发布页下载新版本并切换；再次更新提示已是最新；保留新旧两个版本 |
 
 另外手动验证过的交互界面（模拟终端）：

@@ -212,15 +212,18 @@ export function createJobs(deps = { todoText: () => "" }) {
 					if (ctx.hasUI) return ctx.ui.notify(head, "info");
 					return process.stdout.write(`${head}\n${all.map(describeJob).join("\n")}\n`);
 				}
+				// Esc or "Back" goes one level up; from the list, back to the conversation
 				for (;;) {
-					const pick = await ctx.ui.select(`${head}\n\nSubagents and background commands (pick one):`, [...all.map(describeJob), "Done"]);
+					const pick = await ctx.ui.select(`${head}\n\nSubagents and background commands (pick one; Esc: back to the conversation):`,
+						[...all.map(describeJob), "Back to the conversation"]);
 					const job = all.find((j) => pick === describeJob(j));
 					if (!job) return;
-					const what = await ctx.ui.select(describeJob(job), job.status === "running" ? ["Show output", "Stop it", "Back"] : ["Show output", "Back"]);
-					if (what === "Stop it") stopJob(job);
-					if (what === "Show output") {
-						ctx.ui.notify(job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), 60) || "(no output)", "info");
-						return;
+					for (;;) {
+						const out = job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), 40) || "(no output yet)";
+						const what = await ctx.ui.select(`${describeJob(job)}\n\n${out}\n`,
+							job.status === "running" ? ["Refresh", "Stop it", "Back to the list"] : ["Back to the list"]);
+						if (what === "Stop it") stopJob(job);
+						if (what !== "Refresh" && what !== "Stop it") break;
 					}
 				}
 			},

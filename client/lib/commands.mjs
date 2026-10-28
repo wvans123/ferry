@@ -30,7 +30,7 @@ Information    /context [size]  how full the context is; with a size (400k, 1m, 
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
 
 Keys           Shift+Tab   permission mode: ask first > auto-edit (file changes go ahead) > plan (read only) > allow all
-               Esc  stop the agent        Ctrl+C  clear the input (twice: quit)       Ctrl+D  quit
+               Esc  stop the agent        Ctrl+C  clear the input (twice: quit)       Ctrl+D  quit      ?  this help
                Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
                Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
                @file  attach a file       !command  run a command yourself (its output goes to the agent)
@@ -117,6 +117,13 @@ export function createCommands(cfg, deps) {
 			const secs = (Date.now() - started) / 1000;
 			if (ctx?.hasUI && started && cfg.notify !== false && secs >= (cfg.notifyAfterSeconds ?? 30)) notifyDone(secs);
 			started = 0;
+		});
+
+		// "?" on its own shows the help, like Claude Code
+		pi.on("input", (event, ctx) => {
+			if (String(event.text ?? "").trim() !== "?") return { action: "continue" };
+			tell(ctx, HELP);
+			return { action: "handled" };
 		});
 
 		pi.registerCommand("help", {

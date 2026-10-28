@@ -36,7 +36,7 @@ from .usage import cost as usage_cost
 from .pool import RETRY_STATUSES, Pool, groups
 from .prompt import adapt_params, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message, restore_cache_marks
 from .redact import Redactor
-from .store import BaseMismatch, Store
+from .store import BaseMismatch, MissingBlobs, Store
 from .stream import restore_message, restore_sse
 
 
@@ -176,7 +176,8 @@ def create_app(cfg: Config) -> FastAPI:
         if shared.get(d.id):
             auto["providers"] = len(shared[d.id])
             auto["contextWindow"] = min(auto["contextWindow"], *(cfg.models[i].context_window for i in shared[d.id]))
-        return {"models": listed, "sessionStore": cfg.session_store, "web": cfg.web_enabled}
+        return {"models": listed, "sessionStore": cfg.session_store, "web": cfg.web_enabled,
+                "features": ["refs"] if cfg.session_store != "none" else []}
 
     async def web_call(request: Request, kind: str):
         from . import web
@@ -266,6 +267,17 @@ def create_app(cfg: Config) -> FastAPI:
         live.store.put_part(key(request, upload), seq, await request.body())
         return {"ok": True}
 
+    @app.post("/v1/ferry/have")
+    async def have(request: Request):
+        """After a restart or /resume the client asks which messages the server still has, and sends only the rest."""
+        hashes = [str(h) for h in (json.loads(await request.body() or b"{}").get("hashes") or [])][:20000]
+        return {"have": live.store.have(request.state.user or "", hashes)}
+
+    @app.post("/v1/ferry/probe")
+    async def probe(request: Request):
+        """ferry doctor --upload: how big an upload gets through (the body is read and thrown away)."""
+        return {"bytes": len(await request.body())}
+
     @app.post("/v1/ferry/commit")
     async def commit(request: Request, conv: str, base: int, base_hash: str = "", upload: str = "", parts: int = 0):
         try:
@@ -278,9 +290,12 @@ def create_app(cfg: Config) -> FastAPI:
             live.store.drop_sessions()
             write(audit_log, event="test_drop")
         try:
-            count, h = live.store.commit(key(request, conv), base, base_hash, blob.get("append") or [], blob.get("tools"))
+            count, h = live.store.commit(key(request, conv), base, base_hash, blob.get("append") or [], blob.get("tools"),
+                                         owner=request.state.user or "", keep_blobs=cfg.session_store != "none")
         except BaseMismatch as e:
             return JSONResponse({"error": "base mismatch", "count": e.count, "hash": e.hash}, status_code=409)
+        except MissingBlobs as e:
+            return JSONResponse({"error": "missing messages", "missing": e.missing[:50]}, status_code=409)
         write(audit_log, event="commit", user=request.state.user, conv=conv[:12], base=base,
               appended=len(blob.get("append") or []), count=count, upload_bytes=len(raw), parts=parts)
         return {"count": count, "hash": h}

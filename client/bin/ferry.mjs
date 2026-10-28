@@ -112,6 +112,7 @@ async function fetchModels(cfg, waited = false) {
 		if (!r.json) throw new Error(`${notFerry(r)}\n  (run "ferry doctor" for details)`);
 		if (r.status === 200 && r.body.models?.length) {
 			cfg.sessionStore = r.body.sessionStore;
+			cfg.features = r.body.features ?? [];
 			cfg.serverWeb = r.body.web === true;
 			writeModelsCache(r.body.models);
 			return r.body.models;
@@ -157,6 +158,37 @@ async function login(args) {
 
 function logout() {
 	console.log(`Using the Ferry server on this computer again (${saveConfig({ server: undefined, token: undefined })})`);
+}
+
+/** `ferry doctor --upload`: send plain filler text of growing sizes, to see what the network in between lets through. */
+async function uploadTest(cfg, ok, bad, info) {
+	info("upload test: plain filler text, thrown away by the server");
+	let biggest = 0;
+	for (const kb of [16, 64, 256, 512, 900]) {
+		const body = "ferry upload test ".repeat(Math.ceil((kb * 1024) / 18)).slice(0, kb * 1024);
+		try {
+			const res = await fetch(`${cfg.server}/v1/ferry/probe`, { method: "POST", body, redirect: "manual",
+				headers: serverHeaders(cfg, { "Content-Type": "application/octet-stream" }), signal: AbortSignal.timeout(60000) });
+			if (res.status === 404) return info("this server is too old for the upload test (update it)");
+			const json = res.headers.get("content-type")?.includes("json");
+			if (res.ok && json) {
+				ok(`${kb} KB gets through`);
+				biggest = kb;
+				continue;
+			}
+			bad(`${kb} KB: ${json ? `HTTP ${res.status} from the Ferry server` : whoAnswered({ status: res.status, headers: res.headers, body: await res.text() })}`);
+		} catch (e) {
+			bad(`${kb} KB: ${e.cause?.code ?? e.message}`);
+		}
+		break;
+	}
+	if (biggest && biggest < 900) {
+		info(`bigger requests are stopped on the way. Ferry splits uploads into ${cfg.chunkBytes / 1024} KB parts; make them smaller: ` +
+			`ferry config set chunkBytes ${Math.max(8, biggest / 2) * 1024}`);
+	} else if (biggest === 900) {
+		info("sizes are not the problem. If requests are still stopped, something in the way objects to what they contain " +
+			"(a company content filter): ask IT. Ferry does not disguise what it sends.");
+	}
 }
 
 async function doctor() {
@@ -222,7 +254,8 @@ async function doctor() {
 	} catch (e) {
 		return bad(`models request failed: ${e.message}`);
 	}
-	if (rest.includes("--no-model")) return info("skipped asking the models (--no-model)");
+	if (rest.includes("--upload")) await uploadTest(cfg, ok, bad, info);
+	if (rest.includes("--no-model") || rest.includes("--upload")) return info("skipped asking the models");
 	info("asking each model for a two-word answer (a few tokens)...");
 	try {
 		const res = await fetch(`${cfg.server}/v1/ferry/check`, {
@@ -513,6 +546,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry -c / ferry -r               continue the last conversation / pick one to resume
   (inside: /help lists the commands and keys; Shift+Tab switches the permission mode)
   ferry doctor [--no-model]         check the setup step by step, ending with a tiny request to each model
+  ferry doctor --upload             which upload sizes get through the network to the server
   ferry login <server-url> <token>  use a Ferry server on another machine
       [--header "Name: value"]      extra header for every request (e.g. a Cloudflare Access service token)
   ferry logout                      go back to a Ferry server on this computer

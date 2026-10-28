@@ -138,3 +138,22 @@ def test_a_conversation_too_big_for_the_model_is_sent_back_for_summarising(tmp_p
 
     r = asyncio.run(go())
     assert r.status_code == 400 and "exceeds the context window" in r.json()["error"]["message"]
+
+
+def test_messages_the_server_has_are_sent_as_references(tmp_path):
+    from ferry_server.store import MissingBlobs, Store, sha
+    st = Store(":memory:")
+    a, b, c = '{"role":"system","content":"s"}', '{"role":"user","content":"long history"}', '{"role":"user","content":"new"}'
+    st.commit("u\x1fconv1", 0, "", [a, b], None, owner="u", keep_blobs=True)
+    assert sorted(st.have("u", [sha(a), sha(b), sha(c)])) == sorted([sha(a), sha(b)])
+    assert st.have("other-user", [sha(a)]) == []                       # per user
+    # after a restart the system prompt changed: a new conversation, old messages by reference
+    a2 = '{"role":"system","content":"s2"}'
+    count, h = st.commit("u\x1fconv2", 0, "", [a2, {"ref": sha(b)}, c], None, owner="u", keep_blobs=True)
+    msgs, _ = st.load("u\x1fconv2", count, h, None)
+    assert [m["content"] for m in msgs] == ["s2", "long history", "new"]
+    try:
+        st.commit("u\x1fconv3", 0, "", [{"ref": "0" * 64}], None, owner="u", keep_blobs=True)
+        raise AssertionError("should fail")
+    except MissingBlobs as e:
+        assert e.missing == ["0" * 64]

@@ -22,6 +22,12 @@ class BaseMismatch(Exception):
         self.count, self.hash = count, hash_
 
 
+class MissingBlobs(Exception):
+    """The client referred to messages by hash that the server does not have (any more)."""
+    def __init__(self, missing: list[str]):
+        self.missing = missing
+
+
 class Store:
     def __init__(self, path: Path | str, ttl_days: int = 7):
         """path ":memory:" keeps everything in RAM: nothing about conversations is written to disk."""
@@ -34,6 +40,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS conv (id TEXT PRIMARY KEY, count INTEGER, hash TEXT, touched REAL);
             CREATE TABLE IF NOT EXISTS msg (conv TEXT, idx INTEGER, body TEXT, PRIMARY KEY (conv, idx));
             CREATE TABLE IF NOT EXISTS tools (hash TEXT PRIMARY KEY, body TEXT, touched REAL);
+            CREATE TABLE IF NOT EXISTS blob (id TEXT PRIMARY KEY, body TEXT, touched REAL);
             CREATE TABLE IF NOT EXISTS part (upload TEXT, seq INTEGER, data BLOB, touched REAL,
                                              PRIMARY KEY (upload, seq));
             """
@@ -62,9 +69,38 @@ class Store:
         row = self.db.execute("SELECT count, hash FROM conv WHERE id=?", (conv,)).fetchone()
         return (row[0], row[1]) if row else (0, "")
 
-    def commit(self, conv: str, base: int, base_hash: str, append: list[str], tools: str | None) -> tuple[int, str]:
+    def have(self, owner: str, hashes: list[str]) -> list[str]:
+        """Which of these messages (by hash) the server keeps for this user: the client then sends only a reference."""
+        out = []
+        with self.lock:
+            for i in range(0, len(hashes), 500):
+                chunk = [f"{owner}\x1f{h}" for h in hashes[i:i + 500]]
+                q = f"SELECT id FROM blob WHERE id IN ({','.join('?' * len(chunk))})"
+                out += [r[0].split("\x1f")[-1] for r in self.db.execute(q, chunk).fetchall()]
+        return out
+
+    def commit(self, conv: str, base: int, base_hash: str, append: list, tools: str | None,
+               owner: str = "", keep_blobs: bool = False) -> tuple[int, str]:
+        """append: message JSON strings, or {"ref": sha256 of the string} for one the server has (see have())."""
         now = time.time()
         with self.lock, self.db:
+            if any(isinstance(a, dict) for a in append):
+                bodies, missing = [], []
+                for a in append:
+                    if isinstance(a, dict):
+                        row = self.db.execute("SELECT body FROM blob WHERE id=?", (f"{owner}\x1f{a.get('ref')}",)).fetchone()
+                        if row is None:
+                            missing.append(str(a.get("ref")))
+                        bodies.append(row[0] if row else "")
+                    else:
+                        bodies.append(a)
+                if missing:
+                    raise MissingBlobs(missing)
+                append = bodies
+            if keep_blobs:
+                for a in append:
+                    self.db.execute("INSERT OR REPLACE INTO blob VALUES (?,?,?)", (f"{owner}\x1f{sha(a)}", a, now))
+                self.db.execute("DELETE FROM blob WHERE touched < ?", (now - self.ttl,))
             count, h = self.state(conv)
             if base == 0:
                 count, h = 0, ""
@@ -106,6 +142,7 @@ class Store:
         with self.lock, self.db:
             self.db.execute("DELETE FROM conv")
             self.db.execute("DELETE FROM msg")
+            self.db.execute("DELETE FROM blob")
 
     # ---------- placeholder mappings ----------
     # Mappings are per user: a user can only get back originals that they themselves sent.

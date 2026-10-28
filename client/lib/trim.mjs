@@ -29,5 +29,20 @@ export async function trimPi() {
 	} catch {
 		// as above
 	}
+	try {
+		// Ctrl+C: pi quits only when it is pressed twice within half a second, which is easy to miss. Ferry: twice within
+		// two seconds, and it says so after the first press.
+		const { InteractiveMode } = await import(new URL("./modes/interactive/interactive-mode.js", index).href);
+		InteractiveMode.prototype.handleCtrlC = function handleCtrlC() {
+			const now = Date.now();
+			if (now - (this.lastSigintTime ?? 0) < 2000) return void this.shutdown();
+			this.clearEditor();
+			this.lastSigintTime = now;
+			this.showStatus?.("Press Ctrl+C again to quit (or Ctrl+D)");
+		};
+		result.ctrlC = true;
+	} catch {
+		// laid out differently: pi's own behaviour stays
+	}
 	return result;
 }

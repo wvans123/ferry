@@ -323,6 +323,27 @@ def check_diy(root: Path) -> None:
         s.close()
 
 
+def check_resume_upload(root: Path, work: Path) -> None:
+    """After a restart (ferry -c), only what the server does not have yet is uploaded again."""
+    (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(1500)), encoding="utf-8")
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "READBIG: read big-notes.txt")
+        first = sum(a.get("upload_bytes", 0) for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "commit")
+        n = len(jsonl(s.data / "audit.jsonl"))
+        c2, o2 = s.ferry("-c", "-p", "and now a short question")
+        second = sum(a.get("upload_bytes", 0) for a in jsonl(s.data / "audit.jsonl")[n:] if a.get("event") == "commit")
+        c3, o3 = s.ferry("doctor", "--upload")
+        ok = (c1 == 0 and "READ" in o1 and c2 == 0 and first > 40000 and second < first * 0.3
+              and c3 == 0 and "900 KB gets through" in o3)
+        check("F47 接着以前的对话只传新内容", ok, f"第一次上传 {first:,} 字节；重开 ferry 接着这个对话，只上传 {second:,} 字节"
+              "（服务端还有的消息只发引用）；doctor --upload 测出多大的上传能通过" if ok
+              else f"c1={c1} c2={c2} c3={c3} first={first} second={second} | {o1[-200:]} | {o2[-200:]} | {o3[-300:]}")
+    finally:
+        s.close()
+        (work / "big-notes.txt").unlink(missing_ok=True)
+
+
 def check_context_and_mcp(root: Path, work: Path) -> None:
     """/context changes the context size for the model; ferry mcp imports and lists servers."""
     s = Stack(root, work, "agent")
@@ -459,10 +480,11 @@ def check_tui(root: Path, work: Path) -> None:
         time.sleep(0.5)
         os.write(fd, b"\r")
         cost_shown = wait_for("Model calls:", 20)
-        os.write(fd, b"/help")
+        mark = len(seen)
+        os.write(fd, b"?")
         time.sleep(0.5)
         os.write(fd, b"\r")
-        help_shown = wait_for("Ferry commands", 20)
+        help_shown = wait_for("Ferry commands", 20) and "Ferry commands" in plain(seen[mark:])
         os.write(fd, b"/tasks")
         time.sleep(0.5)
         os.write(fd, b"\r")
@@ -514,7 +536,7 @@ def check_tui(root: Path, work: Path) -> None:
         os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
-        resume = wait_for("ferry --session", 10) and "pi --session" not in plain(seen)
+        resume = wait_for("ferry --session", 10) and "pi --session" not in plain(seen) and "Press Ctrl+C again to quit" in plain(seen)
         try:
             os.kill(pid, signal.SIGTERM)
             os.waitpid(pid, 0)
@@ -522,7 +544,7 @@ def check_tui(root: Path, work: Path) -> None:
             pass
         ok = (started and answered and widget and cost_shown and help_shown and tasks_shown and listed and hidden and resized and shows and asked
               and rewound and wrote and files_back and resume)
-        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示待办清单；/cost /help /tasks 能用；斜杠列表只有保留的命令；"
+        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示待办清单；/cost、? (帮助)、/tasks 能用；斜杠列表只有保留的命令；"
               "/context 100k 立即生效，/context 列出可选的大小；/rewind 回到某条消息之前，对话和 agent 改过的文件一起退回；退出时提示 ferry --session" if ok
               else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown} tasks={tasks_shown} listed={listed} "
                    f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back} "
@@ -903,6 +925,7 @@ def main() -> int:
     print("\n[13/14] 联网、公司网关、浏览器", flush=True)
     check_web_browser(base / "web", work)
     check_gateway(base / "gateway", work)
+    check_resume_upload(base / "resume", work)
     check_context_and_mcp(base / "ctx", work)
     check_project_mcp(base / "pmcp")
     check_tui(base / "tui", work)

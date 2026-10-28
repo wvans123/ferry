@@ -5,10 +5,10 @@
 // refers to the server-side copy. The server rebuilds the full request, adds its rules, redacts it and
 // calls the model. If the server has lost its copy, the client re-uploads everything automatically.
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
-import { PROTOCOL, serverHeaders } from "./config.mjs";
+import { FERRY_HOME, PROTOCOL, serverHeaders } from "./config.mjs";
 import { gatewayPage, openInBrowser, whoAnswered } from "./gateway.mjs";
 
 let lastOpened = 0;
@@ -88,7 +88,40 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	const known = new Map(); // conv -> { count, hash } the server has acknowledged
 	const byId = new Map(models.map((m) => [m.id, m]));
 	const knownTools = new Set();
+	const haveBlobs = new Set(); // messages (sha256 of their JSON) the server keeps: sent as {ref} instead of in full
+	const asked = new Set(); // conversations we asked the server about (after a restart or /resume)
 	const project = process.env.FERRY_PROJECT ?? basename(process.cwd());
+	const refs = () => (cfg.features ?? []).includes("refs") && cfg.sessionStore !== "none";
+
+	/** What was in the way, for "ferry doctor" and for us: written to <FERRY_HOME>/logs/blocked.log (no message content). */
+	function logBlocked(path, sent, res, text) {
+		try {
+			mkdirSync(join(FERRY_HOME, "logs"), { recursive: true });
+			const h = {};
+			for (const k of ["server", "via", "cf-ray", "cf-mitigated", "location", "content-type", "proxy-agent", "x-squid-error"]) {
+				const v = res.headers.get(k);
+				if (v) h[k] = v;
+			}
+			appendFileSync(join(FERRY_HOME, "logs", "blocked.log"), `${JSON.stringify({ at: new Date().toISOString(), path,
+				sent, status: res.status, headers: h, page: String(text ?? "").replace(/\s+/g, " ").slice(0, 600) })}\n`);
+		} catch {
+			// not important
+		}
+	}
+
+	/** Ask which of these messages the server still has (from an earlier run of this conversation). */
+	async function learnBlobs(hashes, signal) {
+		const want = hashes.filter((h) => !haveBlobs.has(h));
+		for (let i = 0; i < want.length; i += 500) {
+			try {
+				const r = await post("/v1/ferry/have", JSON.stringify({ hashes: want.slice(i, i + 500) }), signal);
+				if (!r.ok || !r.headers.get("content-type")?.includes("json")) return;
+				for (const h of (await r.json()).have ?? []) haveBlobs.add(h);
+			} catch {
+				return; // only an optimisation
+			}
+		}
+	}
 
 	async function post(path, body, signal) {
 		return fetch(`${cfg.server}${path}`, {
@@ -100,23 +133,22 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		});
 	}
 
-	async function commit(conv, base, baseHash, blob, signal) {
+	async function commit(conv, base, baseHash, blob, signal, chunk = cfg.chunkBytes) {
 		const bytes = Buffer.from(blob, "utf8");
 		const q = new URLSearchParams({ conv, base: String(base), base_hash: baseHash });
-		if (bytes.length <= cfg.chunkBytes) return post(`/v1/ferry/commit?${q}`, bytes, signal);
+		if (bytes.length <= chunk) return post(`/v1/ferry/commit?${q}`, bytes, signal);
 		const upload = randomUUID();
-		const parts = Math.ceil(bytes.length / cfg.chunkBytes);
+		const parts = Math.ceil(bytes.length / chunk);
 		for (let i = 0; i < parts; i++) {
-			const res = await post(`/v1/ferry/upload/${upload}/${i}`,
-				bytes.subarray(i * cfg.chunkBytes, (i + 1) * cfg.chunkBytes), signal);
-			if (!res.ok) throw new FerryError(`Ferry upload failed: HTTP ${res.status} ${await res.text()}`);
+			const res = await post(`/v1/ferry/upload/${upload}/${i}`, bytes.subarray(i * chunk, (i + 1) * chunk), signal);
+			if (!res.ok) return res; // looked at by the caller (a gateway may stop one part)
 		}
 		q.set("upload", upload);
 		q.set("parts", String(parts));
 		return post(`/v1/ferry/commit?${q}`, "", signal);
 	}
 
-	async function shrink(payload, signal, api = "openai") {
+	async function shrink(payload, signal, api = "openai", sessionId = "") {
 		if (!payload || !Array.isArray(payload.messages)) return payload;
 		if (cfg.sessionStore === "none") { // the server keeps nothing between calls: always send everything
 			known.clear();
@@ -129,7 +161,8 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			marks = takeCacheMarks(list);
 		}
 		const msgs = list.map((m) => JSON.stringify(m));
-		const conv = sha(SALT + (msgs[0] ?? "") + (msgs[1] ?? ""));
+		// the session id keeps the server's copy usable after a restart or /resume (a random salt before ferry 0.15.1)
+		const conv = sha((sessionId || SALT) + (msgs[0] ?? "") + (msgs[1] ?? ""));
 		const chain = [""];
 		for (const s of msgs) chain.push(sha(chain[chain.length - 1] + s));
 		const toolsJson = Array.isArray(payload.tools) && payload.tools.length ? JSON.stringify(payload.tools) : null;
@@ -137,14 +170,32 @@ export function createSyncProvider(cfg, models, opts = {}) {
 
 		const prev = known.get(conv);
 		const base = prev && prev.count <= msgs.length && chain[prev.count] === prev.hash ? prev.count : 0;
-		const blob = (b, withTools) => JSON.stringify({ append: msgs.slice(b), tools: withTools ? toolsJson : null });
+		const hashes = msgs.map((m) => sha(m));
+		if (refs() && !prev && !asked.has(conv) && msgs.length > 2) { // first request of this conversation in this run
+			asked.add(conv);
+			await learnBlobs(hashes, signal);
+		}
+		const blob = (b, withTools, useRefs = refs()) => JSON.stringify({
+			append: msgs.slice(b).map((m, i) => (useRefs && haveBlobs.has(hashes[b + i]) && m.length > 200 ? { ref: hashes[b + i] } : m)),
+			tools: withTools ? toolsJson : null });
+		const notFerry = (r) => !r.headers.get("content-type")?.includes("json");
 
 		let res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
-		if (!res.headers.get("content-type")?.includes("json") && [403, 502, 503, 504].includes(res.status)) {
-			await new Promise((r) => setTimeout(r, 1500)); // a gateway or tunnel hiccup: once more before giving up
-			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
+		if (notFerry(res) && [403, 502, 503, 504].includes(res.status)) {
+			logBlocked("commit", blob(base, false).length, res, await res.clone().text().catch(() => ""));
+			// a hiccup, or something in the way that dislikes big requests: once more, in small parts
+			await new Promise((r) => setTimeout(r, 1500));
+			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal, 64 * 1024);
 		}
-		if (res.status === 409) res = await commit(conv, 0, "", blob(0, !!toolsHash), signal); // server lost it
+		if (res.status === 409) { // the server's copy differs or is gone: start it again (messages it has by reference)
+			const why = await res.clone().json().catch(() => ({}));
+			if (why.missing) haveBlobs.clear();
+			res = await commit(conv, 0, "", blob(0, !!toolsHash), signal);
+			if (res.status === 409) { // a referenced message is gone too: everything in full
+				haveBlobs.clear();
+				res = await commit(conv, 0, "", blob(0, !!toolsHash, false), signal);
+			}
+		}
 		if (res.status === 401) throw new FerryError("Ferry token rejected by the server. Run: ferry login <server> <token>");
 		if (res.status === 426) throw new FerryError(`Ferry client and server versions do not match: ${await res.text()}`);
 		if (!res.headers.get("content-type")?.includes("json")) {
@@ -158,8 +209,9 @@ export function createSyncProvider(cfg, models, opts = {}) {
 					`(${loc}): confirm there, then send your message again.`);
 			}
 			const text = await res.text().catch(() => "");
+			logBlocked("commit", msgs.length, res, text);
 			const who = whoAnswered({ status: res.status, headers: res.headers, body: text });
-			if (gatewayPage(loc, text) || (res.status === 403 && !/Cloudflare/.test(who))) {
+			if (gatewayPage(loc, text)) {
 				// the gateway's page has no address of its own: open the server's, the gateway shows its page there
 				if (Date.now() - lastOpened > 60000) {
 					lastOpened = Date.now();
@@ -168,7 +220,8 @@ export function createSyncProvider(cfg, models, opts = {}) {
 				throw new FerryError(`The Ferry server did not get this request: ${who} If it is the company gateway, confirm in ` +
 					"the browser window just opened, then send your message again. (ferry doctor checks the path.)");
 			}
-			throw new FerryError(`The Ferry server did not get this request: ${who}`);
+			throw new FerryError(`The Ferry server did not get this request: ${who} Details: ${join(FERRY_HOME, "logs", "blocked.log")}; ` +
+				'"ferry doctor --upload" tests which sizes get through.');
 		}
 		if (!res.ok) throw new FerryError(`Ferry sync failed: HTTP ${res.status} ${await res.text()}`);
 		const ack = await res.json();
@@ -178,6 +231,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		}
 		known.set(conv, ack);
 		if (toolsHash) knownTools.add(toolsHash);
+		if (refs()) for (const h of hashes) haveBlobs.add(h);
 		const { messages: _m, tools: _t, system: _s, ...rest } = payload;
 		if (api !== "anthropic" && _s !== undefined) rest.system = _s;
 		// tell the server what this request is for, so it can send context summaries to a cheaper model
@@ -222,7 +276,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 				"x-ferry-protocol": PROTOCOL },
 			onPayload: async (payload, m) => {
 				const replaced = userOnPayload ? await userOnPayload(payload, m) : undefined;
-				return shrink(replaced ?? payload, options?.signal, api);
+				return shrink(replaced ?? payload, options?.signal, api, options?.sessionId);
 			},
 		});
 		const out = createAssistantMessageEventStream();

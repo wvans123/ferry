@@ -187,6 +187,8 @@ export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking
 	// the server's model list changed (e.g. a new API key): fall back to its first model
 	if (next.defaultProvider === "ferry" && !modelIds.includes(next.defaultModel)) next.defaultModel = defaultModel;
 	next.defaultThinkingLevel = ["low", "medium", "high", "xhigh"].includes(thinking) ? thinking : "medium";
+	// pressing Esc twice on an empty input opened pi's session tree, which looked like being thrown out; /rewind does that job
+	if (!("doubleEscapeAction" in cur)) next.doubleEscapeAction = "none";
 	writeFileSync(file, JSON.stringify(next, null, 2), "utf8");
 	// Shift+Tab switches the permission mode (like Claude Code); pi uses it for thinking levels, which the
 	// server-chosen model does not expose

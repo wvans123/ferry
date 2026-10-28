@@ -170,6 +170,10 @@ def decide_agent(msgs):
             return ("tool", "task", {"agent": "general", "description": "run a check command",
                                      "prompt": "SUBRUN: run the check command and report its output."})
         return ("text", "MAIN GOT: " + text_of(tools[-1])[:300])
+    if "READBIG" in first:  # a long tool result in the history
+        if not tools:
+            return ("tool", "read", {"path": "big-notes.txt"})
+        return ("text", f"READ {len(text_of(tools[-1]))} chars")
     if "BIGTEST" in first:
         if not tools:
             return ("tool", "bash", {"command": "for i in $(seq 1 3000); do echo \"output line $i\"; done"})
