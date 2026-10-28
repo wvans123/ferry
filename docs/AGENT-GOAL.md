@@ -142,3 +142,19 @@
 | pi 扩展包 | `ferry pkg install/list/remove` | 手动 |
 
 不做：沙箱、贴截图（告诉它图片路径即可）、VS Code 插件。
+
+## v0.14：少而好用
+
+用户反馈：上下文最多 128k，要能调；斜杠命令太多；Shift+Tab 和 auto-edit 是什么意思；MCP 要有放的地方、能看到哪些在用；设置里只留有用的。
+
+| 改动 | 说明 | 自测 |
+|---|---|---|
+| 斜杠命令 | 只留 `/new /resume /name /session /compact /rewind /goal /tasks /memory /skills /context /cost /status /config /model /mcp /help /quit`。pi 的 `/tree /fork /export /share /login` 等不再列出（打全名仍可用）；`/clear /exit /rename /undo /plan /mode /permissions /add-dir /agents /hooks /todos /doctor /remember` 去掉或并入别的命令；`/init /review /security-review` 移到 examples | F38 |
+| `/rewind` | 选一条自己的消息，对话、文件或两样一起退回到它之前；消息放回输入框 | F38 |
+| `/memory <内容>` | 查看和存一条合成一个命令 | F39 |
+| `/status` | 合并 `/doctor`：连接、模型、规则文件和钩子在哪，再做一次快速检查 | — |
+| 上下文长度 | 管理页编辑模型时能改上下文和最大输出；客户端 `/context 400k` 按模型覆盖，立即生效；DeepSeek Flash 改为 1M（旧版本写的 128K 自动升级） | F43 + 服务端单元测试 |
+| 思考 | Claude 和 GPT 默认打开思考（中等），`/config` → `thinking` 调 | F40 |
+| MCP | 你的 `agent/mcp.json`、项目的 `.ferry/mcp.json` / `.mcp.json`（先问一次）；`ferry mcp import` 从 Claude Desktop、Claude Code、Cursor、VS Code、Windsurf 导入；`ferry mcp list / check`；`/mcp` 看连接状态 | F44、F45 |
+| 设置 | `/config` 只列 10 项常用的，其余放在"More settings"和 `ferry config --all` | — |
+| print 模式 | `ferry -p "/cost"` 这类命令把结果打印出来 | F43 |

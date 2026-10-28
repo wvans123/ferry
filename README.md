@@ -66,6 +66,8 @@ C:\my-project> ferry
 - **GPT**（gpt-6.1-sol 等）：走 OpenAI 接口，OpenAI 会自动缓存。
 - 也可以用 DeepSeek、Kimi、通义、智谱，或者任何 OpenAI 兼容接口。
 
+**上下文长度**：每个模型能装多少，在管理页 → 服务商和模型 → 编辑里改（"上下文"和"最大输出"两栏）。预设值：Claude 1M，GPT 400k（gpt-6.1-sol 最多能收约 92 万输入 token，但一次请求超过 27.2 万时按更高的单价算，输入价翻倍），deepseek-flash 1M。工作电脑上也可以用 `/context 400k` 只给自己改。
+
 Anthropic 和 OpenAI 的 API 不对中国大陆和香港提供服务。要用这两家，服务端得放在它们支持的地区，比如海外的云服务器，见 [DEPLOY-LINUX.md](docs/DEPLOY-LINUX.md)。
 
 ## 服务端：装在哪、怎么装
@@ -161,10 +163,14 @@ ferry doctor
 | Enter | 发送；Shift+Enter 或 Ctrl+J 换行 |
 | **Shift+Tab** | 切换权限模式（见下文） |
 | Esc | 打断 agent 正在做的事 |
-| Ctrl+C 连按两次 | 退出 |
-| `/` | 列出所有斜杠命令 |
+| Ctrl+C | 清空输入框；连按两次退出 |
+| Ctrl+O / Ctrl+T | 展开或收起工具输出 / 模型的思考过程 |
+| Ctrl+L | 选模型 |
+| `/` | 列出斜杠命令 |
 | `@` | 引用文件（输入文件名会自动补全） |
 | `!命令` | 自己执行一条命令，输出也会给 agent 看，比如 `!git status` |
+
+`/help` 里也有这张表。
 
 ### 命令行
 
@@ -175,6 +181,7 @@ ferry doctor
 | `ferry -p "问题"` | 只问一句，打印回答后退出（适合放进脚本） |
 | `ferry doctor` | 逐项检查：网络、令牌、模型、搜索工具 |
 | `ferry config` | 查看和修改客户端设置 |
+| `ferry mcp list` / `ferry mcp import` | 查看用到的 MCP 服务器 / 从 Claude Desktop、Claude Code、Cursor、VS Code 导入 |
 | `ferry login <地址> <令牌>` / `ferry logout` | 连到远程服务端 / 改回本机服务端 |
 | `ferry update` | 更新到最新版 |
 | `ferry pkg install npm:<包名>` | 安装 pi 生态的扩展包（扩展、技能、命令）；`ferry pkg list` / `remove` |
@@ -182,18 +189,21 @@ ferry doctor
 
 ### 斜杠命令
 
-和 Claude Code 的基础命令一样，输入 `/` 可以挑选，`/help` 列出全部：
+只留常用的，输入 `/` 可以挑选，`/help` 列出全部和快捷键：
 
 | 分类 | 命令 |
 |---|---|
-| 对话 | `/clear` 重新开始 · `/compact [保留什么]` 压缩上下文 · `/resume` 回到以前的对话 · `/rename` · `/fork` · `/export` · `/copy` · `/exit` |
-| 干活 | **`/goal <目标>`** 一直做到完成（见下文）· `/plan <任务>` 先出方案 · `/tasks` 后台任务 · `/todos` 任务清单 · `/rewind` 把文件恢复到某次请求之前 |
-| 知识 | `/init` 读项目写 AGENTS.md · `/memory` · `/remember <内容>` · `/skills` |
-| 审查 | `/review [范围]` · `/security-review [范围]` |
-| 信息 | `/cost` 花了多少 token 和钱 · `/context` 上下文被什么占满 · `/status` · `/doctor` |
-| 设置 | `/config` · `/permissions` · `/hooks` · `/agents` · `/mcp` · `/model` · `/add-dir <文件夹>` |
+| 对话 | `/new` 开始新对话 · `/resume` 回到以前的对话 · `/name <名字>` 给这次对话起名 · `/session` 这次对话的信息 · `/compact [保留什么]` 现在就压缩上下文 · `/rewind` 回到之前某条消息 |
+| 干活 | **`/goal <目标>`** 一直做到完成（见下文）· `/tasks` 后台任务 |
+| 知识 | `/memory` 看记住了什么 · `/memory <内容>` 记住一句话 · `/skills` 它会哪些技能 |
+| 信息 | `/context [大小]` 上下文用了多少，带大小就改（如 `/context 400k`）· `/cost` 花了多少 token 和钱 · `/status` 连接、模型、规则文件，并做一次快速检查 |
+| 设置 | `/config` 常用设置 · `/model` 选模型 · `/mcp` MCP 服务器 · `/quit` 退出 |
 
-写代码用的 `/commit`、`/test`、`/fix`、`/pr` 等放在 [examples/commands/](examples/commands/)，需要的话拷进 `%USERPROFILE%\.ferry\commands\`。自己写命令见[自己动手扩展](#自己动手扩展)。
+- **`/rewind`**：选你之前发的一条消息，回到它发出之前。可以选只退对话、只退文件，或两样一起退（像 Claude Code）。那条消息会放回输入框，改一改再发。退回去的那段对话还留在记录里。文件只管 agent 用 edit/write 改的，命令造成的改动请用 git。
+- **`/memory`** 不带内容是查看，带内容是存一条（默认存在这个项目；`/memory user 内容` 存到所有项目）。平时直接说"记住……"也行。
+- **`/context 400k`** 改当前模型的上下文长度，马上生效并记住；`/context auto` 回到服务端的设置。上下文越大，压缩前能留的历史越多，但每次请求越贵。不能超过模型本身支持的长度。
+
+pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`……）不再列出，用不上。写代码用的 `/init`、`/review`、`/commit`、`/test` 等放在 [examples/commands/](examples/commands/)，需要的话拷进 `%USERPROFILE%\.ferry\commands\`。自己写命令见[自己动手扩展](#自己动手扩展)。
 
 ### /goal：给一个目标，它一直做到完成
 
@@ -245,7 +255,8 @@ ferry doctor
 | 浏览器 | `ferry config set browser true` 后，agent 能操作电脑上的 Edge：打开网页、点击、填表、读页面 |
 | 长输出 | 命令输出太长时，全文存到文件，只给模型看开头和结尾，需要时它自己去读 |
 | 压缩和找回 | 对话太长时自动写摘要；之后需要原文时，用 `history_search` 在本地完整记录里找回 |
-| 撤销 | `/rewind`（也可以用 `/undo`）把文件恢复到某次请求之前。只管 agent 用 edit/write 改的文件，命令造成的改动请用 git |
+| 回退 | `/rewind` 回到之前某条消息：对话、agent 改过的文件，或两样一起 |
+| 思考 | Claude 和 GPT 默认打开思考（中等）。难的活可以调高：`/config` → `thinking` |
 | 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型（模型要支持看图，Claude、GPT、deepseek-flash 都支持） |
 | 花费 | 底栏显示本次对话花了多少钱；`/cost` 看明细；服务端管理页的"用量和费用"按天、按项目、按模型汇总 |
 | 提醒 | 一个请求超过 30 秒才做完时，会响一声并弹出 Windows 通知 |
@@ -256,36 +267,34 @@ ferry doctor
 
 | 想做的事 | 放一个文件 |
 |---|---|
-| 让 agent 了解项目 | 项目根目录的 `AGENTS.md`（`/init` 自动生成） |
+| 让 agent 了解项目 | 项目根目录的 `AGENTS.md`（也可以让 agent 读完项目自己写） |
 | 加一个斜杠命令 | `.ferry\commands\standup.md` → `/standup` |
 | 教它一类任务的做法 | `.ferry\skills\release-notes\SKILL.md` |
 | 加一个专门的子 agent | `.ferry\agents\security-reviewer.md` |
 | 改完文件自动格式化、检查 | `.ferry\hooks.json` |
 | 哪些命令不用问、哪些禁止 | `.ferry\permissions.json` |
-| 接数据库、Jira、内部系统 | `%USERPROFILE%\.ferry\agent\mcp.json`（MCP） |
+| 接数据库、Jira、内部系统 | MCP：`%USERPROFILE%\.ferry\agent\mcp.json`（你的）或项目里的 `.ferry\mcp.json`、`.mcp.json`；`ferry mcp import` 从别的应用导入 |
 
 - 放在项目的 `.ferry\` 下只管这个项目，可以提交进仓库给团队用；放在 `%USERPROFILE%\.ferry\` 下对你所有项目生效。
 - Claude Code 的 `.claude\commands`、`.claude\agents`、`.claude\skills`、`CLAUDE.md` 也直接能用。
 
 ## 设置一览
 
-**客户端**：`ferry config` 查看，`ferry config set <名字> <值>` 修改。
+**客户端**：在 ferry 里输入 `/config` 挑着改；或者 `ferry config` 查看，`ferry config set <名字> <值>` 修改。
 
 | 名字 | 默认 | 作用 |
 |---|---|---|
 | `permissionMode` | `default` | 启动时的权限模式：`default` / `acceptEdits` / `plan` / `bypass` |
+| `thinking` | `medium` | Claude 和 GPT 想多久再回答：`low` / `medium` / `high` / `xhigh`。越高越适合难题，但更慢更贵 |
 | `memory` | `true` | 跨对话的记忆 |
-| `subagents` | `true` | 子 agent（task 工具） |
 | `web` | `client` | 联网工具在哪执行：`client`（这台电脑）/ `server`（服务端代办，需服务端开启）/ `off` |
-| `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome）；`browserPath` 指定别的浏览器，`browserHeadless` 不显示窗口 |
+| `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome） |
+| `goalMaxTurns` / `goalBudget` | `100` / `0` | `/goal` 最多轮数和 token 预算（如 `2m`，0 = 不限） |
+| `notify` | `true` | 长请求结束时响铃加通知 |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
-| `bigOutputBytes` | `8192` | 输出超过多少字节就存文件（0 = 不存） |
-| `goalBudget` / `goalMaxTurns` | `0` / `100` | `/goal` 的 token 预算（如 `2m`，0 = 不限）和最多轮数 |
-| `notify` / `notifyAfterSeconds` | `true` / `30` | 长请求结束时响铃加通知 |
-| `updateCheck` | `true` | 每天看一次 GitHub 上有没有新版本 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
 
-界面、上下文压缩这类 agent 本身的设置，在 ferry 里输入 `/settings`，或改 `%USERPROFILE%\.ferry\agent\settings.json`。
+很少需要改的（`ferry config --all` 或 `/config` → More settings）：`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`。上下文长度用 `/context` 改，存在同一个文件里。
 
 **服务端**：大多在管理页里改，存在服务端数据目录的 `server.toml`。也可以用环境变量：
 
@@ -338,7 +347,7 @@ ferry doctor
 | 服务端存不存对话 | 设置项 `session_store`：存磁盘（省流量）、只存内存、完全不存（每轮整段重传，仍按 512KB 分块，单个请求不超过 1MB） | `server/ferry_server/store.py` |
 | 本地安全底线 | 禁止目录、执行前确认都在客户端执行，服务端无法绕过；拦截原因里不含受保护的名字 | `client/lib/guard.mjs` |
 | 可审计 | 访问日志和审计日志只记大小、模型、脱敏计数、用量，不记对话内容 | `server/ferry_server/app.py` |
-| 上下文太长 | 三层：长输出在客户端写文件，只给模型开头结尾；pi 在接近模型窗口时把旧历史写成摘要，压缩后能用 `history_search` 找回原文；服务端在发给模型前封顶（默认 900KB），从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/prompt.py` |
+| 上下文太长 | 三层：长输出在客户端写文件，只给模型开头结尾；pi 在接近模型窗口时把旧历史写成摘要，压缩后能用 `history_search` 找回原文；服务端可以给发给模型的请求设上限（默认不设，管理页 → 设置），超了从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/prompt.py` |
 | 记忆放哪 | 客户端：内容本来就是关于这台电脑上的代码和你的习惯；服务端只转发，换服务端不丢记忆。只有目录进系统提示，正文按需读取 | `client/lib/memory.mjs` |
 | 子 agent | 在同一个进程里另起一个 pi 会话（内存里，不存盘），作为一个独立对话同步到服务端；审批对话框借用主窗口 | `client/lib/subagent.mjs` |
 | 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |
@@ -346,7 +355,7 @@ ferry doctor
 | 联网 | 默认在客户端执行，走公司代理，识别网关的确认页（按地址和页面文字）并报告，不点击通过；可选服务端代办：只允许 http(s)，拒绝本机和内网地址（管理页信任本机来的请求，不能让网页请求绕到它），每次跳转都重新检查，可设网站白名单 | `client/lib/web.mjs`、`server/ferry_server/web.py` |
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，也会重新打开并提示重发 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
-| 斜杠命令和自定义 | 内置命令是 Markdown 模板（`client/commands/`）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户、用户覆盖内置 | `client/lib/commands.mjs` |
+| 斜杠命令和自定义 | pi 自带命令里用不上的，启动时从它的命令表里拿掉（只是不列出）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户 | `client/lib/trim.mjs`、`client/lib/commands.mjs` |
 | 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/rewind` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
 | 钩子 | `afterEdit` 在工具结果出来后运行，失败输出追加到工具结果里交给模型；项目的钩子文件按内容哈希征得同意，改了要重新同意 | `client/lib/hooks.mjs` |
 | /goal | 目标存成会话里的一条记录（恢复对话时还在）；agent 每次要停下时（pi 的 `agent_before_settle`），如果目标还在进行，就补一条"对照目标继续"的消息并要求再跑一轮；agent 用 `goal_update` 报告完成或卡住；token 预算和轮数上限到了就要求它写进度报告 | `client/lib/goal.mjs` |
@@ -415,7 +424,7 @@ v0.13 是一个可以自用、可以演示的原型：47 个单元测试（服�
 
 | 方面 | 现状 | 还缺 |
 |---|---|---|
-| agent | /goal 长任务、后台任务、权限模式、记忆、子 agent、任务清单、斜杠命令、技能、钩子、撤销、联网、浏览器、读图、三层上下文管理 | 命令在沙箱里跑（Codex 的做法） |
+| agent | /goal 长任务、后台任务、权限模式、记忆、子 agent、任务清单、斜杠命令、技能、钩子、MCP、回退、联网、浏览器、读图、思考、可调上下文长度 | 命令在沙箱里跑（Codex 的做法） |
 | 服务端 | 增量同步、组装提示词、选模型、Claude 原生接口和提示词缓存、用量和费用、可逆脱敏（OpenAI 兼容接口）、管理页 | GPT 的 Responses 接口、服务端摘要 |
 | 可靠性 | 缓存丢失自动恢复、版本协商、自动跟进 pi 更新 | 多实例部署（目前是单机 SQLite）、数据备份 |
 | 安全 | 多用户隔离、恒定时间令牌比较、拒绝弱密钥、日志不含正文、管理页只限本机 | 限流、令牌过期、客户端令牌存进系统凭据库 |

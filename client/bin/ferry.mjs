@@ -12,8 +12,8 @@
 // Without `ferry login`, every ferry window starts its own Ferry server on this computer and stops it on exit
 // (installed by `ferry install`; the server reads DEEPSEEK_API_KEY from the environment).
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	AGENT_DIR,
@@ -26,6 +26,7 @@ import {
 	readModelsCache,
 	serverHeaders,
 	SETTINGS,
+	ADVANCED_SETTINGS,
 	saveConfig,
 	writeModelsCache,
 } from "../lib/config.mjs";
@@ -278,7 +279,7 @@ async function run(args) {
 	if (models[0].ready === false) {
 		console.error(`Ferry: no API key for model ${models[0].routesTo ?? models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
 	}
-	ensureAgentDir(models[0].id, models.map((m) => m.id));
+	ensureAgentDir(models[0].id, models.map((m) => m.id), cfg.thinking);
 	installBundled(APP_ROOT); // fd and rg from the release zip, after an update
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 	process.env.FERRY_TOKEN = cfg.token;
@@ -287,6 +288,7 @@ async function run(args) {
 	process.env.PYTHONUTF8 ??= "1";
 	// loaded only here, so install / update / doctor work even before the agent's packages are in place
 	const { main } = await import("@earendil-works/pi-coding-agent");
+	await (await import("../lib/trim.mjs")).trimPi(); // a shorter "/" list
 	const { createSyncProvider } = await import("../lib/sync.mjs");
 	const { createGuard, createModes, _state: permState } = await import("../lib/guard.mjs");
 	const { createBrand } = await import("../lib/brand.mjs");
@@ -299,6 +301,7 @@ async function run(args) {
 	const { createHooks } = await import("../lib/hooks.mjs");
 	const { createGoal } = await import("../lib/goal.mjs");
 	const { createJobs } = await import("../lib/jobs.mjs");
+	const { createProjectMcp } = await import("../lib/mcp.mjs");
 	const { webMode } = await import("../lib/web.mjs");
 	const status = async () => {
 		const t = Date.now();
@@ -314,9 +317,10 @@ async function run(args) {
 	};
 	const { createWeb } = await import("../lib/web.mjs");
 	const { createBrowser } = await import("../lib/browser.mjs");
+	const sync = createSyncProvider(cfg, models);
 	await main(["--offline", ...args], {
 		extensionFactories: [
-			{ name: "ferry-sync", factory: createSyncProvider(cfg, models), hidden: true },
+			{ name: "ferry-sync", factory: sync, hidden: true },
 			{ name: "ferry-prompt", factory: createPrompt(), hidden: true },
 			{ name: "ferry-modes", factory: createModes(cfg), hidden: true },
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
@@ -326,20 +330,18 @@ async function run(args) {
 			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
 			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents,
 				doctor: () => new Promise((done) => {
-					execFile(process.execPath, [fileURLToPath(import.meta.url), "doctor"], { timeout: 120000, windowsHide: true },
+					execFile(process.execPath, [fileURLToPath(import.meta.url), "doctor", "--no-model"], { timeout: 120000, windowsHide: true },
 						(_e, out, err) => done(`${out}${err}`.trim()));
 				}),
-				addDir: (d) => {
-					const abs = resolve(d);
-					if (!permState.extraDirs.includes(abs)) permState.extraDirs.push(abs);
-					return abs;
-				} }), hidden: true },
+				reregister: (pi, c) => sync.register(pi, c),
+				serverWindow: (id) => models.find((m) => m.id === id)?.contextWindow }), hidden: true },
 			{ name: "ferry-memory", factory: createMemory(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },
 			{ name: "ferry-browser", factory: createBrowser(cfg), hidden: true },
+			{ name: "ferry-project-mcp", factory: createProjectMcp(), hidden: true },
 			{ name: "ferry-subagents", factory: createSubagents(cfg, {
 				makeSync: () => createSyncProvider(cfg, models, { purpose: "subagent" }) }), hidden: true },
 			{ name: "ferry-brand", factory: createBrand(cfg, VERSION, newerRelease(cfg)), hidden: true },
@@ -384,9 +386,9 @@ function config(args) {
 	const cfg = loadConfig();
 	if (args[0] === "set") {
 		const [, key, ...vals] = args;
-		const spec = SETTINGS[key];
+		const spec = SETTINGS[key] ?? ADVANCED_SETTINGS[key];
 		if (!spec) {
-			console.error(`unknown setting "${key}". Settings: ${Object.keys(SETTINGS).join(", ")}`);
+			console.error(`unknown setting "${key}". Settings: ${[...Object.keys(SETTINGS), ...Object.keys(ADVANCED_SETTINGS)].join(", ")}`);
 			return process.exit(2);
 		}
 		const raw = vals.join(" ").trim();
@@ -400,12 +402,9 @@ function config(args) {
 		} else if (spec[0] === "list") {
 			value = raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 		} else value = raw;
-		if (key === "web" && !["client", "server", "off"].includes(value)) {
-			console.error("web is one of: client, server, off");
-			return process.exit(2);
-		}
-		if (key === "permissionMode" && !["default", "acceptEdits", "plan", "bypass"].includes(value)) {
-			console.error("permissionMode is one of: default, acceptEdits, plan, bypass");
+		const choices = spec[2]?.map((c) => c.split(" ")[0]);
+		if (choices && !choices.includes(value)) {
+			console.error(`${key} is one of: ${choices.join(", ")}`);
 			return process.exit(2);
 		}
 		const file = saveConfig({ [key]: value });
@@ -414,13 +413,60 @@ function config(args) {
 	}
 	console.log(`Ferry ${VERSION} client settings (${join(FERRY_HOME, "config.json")})\n`);
 	console.log(`  server            ${cfg.mode === "remote" ? cfg.server : "a Ferry server on this computer"}  (ferry login / logout)`);
-	for (const [k, [, why]] of Object.entries(SETTINGS)) {
-		console.log(`  ${k.padEnd(17)} ${JSON.stringify(cfg[k])}\n  ${"".padEnd(17)} ${why}`);
+	const all = args[0] === "--all";
+	for (const [k, [, why, choices]] of Object.entries(all ? { ...SETTINGS, ...ADVANCED_SETTINGS } : SETTINGS)) {
+		const one = choices ? `${why} (${choices.map((c) => c.split(" ")[0]).join(" | ")})` : why;
+		console.log(`  ${k.padEnd(17)} ${JSON.stringify(cfg[k])}\n  ${"".padEnd(17)} ${one}`);
 	}
+	if (Object.keys(cfg.contextWindow ?? {}).length) console.log(`  contextWindow     ${JSON.stringify(cfg.contextWindow)}  (set with /context inside ferry)`);
 	console.log(`\nChange one:  ferry config set memory false   |   ferry config set permissionMode acceptEdits`);
-	console.log(`Permission rules ("always allow" answers): /permissions inside ferry, or ${join(FERRY_HOME, "permissions.json")}`);
-	console.log(`Agent settings (model behaviour, context compaction, tools): ${join(AGENT_DIR, "settings.json")}, or /settings inside ferry`);
+	if (!all) console.log("Rarely needed settings: ferry config --all");
+	console.log(`Permission rules ("always allow" answers): ${join(FERRY_HOME, "permissions.json")} and .ferry/ in each project`);
 	console.log(`Rules for every project: ${join(AGENT_DIR, "AGENTS.md")}   |   rules for one project: AGENTS.md in its folder`);
+}
+
+/** `ferry mcp`: list, import from other apps, and (through pi) add, remove, check and sign in. */
+async function mcp(args) {
+	const m = await import("../lib/mcp.mjs");
+	const [sub = "list", ...more] = args;
+	if (sub === "list") return console.log(m.listText());
+	if (sub === "import") {
+		const force = more.includes("--force");
+		const names = more.filter((a) => a !== "--force");
+		const apps = m.otherApps();
+		const sources = names.length
+			? names.map((n) => apps.find(([a]) => a === n.toLowerCase()) ?? [n, n])
+			: apps.filter(([, f]) => existsSync(f));
+		if (!sources.length) {
+			console.log(`No MCP settings found from: ${apps.map(([a]) => a).join(", ")}.
+Give a file instead: ferry mcp import <path to mcp.json>`);
+			return;
+		}
+		const missing = sources.filter(([, f]) => !existsSync(f));
+		for (const [n, f] of missing) console.log(`${n}: no file at ${f}`);
+		const r = m.importServers(sources.filter(([, f]) => existsSync(f)), { force });
+		for (const [n, from] of r.added) console.log(`added    ${n}  (from ${from})`);
+		for (const [n, why] of r.skipped) console.log(`skipped  ${n}: ${why}`);
+		console.log(r.added.length ? `\nSaved to ${r.file}. Start ferry and type /mcp to see them connect.` : "\nNothing added.");
+		return;
+	}
+	if (["add", "remove", "check", "login", "logout"].includes(sub)) {
+		ensureAgentDir((readModelsCache() ?? [{ id: "auto" }])[0].id);
+		process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
+		await applyProxy(loadConfig());
+		const { main } = await import("@earendil-works/pi-coding-agent");
+		return main(["mcp", sub === "check" ? "list" : sub, ...more]);
+	}
+	console.log(`usage:
+  ferry mcp list                      the servers Ferry uses here, and from which file
+  ferry mcp import [app|file] [--force]
+                                      copy servers from Claude Desktop, Claude Code, Cursor, VS Code or Windsurf
+                                      (no name: from every app that has some), or from an mcp.json file
+  ferry mcp add <name> -- <command> [args...]    or: ferry mcp add <name> --url <https://...>
+  ferry mcp remove <name>
+  ferry mcp check                     connect to each server and list its tools
+  ferry mcp login <name>              sign in to a server that uses OAuth
+Files: ${m.USER_MCP()} (yours), .ferry/mcp.json or .mcp.json in a project (asked once before use)`);
 }
 
 const exit = () => process.exit(process.exitCode ?? 0); // also stops a server this window started
@@ -439,6 +485,7 @@ else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | 
 		await main(rest);
 	}
 }
+else if (cmd === "mcp") await mcp(rest);
 else if (cmd === "doctor") await doctor().then(exit);
 else if (cmd === "install") {
 	await applyProxy(loadConfig());
@@ -459,13 +506,14 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry                             start the agent in this folder (type your request, Ctrl+C twice to quit)
   ferry -p "question"               one question, answer printed, then exit
   ferry -c / ferry -r               continue the last conversation / pick one to resume
-  (inside: Shift+Tab permission mode, /permissions rules, /memory, /compact, /new)
+  (inside: /help lists the commands and keys; Shift+Tab switches the permission mode)
   ferry doctor [--no-model]         check the setup step by step, ending with a tiny request to each model
   ferry login <server-url> <token>  use a Ferry server on another machine
       [--header "Name: value"]      extra header for every request (e.g. a Cloudflare Access service token)
   ferry logout                      go back to a Ferry server on this computer
   ferry config                      show the client settings (memory, subagents, approvals, blocked paths...)
   ferry config set <key> <value>    change one, e.g. ferry config set memory false
+  ferry mcp list | import | add     MCP servers: see them, copy them from Claude Desktop / Cursor / Claude Code
   ferry pkg install npm:<package>   add a pi package (extensions, skills, commands); ferry pkg list | remove
   ferry update [file.zip]           install the latest release from GitHub (or a zip you downloaded)
   ferry install [--client-only]     install from an unpacked Ferry folder (--client-only: no local server)

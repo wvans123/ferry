@@ -17,7 +17,7 @@ export const DEFAULTS = {
 	// Paths the agent may never read, change or run commands on (substring match, case-insensitive)
 	blockedPaths: [".env", ".ssh", "id_rsa", "secrets", "credentials"],
 	// Permission mode at start: default (ask before edits and commands), acceptEdits, plan (read-only), bypass.
-	// Shift+Tab switches while ferry runs; "always allow" answers are kept as rules (see /permissions).
+	// Shift+Tab switches while ferry runs; "always allow" answers are kept as rules (/status shows the files).
 	permissionMode: "default",
 	// Company proxy, e.g. "http://proxy.corp:8080". Empty = use HTTPS_PROXY / HTTP_PROXY if set.
 	proxy: "",
@@ -37,27 +37,45 @@ export const DEFAULTS = {
 	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
+	thinking: "medium", // how long Claude / GPT think: low, medium, high, xhigh
+	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 };
 
-/** What `ferry config` shows and accepts: key -> [type, explanation]. */
+/** The settings worth changing, shown by /config and `ferry config`: key -> [type, explanation, choices?]. */
 export const SETTINGS = {
-	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows where)"],
-	subagents: ["boolean", "let the agent hand searches and side tasks to subagents with their own context"],
-	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
-	permissionMode: ["string", "permission mode at start: default (ask before edits and commands), acceptEdits (file changes go ahead), plan (read-only), bypass (nothing asks). Shift+Tab switches"],
-	web: ["string", "where web_fetch / web_search run: client (this computer, company proxy and gateway rules apply), server (the Ferry server, if its admin page allows), off"],
-	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
-	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
-	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
-	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
-	notifyAfterSeconds: ["number", "how long a request must take before that notification"],
+	permissionMode: ["string", "how much the agent may do without asking, when ferry starts (Shift+Tab switches while it runs)",
+		["default  ask before changing files and running commands", "acceptEdits  file changes in the project go ahead; commands still ask",
+			"plan  read and search only", "bypass  nothing asks (protected paths stay blocked)"]],
+	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
+		["low", "medium  (default)", "high", "xhigh"]],
+	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
+	web: ["string", "where web_fetch and web_search run",
+		["client  this computer (the company proxy and gateway rules apply)", "server  the Ferry server, if its admin page allows it", "off"]],
 	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
-	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
-	browserHeadless: ["boolean", "run that browser without a window"],
+	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
+	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
+	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
 	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
 	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
+};
+
+/** Rarely needed; /config lists them under "More settings", `ferry config` accepts them too. */
+export const ADVANCED_SETTINGS = {
+	subagents: ["boolean", "let the agent hand searches and side tasks to subagents with their own context"],
+	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
+	notifyAfterSeconds: ["number", "how long a request must take before the notification"],
+	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
+	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
+	browserHeadless: ["boolean", "run that browser without a window"],
 	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
 };
+
+/** "400k", "1m", "1.5M", "200000" -> tokens; 0 when it is not a size. */
+export function parseTokens(text) {
+	const m = /^\s*(\d+(?:\.\d+)?)\s*([km])?\s*$/i.exec(String(text ?? ""));
+	if (!m) return 0;
+	return Math.round(Number(m[1]) * ({ k: 1e3, m: 1e6 }[(m[2] ?? "").toLowerCase()] ?? 1));
+}
 
 /** Headers every request to the Ferry server carries. */
 export function serverHeaders(cfg, extra = {}) {
@@ -151,7 +169,7 @@ export function findBash() {
 }
 
 /** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept). */
-export function ensureAgentDir(defaultModel, modelIds = [defaultModel]) {
+export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking = "medium") {
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
 	const file = join(AGENT_DIR, "settings.json");
 	const cur = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
@@ -167,6 +185,7 @@ export function ensureAgentDir(defaultModel, modelIds = [defaultModel]) {
 	}
 	// the server's model list changed (e.g. a new API key): fall back to its first model
 	if (next.defaultProvider === "ferry" && !modelIds.includes(next.defaultModel)) next.defaultModel = defaultModel;
+	next.defaultThinkingLevel = ["low", "medium", "high", "xhigh"].includes(thinking) ? thinking : "medium";
 	writeFileSync(file, JSON.stringify(next, null, 2), "utf8");
 	// Shift+Tab switches the permission mode (like Claude Code); pi uses it for thinking levels, which the
 	// server-chosen model does not expose

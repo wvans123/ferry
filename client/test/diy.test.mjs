@@ -22,12 +22,15 @@ test("hooks run in the project folder and report failures", async () => {
 	assert.match(r.output, /hi-there/);
 });
 
-test("a project command replaces a built-in one with the same name", () => {
+test("a project command replaces your own one with the same name", () => {
 	const proj = mkdtempSync(join(tmpdir(), "ferry-proj-"));
 	mkdirSync(join(proj, ".ferry", "commands"), { recursive: true });
+	mkdirSync(join(process.env.FERRY_HOME, "commands"), { recursive: true });
+	writeFileSync(join(process.env.FERRY_HOME, "commands", "review.md"), "my review");
+	writeFileSync(join(process.env.FERRY_HOME, "commands", "standup.md"), "standup");
 	writeFileSync(join(proj, ".ferry", "commands", "review.md"), "our review");
 	const files = commandFiles(proj);
-	assert.ok(files.some((f) => f.endsWith("init.md")));
+	assert.ok(files.some((f) => f.endsWith("standup.md")));
 	assert.deepEqual(files.filter((f) => /[\\/]review\.md$/.test(f)), [join(proj, ".ferry", "commands", "review.md")]);
 });
 

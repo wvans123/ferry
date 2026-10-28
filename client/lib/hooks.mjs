@@ -132,13 +132,5 @@ export function createHooks() {
 				if (ctx?.hasUI) ctx.ui.notify(`${r.code === 0 ? "OK" : `exit ${r.code}`}  ${h.run}${r.output ? `\n${tail(r.output, 1500)}` : ""}`, r.code === 0 ? "info" : "warning");
 			}
 		});
-
-		pi.registerCommand("hooks", {
-			description: "Show the hooks that run after edits and when a request is done",
-			handler: async (_a, ctx) => {
-				const show = (k) => hooks[k].map((h) => `  ${h.match ? `${h.match}: ` : ""}${h.run}`).join("\n") || "  (none)";
-				ctx.ui.notify(`afterEdit:\n${show("afterEdit")}\nonDone:\n${show("onDone")}\n\nFiles: ${join(FERRY_HOME, "hooks.json")} and .ferry/hooks.json in the project`, "info");
-			},
-		});
 	};
 }

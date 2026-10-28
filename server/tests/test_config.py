@@ -100,3 +100,15 @@ def test_models_file_written_then_hot_reloaded(tmp_path, monkeypatch):
     f.write_text("this is [ not toml", encoding="utf-8")                 # a broken edit keeps the old list
     os.utime(f, (cfg.models_mtime + 10, cfg.models_mtime + 10))
     assert refresh_models(cfg) and cfg.default_model == "deepseek-think"
+
+
+def test_old_deepseek_sizes_are_raised_but_chosen_ones_kept():
+    from ferry_server.config import parse_models
+    raw = {"providers": {"deepseek": {"preset": "deepseek"}},
+           "models": {"a": {"provider": "deepseek", "model": "deepseek-flash", "context_window": 128000, "max_tokens": 8192},
+                      "b": {"provider": "deepseek", "model": "deepseek-flash", "context_window": 300000, "max_tokens": 16000},
+                      "c": {"provider": "deepseek", "model": "deepseek-v4-pro", "context_window": 128000, "max_tokens": 8192}}}
+    _, models = parse_models(raw, {})
+    assert (models["a"].context_window, models["a"].max_tokens) == (1_000_000, 32_000)
+    assert (models["b"].context_window, models["b"].max_tokens) == (300_000, 16_000)
+    assert models["c"].context_window == 128_000

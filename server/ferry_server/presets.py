@@ -21,7 +21,7 @@ PRESETS: list[dict] = [
         "id": "deepseek", "name": "DeepSeek", "group": "国内",
         "base_url": "https://api.deepseek.com",
         "key_hint": "platform.deepseek.com → API Keys", "key_url": "https://platform.deepseek.com/api_keys",
-        "models": [("deepseek-flash", 128_000, 8_192, {"vision": True}), ("deepseek-v4-pro", 128_000, 8_192)],
+        "models": [("deepseek-flash", 1_000_000, 32_000, {"vision": True}), ("deepseek-v4-pro", 128_000, 8_192)],
         "drop_params": ["store"], "rename_params": {"max_completion_tokens": "max_tokens"},
     },
     {

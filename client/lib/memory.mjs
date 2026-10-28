@@ -160,6 +160,8 @@ export function describeMemory(cwd) {
 	].join("\n");
 }
 
+const tell = (ctx, text) => (ctx.hasUI ? ctx.ui.notify(text, "info") : process.stdout.write(`${text}\n`));
+
 export function createMemory(cfg) {
 	return (pi) => {
 		if (cfg.memory === false) return;
@@ -178,25 +180,20 @@ export function createMemory(cfg) {
 		pi.on("before_agent_start", (event, ctx) => {
 			event.systemPromptOptions.sections.ferry_memory = memorySection(ctx?.cwd ?? process.cwd());
 		});
-		pi.registerCommand("remember", {
-			description: "Save something to memory right away: /remember [user] <text> (user = all projects, default this project)",
+		pi.registerCommand("memory", {
+			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects)",
 			handler: async (args, ctx) => {
+				const cwd = ctx.cwd ?? process.cwd();
 				let text = String(args ?? "").trim();
+				if (!text) return tell(ctx, describeMemory(cwd), "info");
 				let scope = "project";
 				if (/^(user|global)\s+/i.test(text)) {
 					scope = "user";
 					text = text.replace(/^\S+\s+/, "");
 				}
-				if (!text) return ctx.ui.notify("Usage: /remember [user] <what to remember>", "warning");
 				const name = slug(text.split(/\s+/).slice(0, 6).join("-")) || `note-${Date.now()}`;
-				const r = runMemory({ action: "save", scope, name, description: text.slice(0, 120), content: text }, ctx.cwd ?? process.cwd());
-				ctx.ui.notify(r.content[0].text, "info");
-			},
-		});
-		pi.registerCommand("memory", {
-			description: "Show what Ferry remembers and where the files are",
-			handler: async (_args, ctx) => {
-				ctx.ui.notify(describeMemory(ctx.cwd ?? process.cwd()), "info");
+				const r = runMemory({ action: "save", scope, name, description: text.slice(0, 120), content: text }, cwd);
+				tell(ctx, r.content[0].text, "info");
 			},
 		});
 	};

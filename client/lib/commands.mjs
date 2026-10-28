@@ -1,34 +1,46 @@
 // Slash commands and do-it-yourself resources.
 //
-// Built in, like Claude Code's basic commands: /help /clear /exit /rename /cost /context /doctor /config /skills
-// /add-dir /status /agents; Markdown templates in client/commands/: /init /review /security-review
-// Your own, as Markdown files (the file name is the command; $ARGUMENTS, $1, ${1:-default} take what you type after it):
+// Ferry keeps the "/" list short. From pi: /new /resume /name /session /compact /model /quit and /mcp.
+// Ferry's own: /help /goal /tasks /rewind /memory /skills /context /cost /status /config (goal, tasks, rewind and memory in their own files).
+// Your own commands, as Markdown files (the file name is the command; $ARGUMENTS, $1, ${1:-default} take what
+// you type after it):
 //   <FERRY_HOME>/commands/*.md          everywhere
 //   <project>/.ferry/commands/*.md      in that project (also Claude Code's .claude/commands/)
 // Skills (folders with a SKILL.md; the model loads them when the task fits, or you call /skill:name):
 //   <FERRY_HOME>/skills/   <project>/.ferry/skills/   <project>/.claude/skills/
-// Also here: /status, /agents, and a desktop notification when a long request finishes.
+// Also here: a desktop notification when a long request finishes.
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { FERRY_HOME, SETTINGS, loadConfig, saveConfig } from "./config.mjs";
-import { MODE_LABEL } from "./permissions.mjs";
+import { join } from "node:path";
+import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, loadConfig, parseTokens, saveConfig } from "./config.mjs";
+import { MODE_LABEL, ruleFiles } from "./permissions.mjs";
 
-const HELP = `Ferry commands (type / to pick one; Tab completes)
+export const HELP = `Ferry commands (type / to pick one; Tab completes)
 
-Conversation   /clear  start over         /compact [what to keep]  shrink the context
-               /resume pick a conversation   /rename <name>   /fork   /tree   /export   /copy   /exit
-Work           /goal <objective>  keep working until it is done (/goal pause|resume|clear|budget)
-               /plan <task>  read-only plan first      /tasks  background commands and subtasks
-               /todos  the task list                   /rewind  put files back as before a request
-Knowledge      /init  write AGENTS.md for this folder   /memory   /remember <text>   /skills
-Review         /review [what]   /security-review [what]
-Information    /cost  tokens and money    /context  what fills the context    /status   /doctor
-Settings       /config   /permissions   /hooks   /agents   /mcp   /model   /settings   /add-dir <folder>
-Keys           Shift+Tab permission mode · Esc interrupt · @ attach a file · !cmd run a command yourself
-               Ctrl+C twice to quit
+Conversation   /new  start a new one          /resume  go back to an earlier one
+               /name <name>  name this one    /session  file, size and messages of this one
+               /compact [what to keep]  summarise the history now, to free up context
+               /rewind  go back to one of your messages: conversation, files, or both
+Work           /goal <objective>  keep working until it is done (/goal pause | resume | clear | budget)
+               /tasks  background commands and subagents: output, stop
+Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
+               /memory user <text> for all projects)      /skills  what the agent knows how to do
+Information    /context [size]  how full the context is; with a size (400k, 1m, auto) change it
+               /cost  tokens and money       /status  server, model, settings, and a quick check
+Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
+
+Keys           Shift+Tab   permission mode: ask first > auto-edit (file changes go ahead) > plan (read only) > allow all
+               Esc  stop the agent        Ctrl+C  clear the input (twice: quit)       Ctrl+D  quit
+               Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
+               Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
+               @file  attach a file       !command  run a command yourself (its output goes to the agent)
 Your own commands: Markdown files in .ferry/commands/ or ${join(FERRY_HOME, "commands")} (docs/CUSTOMIZE.md)`;
+
+/** Show text to the user: in the terminal UI as a notice, with -p (print mode) on standard output. */
+export function tell(ctx, text, level = "info") {
+	if (ctx.hasUI) ctx.ui.notify(text, level);
+	else process.stdout.write(`${text}\n`);
+}
 
 const fmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
 
@@ -58,14 +70,12 @@ function bar(parts, total, width = 40) {
 	return `[${out.padEnd(width, ".").slice(0, width)}]`;
 }
 
-export const BUILTIN_COMMANDS = join(dirname(fileURLToPath(import.meta.url)), "..", "commands");
-
 const mdFiles = (dir) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => join(dir, f)) : []);
 
-/** Prompt files: built-in first, then yours, then the project's; a later file with the same name replaces an earlier one. */
+/** Prompt files: yours, then the project's; a later file with the same name replaces an earlier one. */
 export function commandFiles(cwd) {
 	const byName = new Map();
-	for (const dir of [BUILTIN_COMMANDS, join(FERRY_HOME, "commands"), join(cwd, ".claude", "commands"), join(cwd, ".ferry", "commands")]) {
+	for (const dir of [join(FERRY_HOME, "commands"), join(cwd, ".claude", "commands"), join(cwd, ".ferry", "commands")]) {
 		for (const f of mdFiles(dir)) byName.set(f.split(/[\\/]/).pop().toLowerCase(), f);
 	}
 	return [...byName.values()];
@@ -90,7 +100,7 @@ function notifyDone(seconds) {
 
 /**
  * deps: { status(): lines about the server and model, mode(): current permission mode, agents(cwd),
- *         doctor(): text of `ferry doctor`, addDir(path): allow a folder outside the project, price: model prices }
+ *         doctor(): text of `ferry doctor --no-model`, reregister(pi): give pi the models again with new sizes }
  */
 export function createCommands(cfg, deps) {
 	return (pi) => {
@@ -109,38 +119,36 @@ export function createCommands(cfg, deps) {
 			started = 0;
 		});
 
-		pi.registerCommand("status", {
-			description: "Ferry status: server, model, permission mode, web, memory, tools",
+		pi.registerCommand("help", {
+			description: "Commands, keys, and the subagents the agent can hand work to",
 			handler: async (_a, ctx) => {
-				const lines = await deps.status();
-				const tools = pi.getActiveTools();
-				lines.push(`Permission mode: ${MODE_LABEL[deps.mode()]} (Shift+Tab, /permissions)`);
-				lines.push(`Tools: ${tools.join(", ")}`);
-				const usage = ctx.getContextUsage?.();
-				if (usage?.tokens) lines.push(`Context: ${usage.tokens.toLocaleString()} of ${usage.contextWindow?.toLocaleString() ?? "?"} tokens`);
-				lines.push(`Commands: ${commandFiles(ctx.cwd ?? process.cwd()).map((f) => `/${f.split(/[\\/]/).pop().replace(/\.md$/, "")}`).join(" ")}`);
-				ctx.ui.notify(lines.join("\n"), "info");
+				const cwd = ctx.cwd ?? process.cwd();
+				const agents = deps.agents(cwd).map((a) => `  ${a.name}: ${a.description.slice(0, 110)}`).join("\n");
+				const own = commandFiles(cwd).map((f) => `/${f.split(/[\\/]/).pop().replace(/\.md$/, "")}`);
+				tell(ctx, `${HELP}\n${own.length ? `Yours: ${own.join(" ")}\n` : ""}\nSubagents (the agent uses them by itself; ` +
+					`add your own in .ferry/agents/):\n${agents}`, "info");
 			},
 		});
 
-		pi.registerCommand("help", {
-			description: "List Ferry's commands and keys",
-			handler: async (_a, ctx) => ctx.ui.notify(HELP, "info"),
-		});
-		pi.registerCommand("clear", {
-			description: "Start a new conversation (the old one stays in /resume)",
+		pi.registerCommand("status", {
+			description: "Server, model, permission mode, rules and hooks, and a quick check of the setup",
 			handler: async (_a, ctx) => {
-				await ctx.newSession();
-			},
-		});
-		pi.registerCommand("exit", { description: "Quit Ferry", handler: async (_a, ctx) => ctx.shutdown() });
-		pi.registerCommand("rename", {
-			description: "Name this conversation (shown in /resume)",
-			handler: async (args, ctx) => {
-				const name = String(args ?? "").trim();
-				if (!name) return ctx.ui.notify("Usage: /rename <name>", "warning");
-				pi.setSessionName(name);
-				ctx.ui.notify(`Renamed to: ${name}`, "info");
+				const cwd = ctx.cwd ?? process.cwd();
+				const lines = await deps.status();
+				const usage = ctx.getContextUsage?.();
+				const f = ruleFiles(cwd);
+				lines.push(
+					`Permission mode: ${MODE_LABEL[deps.mode()]} (Shift+Tab)`,
+					`Context: ${usage?.tokens ? `${usage.tokens.toLocaleString()} of ` : ""}${usage?.contextWindow?.toLocaleString() ?? "?"} tokens (/context)`,
+					`Tools: ${pi.getActiveTools().join(", ")}`,
+					`Permission rules ("always allow" answers; edit to remove): ${f.project}`,
+					`  yours for all projects: ${f.user}   the team's: ${f.team}`,
+					`Hooks: ${join(FERRY_HOME, "hooks.json")} and .ferry/hooks.json`,
+					"",
+					"Checking the setup...",
+				);
+				tell(ctx, lines.join("\n"), "info");
+				tell(ctx, await deps.doctor(), "info");
 			},
 		});
 
@@ -154,59 +162,104 @@ export function createCommands(cfg, deps) {
 					`Input: ${fmt(total)} tokens (${fmt(u.cacheRead)} from the cache${total ? `, ${Math.round((u.cacheRead / total) * 100)}%` : ""}${u.cacheWrite ? `, ${fmt(u.cacheWrite)} written to it` : ""})`,
 					`Output: ${fmt(u.output)} tokens`,
 					u.cost > 0 ? `Cost: $${u.cost.toFixed(u.cost < 1 ? 4 : 2)}` : "Cost: unknown (set the model's prices in the server's admin page)",
-					"All conversations, by day, project and model: the server's admin page > 用量",
+					"All conversations, by day, project and model: the server's admin page > 用量和费用",
 				];
-				ctx.ui.notify(lines.join("\n"), "info");
+				tell(ctx, lines.join("\n"), "info");
 			},
 		});
 
 		pi.registerCommand("context", {
-			description: "How full the context is, and with what",
-			handler: async (_a, ctx) => {
+			description: "How full the context is; /context 400k (or 1m, auto) changes its size for this model",
+			getArgumentCompletions: (prefix) => ["auto", "128k", "200k", "400k", "1m"].filter((x) => x.startsWith(prefix.trim()))
+				.map((x) => ({ value: x, label: x })),
+			handler: async (args, ctx) => {
+				const want = String(args ?? "").trim().toLowerCase();
+				if (want) return setContext(want, ctx);
 				const usage = ctx.getContextUsage?.();
-				const windowSize = usage?.contextWindow ?? 128000;
+				const windowSize = usage?.contextWindow ?? ctx.model?.contextWindow ?? 128000;
 				const sys = Math.round((ctx.getSystemPrompt?.() ?? "").length / 4);
 				const tools = Math.round(JSON.stringify(pi.getAllTools().filter((t) => pi.getActiveTools().includes(t.name))
 					.map((t) => [t.name, t.description, t.parameters])).length / 4);
 				const used = usage?.tokens ?? sys + tools;
 				const conv = Math.max(0, used - sys - tools);
 				const parts = [["system prompt (rules, memory index, AGENTS.md)", sys], ["tool definitions", tools], ["conversation", conv]];
+				const own = loadConfig().contextWindow?.[ctx.model?.id];
 				const lines = [
 					`${bar(parts, windowSize)} ${fmt(used)} of ${fmt(windowSize)} tokens (${Math.round((used / windowSize) * 100)}%)`,
 					...parts.map(([name, n], i) => `  ${["#", "=", "-"][i]} ${name}: ${fmt(n)}`),
 					`  . free: ${fmt(Math.max(0, windowSize - used))}`,
+					`Size: ${fmt(windowSize)} (${own ? "set by you" : "the server's setting for this model"}). Change it: /context 400k, /context 1m, /context auto.`,
 					"When it gets full, older parts are summarised automatically; /compact does it now.",
 				];
-				ctx.ui.notify(lines.join("\n"), "info");
+				tell(ctx, lines.join("\n"), "info");
 			},
 		});
 
-		pi.registerCommand("doctor", {
-			description: "Check the setup: server, token, model, search tools",
-			handler: async (_a, ctx) => {
-				ctx.ui.notify("Checking...", "info");
-				ctx.ui.notify(await deps.doctor(), "info");
-			},
-		});
+		async function setContext(want, ctx) {
+			const model = ctx.model;
+			if (!model) return tell(ctx, "No model selected", "warning");
+			const all = { ...(loadConfig().contextWindow ?? {}) };
+			let n = 0;
+			if (want !== "auto" && want !== "reset") {
+				n = parseTokens(want);
+				if (!n || n < 16000) return tell(ctx, "Usage: /context 400k  (or 200000, 1m; auto = the server's setting). At least 16k.", "warning");
+			}
+			if (n) all[model.id] = n;
+			else delete all[model.id];
+			saveConfig({ contextWindow: all });
+			cfg.contextWindow = all;
+			deps.reregister(pi, cfg);
+			const fresh = ctx.modelRegistry?.find?.("ferry", model.id);
+			if (fresh) await pi.setModel(fresh);
+			const server = deps.serverWindow(model.id);
+			const size = fresh?.contextWindow ?? n;
+			tell(ctx, `Context size for ${model.id}: ${fmt(size)} tokens${n ? "" : " (the server's setting)"}.` +
+				(n && server && n > server ? `\nThe server lists this model with ${fmt(server)}. If the model really takes less, ` +
+					"requests fail once the conversation grows past that; go back with /context auto." : "") +
+				"\nA bigger context keeps more history before summarising, but every request costs more.", "info");
+		}
 
 		pi.registerCommand("config", {
-			description: "Show or change Ferry's settings",
-			handler: async (args, ctx) => {
-				const cfg = loadConfig();
-				const keys = Object.keys(SETTINGS);
-				const pick = await ctx.ui.select("Ferry settings (pick one to change; most apply the next time you start ferry)",
-					[...keys.map((k) => `${k} = ${JSON.stringify(cfg[k])}`), "Done"]);
-				const key = pick?.split(" = ")[0];
-				if (!key || !SETTINGS[key]) return;
-				const [type, why] = SETTINGS[key];
-				const raw = await ctx.ui.input(`${key}: ${why}`, Array.isArray(cfg[key]) ? cfg[key].join(",") : String(cfg[key] ?? ""));
-				if (raw === undefined) return;
-				let value = raw.trim();
-				if (type === "boolean") value = /^(true|on|yes|1)$/i.test(value);
-				else if (type === "number") value = Number(value) || 0;
-				else if (type === "list") value = value ? value.split(",").map((x) => x.trim()).filter(Boolean) : [];
-				saveConfig({ [key]: value });
-				ctx.ui.notify(`${key} = ${JSON.stringify(value)} (saved; restart ferry if it does not apply right away)`, "info");
+			description: "Ferry's settings: pick one to change it",
+			handler: async (_args, ctx) => {
+				for (;;) {
+					const cur = loadConfig();
+					const show = (k) => {
+						const v = cur[k];
+						return `${k} = ${Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : JSON.stringify(v)}`;
+					};
+					const keys = Object.keys(SETTINGS);
+					const pick = await ctx.ui.select("Ferry settings (pick one to change it; most apply the next time you start ferry)",
+						[...keys.map(show), "More settings...", "Done"]);
+					if (!pick || pick === "Done") return;
+					let key = pick.split(" = ")[0];
+					if (pick === "More settings...") {
+						const more = await ctx.ui.select("More settings", [...Object.keys(ADVANCED_SETTINGS).map(show), "Back"]);
+						if (!more || more === "Back") continue;
+						key = more.split(" = ")[0];
+					}
+					const [type, why, choices] = SETTINGS[key] ?? ADVANCED_SETTINGS[key] ?? [];
+					if (!type) continue;
+					let value;
+					if (type === "boolean") {
+						const on = await ctx.ui.select(`${key}: ${why}`, ["on", "off"]);
+						if (!on) continue;
+						value = on === "on";
+					} else if (choices) {
+						const c = await ctx.ui.select(`${key}: ${why}`, choices);
+						if (!c) continue;
+						value = c.split(" ")[0];
+					} else {
+						const raw = await ctx.ui.input(`${key}: ${why}`, Array.isArray(cur[key]) ? cur[key].join(",") : String(cur[key] ?? ""));
+						if (raw === undefined) continue;
+						value = raw.trim();
+						if (type === "number") value = Number(value) || 0;
+						else if (type === "list") value = value ? value.split(",").map((x) => x.trim()).filter(Boolean) : [];
+					}
+					saveConfig({ [key]: value });
+					if (key === "thinking") pi.setThinkingLevel(value);
+					tell(ctx, `${key} = ${JSON.stringify(value)} (saved)`, "info");
+				}
 			},
 		});
 
@@ -215,31 +268,8 @@ export function createCommands(cfg, deps) {
 			handler: async (_a, ctx) => {
 				const skills = ctx.getSystemPromptOptions?.().skills ?? [];
 				const list = skills.map((s) => `  ${s.name}: ${String(s.description ?? "").slice(0, 100)}`).join("\n") || "  (none)";
-				ctx.ui.notify(`${list}\n\nCall one with /skill:<name>. Add your own as folders with a SKILL.md in .ferry/skills/ ` +
-					`or ${join(FERRY_HOME, "skills")} (docs/CUSTOMIZE.md).`, "info");
-			},
-		});
-
-		pi.registerCommand("add-dir", {
-			description: "Let the agent work in another folder too (changes there are treated like the project's)",
-			handler: async (args, ctx) => {
-				const dir = String(args ?? "").trim().replace(/^["']|["']$/g, "");
-				if (!dir || !existsSync(dir)) return ctx.ui.notify("Usage: /add-dir <existing folder>", "warning");
-				const abs = deps.addDir(dir);
-				pi.sendMessage({ customType: "ferry-add-dir", display: false,
-					content: `The user added the folder ${abs} to the workspace. You may read and change files there as in the project folder.` },
-				{ deliverAs: "nextTurn" });
-				ctx.ui.notify(`Added ${abs} for this session.`, "info");
-			},
-		});
-
-		pi.registerCommand("agents", {
-			description: "List the subagents the task tool can use, and where to add your own",
-			handler: async (_a, ctx) => {
-				const cwd = ctx.cwd ?? process.cwd();
-				const list = deps.agents(cwd).map((a) => `  ${a.name}${a.file ? ` (${a.file})` : " (built in)"}: ${a.description}`).join("\n");
-				ctx.ui.notify(`${list}\n\nAdd your own as Markdown in ${join(cwd, ".ferry", "agents")} or ${join(FERRY_HOME, "agents")} ` +
-					"(header: name, description, tools).", "info");
+				tell(ctx, `${list}\n\nThe agent reads a skill by itself when a task fits; /skill:<name> calls one. Add your own as ` +
+					`folders with a SKILL.md in .ferry/skills/ or ${join(FERRY_HOME, "skills")} (docs/CUSTOMIZE.md).`, "info");
 			},
 		});
 	};

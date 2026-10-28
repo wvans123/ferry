@@ -262,11 +262,13 @@ def check_claude_goal_jobs(root: Path, work: Path) -> None:
         audit = jsonl(s.data / "audit.jsonl")
         chats = [a for a in audit if a.get("event") == "chat"]
         commits = [a for a in audit if a.get("event") == "commit"]
-        valid = ups and all(str(u.get("model", "")).startswith("claude-") and isinstance(u.get("system"), list) for u in ups if "Reply with OK" not in json.dumps(u))
+        agent_calls = [u for u in ups if "Reply with OK" not in json.dumps(u)]
+        valid = agent_calls and all(str(u.get("model", "")).startswith("claude-") and isinstance(u.get("system"), list) for u in agent_calls)
+        thinks = agent_calls and all((u.get("thinking") or {}).get("type") == "adaptive" for u in agent_calls)
         check("F40 Claude 原生接口", c1 == 0 and "EXPLORE REPORT" in o1 and c2 == 0 and "IMG: picture received" in o2 and c3 == 0
-              and valid and any((a.get("base") or 0) > 0 for a in commits)
+              and valid and thinks and any((a.get("base") or 0) > 0 for a in commits)
               and all(a.get("status") == 200 and (a.get("cost") or 0) > 0 and a["tokens"]["cache_read"] > 0 for a in chats),
-              "主 agent 和子 agent 都经 Anthropic Messages API；对话仍然增量同步（缓存标记不打乱同步）；"
+              "主 agent 和子 agent 都经 Anthropic Messages API，并打开思考；对话仍然增量同步（缓存标记不打乱同步）；"
               "图片文件交给模型；每次调用都算出缓存命中和费用；doctor 能测 Claude 模型")
         c4, o4 = s.ferry("-p", "/goal GOALTEST write three notes")
         notes = sorted(p.name for p in work.glob("goal-note*.txt"))
@@ -284,7 +286,7 @@ def check_claude_goal_jobs(root: Path, work: Path) -> None:
 
 
 def check_diy(root: Path) -> None:
-    """Slash commands (built-in and your own), skills, hooks and /remember."""
+    """Your own slash commands (yours and the project's), skills, hooks and /memory <text>."""
     proj = root.parent / "diy-project"
     (proj / ".ferry" / "commands").mkdir(parents=True, exist_ok=True)
     (proj / ".ferry" / "commands" / "hello.md").write_text("---\ndescription: greet someone\n---\nDIYCMD greet $1\n", encoding="utf-8")
@@ -293,6 +295,8 @@ def check_diy(root: Path) -> None:
         "---\nname: demo-skill\ndescription: Shows that project skills are offered to the model.\n---\nSay hi.\n", encoding="utf-8")
     s = Stack(root, proj, "agent")
     try:
+        (s.home / "commands").mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / "examples" / "commands" / "review.md", s.home / "commands" / "review.md")
         c1, o1 = s.ferry("-p", "/hello Wesley")
         before = len(jsonl(s.upstream))
         c2, _ = s.ferry("-p", "/review src/api")
@@ -303,13 +307,103 @@ def check_diy(root: Path) -> None:
         (s.home / "hooks.json").write_text(json.dumps({"afterEdit": [
             {"match": "**/*.txt", "run": "echo HOOKRAN $FERRY_FILE_REL && exit 3"}]}), encoding="utf-8")
         c3, o3 = s.ferry("-p", "EDITTEST: write a file")
-        c4, o4 = s.ferry("-p", "/remember integration tests use port 9999")
+        c4, o4 = s.ferry("-p", "/memory integration tests use port 9999")
         mem = list((s.home / "memory" / "projects").glob("*/*.md"))
         check("F39 斜杠命令和自定义", c1 == 0 and "DIY: Wesley" in o1 and review_ok and skill_ok
               and c3 == 0 and "HOOKRAN made-by-agent.txt" in o3 and "exit code 3" in o3
               and c4 == 0 and any("port 9999" in m.read_text(encoding="utf-8") for m in mem),
-              "项目里自己写的 /hello 命令能用；内置 /review 展开成审查要求；项目技能出现在系统提示里；"
-              "改文件后钩子运行、失败输出交给模型；/remember 直接存进记忆")
+              "项目里自己写的 /hello 命令能用；放在自己目录里的 /review 展开成审查要求；项目技能出现在系统提示里；"
+              "改文件后钩子运行、失败输出交给模型；/memory 加一句话直接存进记忆")
+    finally:
+        s.close()
+
+
+def check_context_and_mcp(root: Path, work: Path) -> None:
+    """/context changes the context size for the model; ferry mcp imports and lists servers."""
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "/context 400k")
+        saved = json.loads((s.home / "config.json").read_text(encoding="utf-8")).get("contextWindow", {})
+        c2, o2 = s.ferry("-p", "/context")
+        c3, o3 = s.ferry("-p", "/context auto")
+        back = json.loads((s.home / "config.json").read_text(encoding="utf-8")).get("contextWindow", {})
+        ok = c1 == 0 and saved == {"auto": 400000} and c2 == 0 and "of 400.0k tokens" in o2 and c3 == 0 and back == {}
+        check("F43 调整上下文长度", ok, "/context 400k 改当前模型的上下文长度并保存，之后的会话按 400k 计算；"
+              "/context auto 回到服务端的设置" if ok else f"saved={saved} back={back} | {o1[-300:]} | {o2[-300:]}")
+        other = root / "claude_desktop_config.json"
+        other.write_text(json.dumps({"mcpServers": {"notes": {"command": "node", "args": ["notes-server.js"]},
+                                                    "old-sse": {"type": "sse", "url": "https://example.com/sse"}}}), encoding="utf-8")
+        (work / ".mcp.json").write_text(json.dumps({"mcpServers": {"team-db": {"url": "https://mcp.example.com/db"}}}), encoding="utf-8")
+        c4, o4 = s.ferry("mcp", "import", str(other))
+        c5, o5 = s.ferry("mcp", "list")
+        mine = json.loads((s.home / "agent" / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+        ok = (c4 == 0 and "added    notes" in o4 and "skipped  old-sse" in o4 and list(mine) == ["notes"]
+              and c5 == 0 and "notes" in o5 and "team-db" in o5 and "This project" in o5)
+        check("F44 MCP 导入和查看", ok, "ferry mcp import 从别的应用的配置文件导入（不支持的 SSE 说明原因跳过）；"
+              "ferry mcp list 列出自己的和项目的服务器" if ok else f"{o4[-300:]} | {o5[-300:]}")
+    finally:
+        s.close()
+        (work / ".mcp.json").unlink(missing_ok=True)
+
+
+def check_project_mcp(root: Path) -> None:
+    """A project's .ferry/mcp.json: Ferry asks once, then the agent can use the server's tools."""
+    if WINDOWS:
+        print("  SKIP  F45 项目自带的 MCP（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    proj = root.parent / "mcp-project"
+    (proj / ".ferry").mkdir(parents=True, exist_ok=True)
+    (proj / ".ferry" / "mcp.json").write_text(json.dumps({"mcpServers": {"notes": {
+        "command": NODE, "args": [str(ROOT / "selftest" / "fake_mcp.mjs")], "exposure": "direct"}}}), encoding="utf-8")
+    s = Stack(root, proj, "agent")
+    seen = b""
+    try:
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(proj)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.3)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen):
+                    return True
+            return False
+
+        asked = wait_for("This project brings MCP servers", 60)
+        time.sleep(0.3)
+        os.write(fd, b"\r")
+        time.sleep(2)
+        os.write(fd, b"MCPTEST: look up the build note")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        used = wait_for("MCP: NOTE[build]: the build runs on port 7070", 60)
+        remembered = "mcp-trust.json" in str(list(s.home.rglob("mcp-trust.json")))
+        for _ in range(2):
+            os.write(fd, b"\x03")
+            time.sleep(0.3)
+        time.sleep(1)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        ok = asked and used and remembered
+        check("F45 项目自带的 MCP", ok, "项目 .ferry/mcp.json 里的服务器先问一次，同意后 agent 能调用它的工具，答复记住"
+              if ok else f"asked={asked} used={used} remembered={remembered}: {plain(seen)[-400:]!r}")
     finally:
         s.close()
 
@@ -325,7 +419,8 @@ def check_tui(root: Path, work: Path) -> None:
     s = Stack(root, work, "agent")
     seen = b""
     try:
-        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"}
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
         pid, fd = pty.fork()
         if pid == 0:
             os.chdir(work)
@@ -361,6 +456,48 @@ def check_tui(root: Path, work: Path) -> None:
         time.sleep(0.5)
         os.write(fd, b"\r")
         help_shown = wait_for("Ferry commands", 20)
+
+        def typed(text: bytes, then: bytes = b"\r") -> None:
+            os.write(fd, text)
+            time.sleep(0.5)
+            if then:
+                os.write(fd, then)
+
+        # a short "/" list: Ferry's commands are there, pi's hidden ones are not
+        typed(b"/rew", b"")
+        listed = wait_for("Go back to one of your messages", 10)
+        typed(b"\x7f\x7f\x7f\x7f", b"")
+        mark = len(seen)
+        typed(b"/scoped", b"")
+        time.sleep(1.5)
+        hidden = "Enable/disable models" not in plain(seen[mark:])
+        typed(b"\x7f" * 7, b"")
+        # /context changes the size right away
+        typed(b"/context 300k")
+        resized = wait_for("Context size for auto: 300.0k", 15)
+        mark = len(seen)
+        typed(b"/context")
+        shows = wait_for("of 300.0k tokens", 15)
+        # /rewind: back to before the message, which goes into the input box again
+        typed(b"/rewind")
+        asked = wait_for("Go back to just before which message?", 15)
+        os.write(fd, b"\r")
+        rewound = wait_for("Back to before that message", 15)
+        time.sleep(0.5)
+        os.write(fd, b"\x03")  # clear the input box (the message put back there)
+        time.sleep(1.5)
+        # files too: the agent writes a file, /rewind takes the conversation and the file back
+        made = work / "made-by-agent.txt"
+        typed(b"EDITTEST: write a file")
+        wrote = wait_for("EDIT: ", 60) and made.exists()
+        typed(b"/rewind")
+        wait_for("file changed since]", 15)
+        os.write(fd, b"\r")
+        wait_for("Conversation and files", 15)
+        time.sleep(0.3)
+        os.write(fd, b"\r")
+        files_back = wait_for("Files put back", 15) and not made.exists()
+        time.sleep(1.5)
         os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
@@ -370,11 +507,16 @@ def check_tui(root: Path, work: Path) -> None:
             os.waitpid(pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
-        ok = started and answered and widget and cost_shown and help_shown
-        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示任务清单，/cost 和 /help 能用" if ok
-              else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown}: {plain(seen)[-300:]!r}")
+        ok = (started and answered and widget and cost_shown and help_shown and listed and hidden and resized and shows and asked
+              and rewound and wrote and files_back)
+        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示任务清单；/cost /help 能用；斜杠列表只有保留的命令；"
+              "/context 300k 立即生效；/rewind 回到某条消息之前，对话和 agent 改过的文件一起退回" if ok
+              else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown} listed={listed} "
+                   f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back}: "
+                   f"{plain(seen)[-400:]!r}")
     finally:
         s.close()
+        (work / "made-by-agent.txt").unlink(missing_ok=True)
 
 
 def check_gateway(root: Path, work: Path) -> None:
@@ -747,6 +889,8 @@ def main() -> int:
     print("\n[13/14] 联网、公司网关、浏览器", flush=True)
     check_web_browser(base / "web", work)
     check_gateway(base / "gateway", work)
+    check_context_and_mcp(base / "ctx", work)
+    check_project_mcp(base / "pmcp")
     check_tui(base / "tui", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)

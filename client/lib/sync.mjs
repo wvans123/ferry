@@ -5,6 +5,7 @@
 // refers to the server-side copy. The server rebuilds the full request, adds its rules, redacts it and
 // calls the model. If the server has lost its copy, the client re-uploads everything automatically.
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { PROTOCOL, serverHeaders } from "./config.mjs";
@@ -38,6 +39,48 @@ export function takeCacheMarks(list) {
 } // pi's summary prompt // per process, so two sessions with the same opening never share a server copy
 
 export class FerryError extends Error {}
+
+let catalog = null;
+/** pi's own entry for a model it knows (Claude, GPT): whether it thinks, and how to ask it to. */
+export function knownModel(name) {
+	if (!catalog) {
+		catalog = new Map();
+		for (const file of ["anthropic", "openai"]) {
+			try {
+				const url = new URL(`./providers/data/${file}.json`, import.meta.resolve("@earendil-works/pi-ai"));
+				for (const group of Object.values(JSON.parse(readFileSync(url, "utf8")))) {
+					for (const m of Object.values(group)) if (m?.id && m.type === "chat") catalog.set(m.id, { ...m, provider: file });
+				}
+			} catch {
+				// a pi-ai version laid out differently: no thinking settings, everything else works
+			}
+		}
+	}
+	return catalog.get(String(name ?? "").replace(/^.*\//, ""));
+}
+
+/** pi's model definition for one model the server offers. The user's /context setting wins over the server's size. */
+export function modelDef(m, cfg) {
+	const own = cfg.contextWindow && typeof cfg.contextWindow === "object" ? cfg.contextWindow[m.id] : 0;
+	const known = knownModel(m.model);
+	const anthropic = m.api === "anthropic";
+	// thinking: on (pi's default level, medium) for the Claude and GPT models pi knows to think
+	const thinks = !!known?.reasoning && (anthropic ? known.provider === "anthropic" : known.provider === "openai");
+	return {
+		id: m.id,
+		name: `Ferry ${m.id}`,
+		reasoning: thinks,
+		...(thinks && known.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}),
+		...(thinks && anthropic && known.compat ? { compat: known.compat } : {}),
+		// pictures go to models that take them (the agent reads image files with the read tool)
+		input: m.vision ? ["text", "image"] : ["text"],
+		// USD per million tokens, from the server's price list: pi adds up the cost (/cost, the footer)
+		cost: { input: m.price?.input ?? 0, output: m.price?.output ?? 0,
+			cacheRead: m.price?.cache_read ?? m.price?.input ?? 0, cacheWrite: m.price?.cache_write ?? m.price?.input ?? 0 },
+		contextWindow: Number(own) > 0 ? Number(own) : (m.contextWindow ?? 128000),
+		maxTokens: m.maxTokens ?? 8192,
+	};
+}
 
 /** opts.purpose: "agent" (default) or "subagent"; tells the server what the requests are for. */
 export function createSyncProvider(cfg, models, opts = {}) {
@@ -200,24 +243,14 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		return out;
 	}
 
-	return (pi) => {
-		pi.registerProvider("ferry", {
-			baseUrl: `${cfg.server}/v1`,
-			apiKey: "$FERRY_TOKEN",
-			api: "ferry-sync",
-			models: models.map((m) => ({
-				id: m.id,
-				name: `Ferry ${m.id}`,
-				reasoning: false,
-				// pictures go to models that take them (the agent reads image files with the read tool)
-				input: m.vision ? ["text", "image"] : ["text"],
-				// USD per million tokens, from the server's price list: pi adds up the cost (/cost, the footer)
-				cost: { input: m.price?.input ?? 0, output: m.price?.output ?? 0,
-					cacheRead: m.price?.cache_read ?? m.price?.input ?? 0, cacheWrite: m.price?.cache_write ?? m.price?.input ?? 0 },
-				contextWindow: m.contextWindow ?? 128000,
-				maxTokens: m.maxTokens ?? 8192,
-			})),
-			streamSimple: streamFerry,
-		});
-	};
+	const register = (pi, c = cfg) => pi.registerProvider("ferry", {
+		baseUrl: `${cfg.server}/v1`,
+		apiKey: "$FERRY_TOKEN",
+		api: "ferry-sync",
+		models: models.map((m) => modelDef(m, c)),
+		streamSimple: streamFerry,
+	});
+	const factory = (pi) => register(pi);
+	factory.register = register; // again, after /context changed a size
+	return factory;
 }

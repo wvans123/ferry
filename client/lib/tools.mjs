@@ -47,10 +47,6 @@ export function createTodo() {
 		};
 		pi.on("session_start", restore);
 		pi.on("session_tree", restore);
-		pi.registerCommand("todos", {
-			description: "Show the agent's task list",
-			handler: async (_a, ctx) => ctx.ui.notify(todos.length ? render(todos) : "No task list yet.", "info"),
-		});
 		pi.registerTool({
 			name: "todo",
 			label: "Tasks",

@@ -1,9 +1,11 @@
-// /rewind (also /undo): put files back the way they were before the agent changed them (like Claude Code's checkpoints / rewind).
+// /rewind: go back to one of your messages, like Claude Code's rewind: the conversation, the files, or both.
 //
 // Before the first edit or write of a file in each request you send, its content is copied to
-// <FERRY_HOME>/checkpoints/<session>/. /undo lists your recent requests that changed files; pick one and every file
-// changed by it and by later requests goes back to how it was before. Changes made by shell commands (a build,
-// `git checkout`, deleting files with rm...) are not tracked: use git for those.
+// <FERRY_HOME>/checkpoints/<session>/. /rewind lists your messages; pick one, and
+//   - the conversation goes back to just before it (your message is put back in the input box, to change and resend;
+//     the later part stays in the session file), and/or
+//   - every file the agent changed with edit/write since then goes back to how it was.
+// Changes made by shell commands (a build, `git checkout`, deleting files with rm...) are not tracked: use git for those.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -101,26 +103,55 @@ export function createCheckpoints() {
 			}
 			return undefined;
 		});
-		const rewind = {
-			description: "Put files back the way they were before one of your recent requests (edits by the agent; not commands)",
+		const textOf = (m) => (typeof m.content === "string" ? m.content
+			: (m.content ?? []).filter((b) => b?.type === "text").map((b) => b.text).join(" ")).replace(/\s+/g, " ").trim();
+		const timeOf = (e) => e.message?.timestamp ?? (Date.parse(e.timestamp ?? "") || 0);
+
+		pi.registerCommand("rewind", {
+			description: "Go back to one of your messages: the conversation, the files the agent changed, or both",
 			handler: async (_args, ctx) => {
-				const runs = (store?.runs ?? []).filter((r) => r.files.length).slice(-15).reverse();
-				if (!runs.length) return ctx.ui.notify("Nothing to rewind: the agent has not changed files with edit or write in this conversation.", "info");
-				const time = (t) => new Date(t).toLocaleTimeString();
-				const pick = await ctx.ui.select("Undo the file changes of this request and everything after it:",
-					[...runs.map((r) => `${time(r.at)}  ${r.label || "(request)"}  (${r.files.length} file${r.files.length > 1 ? "s" : ""})`), "Cancel"]);
-				const run = runs.find((r) => pick?.startsWith(time(r.at)) && pick.includes(r.label));
-				if (!run) return;
-				const done = store.undo(run.id);
-				const list = done.map(([p, how]) => `  ${how}: ${p}`).join("\n");
-				ctx.ui.notify(`Undone. ${done.length} file(s):\n${list}\nChanges made by shell commands are not undone.`, "info");
-				// tell the model, so it does not assume its edits are still there
-				pi.sendMessage({ customType: "ferry-undo", display: false,
-					content: `The user undid the file changes made since their request "${run.label}". These files are back to ` +
-						`their earlier state:\n${list}\nRe-read files before relying on their content.` }, { deliverAs: "nextTurn" });
+				if (!ctx.hasUI) return;
+				const users = ctx.sessionManager.getBranch().filter((e) => e.type === "message" && e.message?.role === "user");
+				if (!users.length) return ctx.ui.notify("Nothing to go back to yet.", "info");
+				// a request's checkpoint starts just before its message is stored, so everything after the previous message
+				const since = (k) => (store?.runs ?? []).filter((r) => r.at > (k > 0 ? timeOf(users[k - 1]) : 0));
+				const changed = (k) => new Set(since(k).flatMap((r) => r.files.map((f) => f.path))).size;
+				const time = (e) => new Date(timeOf(e)).toLocaleTimeString();
+				const items = users.map((e, k) => ({ e, k, files: changed(k),
+					label: `${time(e)}  ${textOf(e.message).slice(0, 60) || "(message)"}` })).slice(-20).reverse();
+				const pick = await ctx.ui.select("Go back to just before which message?",
+					[...items.map((x) => `${x.label}${x.files ? `  [${x.files} file${x.files > 1 ? "s" : ""} changed since]` : ""}`), "Cancel"]);
+				const item = items.find((x) => pick?.startsWith(x.label));
+				if (!item) return;
+				let how = "Conversation only";
+				if (item.files) {
+					how = await ctx.ui.select(`Go back to before "${textOf(item.e.message).slice(0, 50)}":`,
+						["Conversation and files", "Conversation only (keep the files as they are now)", "Files only (keep the conversation)", "Cancel"]);
+					if (!how || how === "Cancel") return;
+				}
+				let list = "";
+				if (how.startsWith("Conversation and") || how.startsWith("Files")) {
+					const done = store.undo(since(item.k)[0].id);
+					list = done.map(([p, what]) => `  ${what}: ${p}`).join("\n");
+				}
+				if (how.startsWith("Conversation")) {
+					const r = await ctx.navigateTree(item.e.id);
+					if (r?.cancelled) return ctx.ui.notify("Not rewound.", "warning");
+					if (how.startsWith("Conversation only") && item.files) {
+						pi.sendMessage({ customType: "ferry-rewind", display: false,
+							content: "The user went back in the conversation but kept the files: changes made after this point are " +
+								"still on disk. Re-read files before relying on their content." }, { deliverAs: "nextTurn" });
+					}
+				} else {
+					// tell the model, so it does not assume its edits are still there
+					pi.sendMessage({ customType: "ferry-undo", display: false,
+						content: `The user undid the file changes made since their message "${textOf(item.e.message).slice(0, 80)}". ` +
+							`These files are back to their earlier state:\n${list}\nRe-read files before relying on their content.` },
+					{ deliverAs: "nextTurn" });
+				}
+				ctx.ui.notify([how.startsWith("Conversation") ? "Back to before that message; it is in the input box to change and send again." : "",
+					list ? `Files put back:\n${list}\nChanges made by shell commands are not undone.` : ""].filter(Boolean).join("\n"), "info");
 			},
-		};
-		pi.registerCommand("rewind", rewind);
-		pi.registerCommand("undo", { ...rewind, description: "Same as /rewind" });
+		});
 	};
 }

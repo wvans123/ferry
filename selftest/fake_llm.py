@@ -124,6 +124,10 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "mcp__browser__browser_snapshot", {})
         return ("text", "BROWSER: " + ("pelican-42" if "pelican-42" in text_of(tools[-1]) else text_of(tools[-1])[:200]))
+    if "MCPTEST" in first:  # a project's own MCP server
+        if not tools:
+            return ("tool", "mcp__notes__notes_lookup", {"key": "build"})
+        return ("text", "MCP: " + text_of(tools[-1])[:160])
     if "DIYCMD greet" in first:  # a user's own slash command, expanded by the client
         return ("text", "DIY: " + first.split("DIYCMD greet", 1)[1].strip()[:40])
     if "GATETEST" in first:
@@ -182,11 +186,15 @@ def anthropic_problems(body, headers):
         problems.append(f"model {body.get('model')!r}")
     if "ferry" in body:
         problems.append("ferry field leaked")
-    msgs = body.get("messages", [])
+    every = body.get("messages", [])
+    # mid-conversation system messages: only empty ones that set the thinking effort (pi sends them for Claude)
+    if any(m.get("role") == "system" and (m.get("content") or not (m.get("output_config") or {}).get("effort")) for m in every):
+        problems.append("system message that is not an effort marker")
+    msgs = [m for m in every if m.get("role") != "system"]
     if not msgs or msgs[0].get("role") != "user":
         problems.append("first message is not a user message")
     if any(m.get("role") not in ("user", "assistant") for m in msgs):
-        problems.append("role other than user/assistant")
+        problems.append("role other than user/assistant/system")
     if any(a.get("role") == b.get("role") for a, b in zip(msgs, msgs[1:])):
         problems.append("roles do not alternate")
     marks = json.dumps(body).count('"cache_control"')
@@ -201,6 +209,8 @@ def anthropic_to_openai(body):
     text = system if isinstance(system, str) else " ".join(b.get("text", "") for b in (system or []))
     out = [{"role": "system", "content": text}]
     for m in body.get("messages", []):
+        if m["role"] == "system":  # an effort marker
+            continue
         blocks = m["content"] if isinstance(m["content"], list) else [{"type": "text", "text": m["content"]}]
         if m["role"] == "assistant":
             calls = [{"id": b["id"], "type": "function", "function": {"name": b["name"], "arguments": json.dumps(b.get("input", {}))}}

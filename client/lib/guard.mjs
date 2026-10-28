@@ -1,10 +1,10 @@
 // The permission gate: every tool call passes through decide() (permissions.mjs) before it runs.
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
 import { findBash } from "./config.mjs";
-import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule, removeRule, ruleFiles } from "./permissions.mjs";
+import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule } from "./permissions.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
-const state = { mode: "default", queue: Promise.resolve(), extraDirs: [] }; // extraDirs: folders added with /add-dir
+const state = { mode: "default", queue: Promise.resolve(), extraDirs: [] }; // extraDirs: more folders treated like the project
 
 export function initialMode(cfg) {
 	if (process.env.FERRY_AUTO_APPROVE === "1") return "bypass";
@@ -40,7 +40,7 @@ async function ask(ui, verdict, event, cwd, who) {
 	}
 	if (choice?.startsWith("Always allow")) {
 		for (const r of rules) addRule(cwd, "allow", r, scope);
-		ui.notify(`Saved: ${rules.join(", ")} (see /permissions)`, "info");
+		ui.notify(`Saved: ${rules.join(", ")} (/status shows the rule files)`, "info");
 		return undefined;
 	}
 	if (choice === "Deny, and tell the agent what to do instead") {
@@ -82,7 +82,7 @@ export function createGuard(cfg, opts = {}) {
 	};
 }
 
-/** Modes, Shift+Tab, the footer, /mode and /permissions: only for the main agent. */
+/** Modes, Shift+Tab and the footer: only for the main agent. */
 export function createModes(cfg) {
 	return (pi) => {
 		state.mode = initialMode(cfg);
@@ -108,48 +108,6 @@ export function createModes(cfg) {
 		pi.registerShortcut("shift+tab", {
 			description: "Cycle permission mode",
 			handler: (ctx) => setMode(MODES[(MODES.indexOf(state.mode) + 1) % MODES.length], ctx),
-		});
-		pi.registerCommand("plan", {
-			description: "Switch to read-only plan mode and plan a task (Shift+Tab switches back to carry it out)",
-			handler: async (args, ctx) => {
-				setMode("plan", ctx);
-				const task = String(args ?? "").trim();
-				if (task) {
-					pi.sendUserMessage(`Make a plan for this task: ${task}\n\nLook at the relevant code first. Then give a ` +
-						"short, concrete plan: the steps, the files each step touches, how to verify the result, and any open " +
-						"questions for me. Do not change anything yet.");
-					if (!ctx.hasUI) { // print mode: stay until the answer is in
-						await new Promise((r) => setTimeout(r, 50));
-						await ctx.waitForIdle();
-					}
-				}
-			},
-		});
-		pi.registerCommand("mode", {
-			description: "Permission mode: default, acceptEdits, plan, bypass",
-			handler: async (args, ctx) => {
-				const want = String(args ?? "").trim();
-				if (MODES.includes(want)) return setMode(want, ctx);
-				const pick = await ctx.ui.select("Permission mode", MODES.map((m) => `${m}: ${MODE_LABEL[m]}`));
-				if (pick) setMode(pick.split(":")[0], ctx);
-			},
-		});
-		pi.registerCommand("permissions", {
-			description: "Show and remove permission rules",
-			handler: async (_args, ctx) => {
-				const cwd = ctx.cwd ?? process.cwd();
-				for (;;) {
-					const r = loadRules(cwd);
-					const items = [...r.allow.map((x) => `allow  ${x}`), ...r.ask.map((x) => `ask    ${x}`), ...r.deny.map((x) => `deny   ${x}`)];
-					const f = ruleFiles(cwd);
-					const pick = await ctx.ui.select(`Mode: ${MODE_LABEL[state.mode]}\nRules (pick one to remove it). Files:\n  ${f.user}\n  ${f.project}\n  ${f.team} (team, read only here)`,
-						[...items, "Done"]);
-					if (!pick || pick === "Done") return;
-					const [list, ...rest] = pick.split(/\s+/);
-					const rule = rest.join(" ");
-					if (!removeRule(cwd, list, rule)) ctx.ui.notify("That rule is in the team file: edit it there", "warning");
-				}
-			},
 		});
 	};
 }

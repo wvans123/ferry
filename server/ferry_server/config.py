@@ -193,13 +193,13 @@ def _persistent_secret(path: Path) -> str:
 
 # Zero-config models: one per API key found in the environment, all through OpenAI-compatible endpoints.
 # (id, key variable, default base URL, default model, context window, max output, params to drop, params to rename)
-# Context windows are kept at 200K tokens for Claude and OpenAI even where the model takes more: the agent then
-# summarises old history before a request reaches the ~1 MB size limit, and every turn costs less.
+# Context windows: what the model takes (GPT-6.1 Sol takes more, but input above 272K tokens costs twice as much).
+# The admin page and the client's /context change them.
 PROVIDERS = [
     ("claude", "ANTHROPIC_API_KEY", "https://api.anthropic.com", "claude-opus-5-5", 1_000_000, 64_000,
      ["temperature", "top_p"], {}),
     ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "gpt-6.1-sol", 400_000, 64_000, [], {}),
-    ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", 128_000, 8_192,
+    ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", 1_000_000, 32_000,
      ["store"], {"max_completion_tokens": "max_tokens"}),
 ]
 KEY_VARS = ", ".join(p[1] for p in PROVIDERS)
@@ -363,7 +363,18 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             models[mid] = ModelConfig(id=mid, provider=pid, **m)
         except TypeError as e:
             raise SystemExit(f"model {mid}: {e}") from None
+        _upgrade_old_sizes(models[mid])
     return providers, models
+
+
+def _upgrade_old_sizes(m: ModelConfig) -> None:
+    """Ferry up to 0.13 wrote DeepSeek Flash with 128K context and 8K output; the model takes 1M and much longer
+    answers. Only the exact old defaults are raised, so a size someone chose on purpose stays."""
+    if m.model in ("deepseek-flash", "deepseek-v4-flash") and "api.deepseek.com" in m.base_url:
+        if m.context_window == 128_000:
+            m.context_window = 1_000_000
+        if m.max_tokens == 8_192:
+            m.max_tokens = 32_000
 
 
 def apply_models_file(cfg: Config, path: Path) -> None:
