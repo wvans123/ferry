@@ -419,6 +419,11 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         <div><label class="f" for="fBase">接口地址</label><input type="text" id="fBase" placeholder="https://.../v1"></div>
       </div>
       <p class="muted" style="font-size:13px;margin:6px 0 0">接口地址填到 /v1 这一级即可，会自动接上 /chat/completions；以 /chat/completions 结尾的地址按原样使用。</p>
+      <div id="apiWrap" style="margin-top:12px" hidden>
+        <label class="f" for="fApi">接口格式</label>
+        <select id="fApi"><option value="openai">OpenAI 兼容（/chat/completions）</option><option value="anthropic">Anthropic（Claude 原生 /v1/messages）</option></select>
+        <p class="muted" style="font-size:13px;margin:6px 0 0">中转的是 Claude、并且也支持 /v1/messages 时选 Anthropic：提示词缓存和思考都走原生方式，花费少很多。不确定就保存后点"测试"，它会告诉你。</p>
+      </div>
       <div style="margin-top:14px" id="keyWrap">
         <label class="f" for="fKey">API Key <span id="keyNeed" style="color:var(--bad)">（必填）</span></label>
         <div class="row"><input type="password" id="fKey" autocomplete="off" style="flex:1;min-width:220px"><button class="btn" id="fKeyShow">显示</button></div>
@@ -553,13 +558,15 @@ async function loadProviders() {
   for (const b of document.querySelectorAll("[data-test]")) b.onclick = async () => {
     const p = P.providers[+b.dataset.test]; b.disabled = true; say("provMsg", `正在测试 ${p.name}……`);
     try { const r = await testModels(p.models.map((m) => m.id)); const bad = r.filter((m) => !m.ok);
-      say("provMsg", bad.length ? bad.map((m) => `${m.id}：${m.error}`).join("\n") : `${p.name}：全部能用`, !bad.length); }
+      const native = r.some((m) => m.anthropic) && p.api !== "anthropic"
+        ? `\n这个服务商也支持 Claude 原生接口：编辑 → 接口格式选"Anthropic"，提示词缓存更可靠，花费能少很多。` : "";
+      say("provMsg", (bad.length ? bad.map((m) => `${m.id}：${m.error}`).join("\n") : `${p.name}：全部能用`) + native, !bad.length); }
     catch (e) { say("provMsg", e.message, false); }
     b.disabled = false; };
   for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => removeProvider(+b.dataset.del);
 }
 function payload(list, routing) {
-  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "",
+  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api,
     models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, ...(m.price ? { price: m.price } : {}) })) })),
     routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, expose: $("rExpose").checked } };
 }
@@ -601,6 +608,7 @@ function fillForm(pre, prov) {
   $("pickStep").hidden = true; $("formStep").hidden = false; $("dlgFoot").hidden = false; $("dlgBack").hidden = !!prov;
   $("fName").value = prov?.name || pre.name; $("fBase").value = prov?.base_url || pre.base_url;
   $("fBase").readOnly = !pre.custom && !prov; $("fKey").value = ""; $("fKey").type = "password";
+  $("apiWrap").hidden = !pre.custom; $("fApi").value = prov?.api || pre.api || "openai";
   $("keyWrap").hidden = !!pre.no_key;
   const needKey = !pre.no_key && !(prov && (prov.key_tail || prov.key_source));
   $("keyNeed").hidden = !needKey;
@@ -655,6 +663,7 @@ $("dlgSave").onclick = async () => {
   const models = ED.models.filter((m) => m.on);
   if (!models.length) return say("dlgMsg", "至少勾选一个模型", false);
   const entry = { id: ED.id, name: $("fName").value.trim() || pre.name, preset: pre.id, base_url: base, api_key_env: ED.api_key_env, key,
+    ...(pre.custom ? { api: $("fApi").value } : {}),
     models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192,
       ...(m.price ? { price: m.price } : {}) })) };
   const list = P.providers.slice();

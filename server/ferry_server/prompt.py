@@ -116,3 +116,43 @@ def cap_upstream(payload: dict, max_bytes: int, keep_last: int = 6) -> tuple[int
         size -= before - len(json.dumps(m, ensure_ascii=False).encode("utf-8"))
         trimmed += 1
     return trimmed, body_size(payload)
+
+
+CLAUDE = re.compile(r"claude", re.I)
+
+
+def wants_cache_marks(m: ModelConfig) -> bool:
+    """A Claude model behind an OpenAI-style relay: Claude caches only what the request marks, so mark it (relays such
+    as OpenRouter, LiteLLM and one-api pass the marks on). Native Claude (api = anthropic) gets them from the client."""
+    return m.api == "openai" and bool(CLAUDE.search(m.model))
+
+
+def add_cache_marks(payload: dict) -> dict:
+    """A copy with Anthropic cache markers on the system prompt, the last tool and the last message: the history up
+    to there is cached, and the next request reads it at about a tenth of the price."""
+    out = json.loads(json.dumps(payload))
+    mark = {"type": "ephemeral"}
+
+    def on_text(msg: dict) -> bool:
+        c = msg.get("content")
+        if isinstance(c, str) and c:
+            msg["content"] = [{"type": "text", "text": c, "cache_control": mark}]
+            return True
+        if isinstance(c, list):
+            for part in reversed(c):
+                if isinstance(part, dict) and part.get("type") == "text":
+                    part["cache_control"] = mark
+                    return True
+        return False
+
+    msgs = out.get("messages") or []
+    for m in msgs:
+        if m.get("role") in ("system", "developer"):
+            on_text(m)
+            break
+    if out.get("tools"):
+        out["tools"][-1]["cache_control"] = mark
+    for m in reversed(msgs):
+        if m.get("role") in ("user", "assistant", "tool") and on_text(m):
+            break
+    return out

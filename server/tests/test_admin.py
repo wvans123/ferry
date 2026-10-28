@@ -159,3 +159,22 @@ def test_a_browser_landing_on_the_server_is_not_an_error(tmp_path, monkeypatch):
             return ov
     ov = run(go())
     assert ov["totals"]["errors"] == 1 and ov["totals"]["requests"] == 1
+
+
+def test_a_custom_relay_can_speak_claudes_own_api(tmp_path, monkeypatch):
+    cfg, app = make(tmp_path, monkeypatch)
+    key = (tmp_path / "admin-key").read_text().strip()
+
+    async def go():
+        async with client(app) as c:
+            c.cookies.set("ferry_admin", key)
+            r = await c.put("/admin/api/providers", headers={"X-Ferry-Admin": "1"}, json={
+                "providers": [{"id": "kiro", "name": "kiro", "preset": "custom", "base_url": "http://127.0.0.1:8990/v1",
+                               "key": "k", "api": "anthropic", "models": [{"model": "claude-opus-5.5"}]}],
+                "routing": {"default": "claude-opus-5.5"}})
+            assert r.status_code == 200, r.text
+            return (await c.get("/admin/api/providers")).json()
+
+    p = run(go())
+    assert p["providers"][0]["api"] == "anthropic" and cfg.models["claude-opus-5.5"].api == "anthropic"
+    assert cfg.models["claude-opus-5.5"].price["input"] == 4  # the official price, though the relay spells the name its own way

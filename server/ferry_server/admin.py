@@ -369,7 +369,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         views: dict[str, dict] = {}
         for p in cfg.providers.values():
             key = p.api_key
-            views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url,
+            views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url, "api": p.api,
                            "api_key_env": p.api_key_env, "no_key": p.no_key,
                            "key_tail": key[-4:] if key else "", "key_source": (
                                "env" if p.api_key_env and os.environ.get(p.api_key_env) else
@@ -459,7 +459,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             entry = {"id": pid, "name": p.get("name") or pre.get("name", pid), "preset": p.get("preset", ""),
                      "base_url": (p.get("base_url") or pre.get("base_url", "")).strip(),
                      "api_key_env": (p.get("api_key_env") or "").strip(),
-                     "drop_params": pre.get("drop_params", ["store"]), "api": pre.get("api", "openai"),
+                     "drop_params": pre.get("drop_params", ["store"]),
+                     # a relay of your own may speak Claude's Messages API too: then caching and thinking work natively
+                     "api": p.get("api") if pre.get("custom") and p.get("api") in ("openai", "anthropic") else pre.get("api", "openai"),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:
                 return JSONResponse({"error": f"{entry['name']}：接口地址不能为空"}, 400)

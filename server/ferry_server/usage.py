@@ -9,15 +9,17 @@ def normalize(usage: dict) -> dict:
     input counts only the uncached input tokens."""
     if not usage:
         return {}
-    if "input_tokens" in usage or "cache_read_input_tokens" in usage:  # Anthropic
+    if "input_tokens" in usage and "prompt_tokens" not in usage:  # Anthropic
         return {"input": int(usage.get("input_tokens") or 0),
                 "cache_read": int(usage.get("cache_read_input_tokens") or 0),
                 "cache_write": int(usage.get("cache_creation_input_tokens") or 0),
                 "output": int(usage.get("output_tokens") or 0)}
     prompt = int(usage.get("prompt_tokens") or 0)
     details = usage.get("prompt_tokens_details") or {}
-    cached = int(details.get("cached_tokens") or usage.get("prompt_cache_hit_tokens") or 0)  # OpenAI / DeepSeek
-    return {"input": max(0, prompt - cached), "cache_read": cached, "cache_write": 0,
+    # OpenAI / DeepSeek / a relay in front of Claude (which may report Anthropic's own fields)
+    cached = int(details.get("cached_tokens") or usage.get("prompt_cache_hit_tokens") or usage.get("cache_read_input_tokens") or 0)
+    written = int(details.get("cache_write_tokens") or usage.get("cache_creation_input_tokens") or 0)
+    return {"input": max(0, prompt - cached - written), "cache_read": cached, "cache_write": written,
             "output": int(usage.get("completion_tokens") or 0)}
 
 

@@ -157,3 +157,43 @@ def test_messages_the_server_has_are_sent_as_references(tmp_path):
         raise AssertionError("should fail")
     except MissingBlobs as e:
         assert e.missing == ["0" * 64]
+
+
+def test_claude_behind_an_openai_relay_gets_cache_marks_unless_refused(tmp_path, monkeypatch):
+    bodies = []
+    refuse = {"on": False}
+
+    def handler(req: httpx.Request):
+        b = json.loads(req.content)
+        bodies.append(b)
+        if refuse["on"] and "cache_control" in req.content.decode():
+            return httpx.Response(400, json={"error": {"message": "unknown field cache_control"}})
+        return answer()
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    (tmp_path / "models.toml").write_text(MODELS.replace('model = "deepseek-flash"', 'model = "claude-opus-5.5"'), encoding="utf-8")
+    token = (tmp_path / "token").read_text().strip()
+
+    async def ask():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"}, json={
+                "model": "other", "messages": [{"role": "system", "content": "rules"}, {"role": "user", "content": "hi"}],
+                "tools": [{"type": "function", "function": {"name": "read", "parameters": {}}}]})
+
+    assert asyncio.run(ask()).status_code == 200
+    sent = bodies[-1]
+    assert sent["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert sent["messages"][-1]["content"][0]["cache_control"] and sent["tools"][-1]["cache_control"]
+    refuse["on"] = True
+    bodies.clear()
+    assert asyncio.run(ask()).status_code == 200            # refused once, then sent plain
+    assert len(bodies) == 2 and "cache_control" not in json.dumps(bodies[1])
+    bodies.clear()
+    assert asyncio.run(ask()).status_code == 200            # and not tried again
+    assert len(bodies) == 1 and "cache_control" not in json.dumps(bodies[0])
+
+
+def test_usage_from_a_claude_relay_counts_the_cache():
+    from ferry_server.usage import normalize
+    u = normalize({"prompt_tokens": 1000, "completion_tokens": 10, "cache_read_input_tokens": 900})
+    assert u == {"input": 100, "cache_read": 900, "cache_write": 0, "output": 10}

@@ -34,7 +34,8 @@ from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
 from .pool import RETRY_STATUSES, Pool, groups
-from .prompt import adapt_params, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message, restore_cache_marks
+from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
+                     restore_cache_marks, wants_cache_marks)
 from .redact import Redactor
 from .store import BaseMismatch, MissingBlobs, Store
 from .stream import restore_message, restore_sse
@@ -62,7 +63,8 @@ def details_of(call_id: str, payload: dict, project: str, model: str, purpose: s
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
     # session store and redactor can be swapped at run time from the admin page (settings, word list)
-    live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20), pool=Pool())
+    live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20), pool=Pool(),
+                           no_marks=set())  # models whose relay refused cache markers
 
     def rebuild(store_too: bool = True) -> None:
         if store_too or live.store is None:
@@ -253,7 +255,16 @@ def create_app(cfg: Config) -> FastAPI:
                 err = "" if ok else f"HTTP {r.status_code}: {r.text[:300]}"
             except httpx.HTTPError as e:
                 ok, err = False, f"{type(e).__name__}: {e}"
-            out.append({**row, "ok": ok, "ms": int((time.time() - t) * 1000), **({"error": err} if err else {})})
+            extra = {}
+            if ok and wants_cache_marks(m):  # a Claude relay: does it also speak Claude's own API (better caching)?
+                try:
+                    a = await client.post(anthropic_url(m.base_url), timeout=30, json={
+                        "model": m.model, "max_tokens": 16, "messages": [{"role": "user", "content": "Reply with OK"}]},
+                        headers={"x-api-key": m.api_key, "Authorization": f"Bearer {m.api_key}", "anthropic-version": "2023-06-01"})
+                    extra["anthropic"] = a.status_code == 200 and "content" in a.text
+                except httpx.HTTPError:
+                    extra["anthropic"] = False
+            out.append({**row, "ok": ok, "ms": int((time.time() - t) * 1000), **extra, **({"error": err} if err else {})})
             write(audit_log, event="check", user=user, model=m.id, ok=ok)
         return out
 
@@ -365,8 +376,18 @@ def create_app(cfg: Config) -> FastAPI:
                 live.store.forget(key(request, ref["conv"]))
 
         last_err: tuple[int, bytes, str] = (502, b'{"error":{"message":"no provider answered"}}', "application/json")
-        for n, model in enumerate(tries):
-            body = json.dumps(adapt_params(payload, model), ensure_ascii=False).encode("utf-8")
+        refused_marks = False
+        attempts = []
+        for model in tries:  # with cache markers first where they help; the same without if the relay refuses them
+            if wants_cache_marks(model) and model.id not in live.no_marks:
+                attempts.append((model, True))
+            attempts.append((model, False))
+        tries = attempts
+        for n, (model, marks) in enumerate(tries):
+            if not marks and n and tries[n - 1][0] is model and tries[n - 1][1] and not refused_marks:
+                continue  # the marked request got an answer that was not about the markers
+            sent = adapt_params(add_cache_marks(payload) if marks else payload, model)
+            body = json.dumps(sent, ensure_ascii=False).encode("utf-8")
             if cfg.record_details and n == 0:
                 live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
             audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
@@ -377,6 +398,7 @@ def create_app(cfg: Config) -> FastAPI:
                 headers["Authorization"] = f"Bearer {model.api_key}"
             url = chat_url(model.base_url)
             more = n + 1 < len(tries)
+            refused_marks = False
             live.pool.start(model.id)
             try:
                 if not payload.get("stream"):
@@ -397,6 +419,11 @@ def create_app(cfg: Config) -> FastAPI:
                 live.pool.end(model.id)
                 write(audit_log, **audit, status=r.status_code, ms=int((time.time() - started) * 1000))
                 last_err = (r.status_code, err, r.headers.get("content-type", "application/json"))
+                if marks and r.status_code in (400, 422):  # this relay does not take cache markers: never again
+                    live.no_marks.add(model.id)
+                    refused_marks = True
+                    write(audit_log, event="cache_marks_refused", model=model.id)
+                    continue
                 if more and r.status_code in RETRY_STATUSES:
                     live.pool.failed(model.id, r.status_code)
                     continue
