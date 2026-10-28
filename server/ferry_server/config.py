@@ -364,7 +364,16 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
         except TypeError as e:
             raise SystemExit(f"model {mid}: {e}") from None
         _upgrade_old_sizes(models[mid])
+        _fill_price(models[mid])
     return providers, models
+
+
+def _fill_price(m: ModelConfig) -> None:
+    """No price saved (e.g. a relay that spells the name its own way): use the official one, if a preset knows it.
+    Change it on the admin page when your provider charges differently."""
+    if not m.price:
+        from .presets import model_extras
+        m.price = dict(model_extras(m.model).get("price", {}))
 
 
 def _upgrade_old_sizes(m: ModelConfig) -> None:

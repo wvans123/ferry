@@ -327,14 +327,16 @@ def check_context_and_mcp(root: Path, work: Path) -> None:
     """/context changes the context size for the model; ferry mcp imports and lists servers."""
     s = Stack(root, work, "agent")
     try:
-        c1, o1 = s.ferry("-p", "/context 400k")
+        c0, o0 = s.ferry("-p", "/context 400k")  # the server allows 128k for this model
+        c1, o1 = s.ferry("-p", "/context 64k")
         saved = json.loads((s.home / "config.json").read_text(encoding="utf-8")).get("contextWindow", {})
         c2, o2 = s.ferry("-p", "/context")
         c3, o3 = s.ferry("-p", "/context auto")
         back = json.loads((s.home / "config.json").read_text(encoding="utf-8")).get("contextWindow", {})
-        ok = c1 == 0 and saved == {"auto": 400000} and c2 == 0 and "of 400.0k tokens" in o2 and c3 == 0 and back == {}
-        check("F43 调整上下文长度", ok, "/context 400k 改当前模型的上下文长度并保存，之后的会话按 400k 计算；"
-              "/context auto 回到服务端的设置" if ok else f"saved={saved} back={back} | {o1[-300:]} | {o2[-300:]}")
+        ok = ("at most 128.0k" in o0 and c1 == 0 and saved == {"auto": 64000} and c2 == 0 and "of 64.0k tokens" in o2
+              and c3 == 0 and back == {})
+        check("F43 调整上下文长度", ok, "/context 64k 改当前模型的上下文长度并保存，之后的会话按 64k 计算；超过服务端允许的 400k 被拒绝；"
+              "/context auto 回到服务端的设置" if ok else f"saved={saved} back={back} | {o0[-200:]} | {o1[-300:]} | {o2[-300:]}")
         other = root / "claude_desktop_config.json"
         other.write_text(json.dumps({"mcpServers": {"notes": {"command": "node", "args": ["notes-server.js"]},
                                                     "old-sse": {"type": "sse", "url": "https://example.com/sse"}}}), encoding="utf-8")
@@ -452,7 +454,7 @@ def check_tui(root: Path, work: Path) -> None:
         time.sleep(0.5)
         os.write(fd, b"\r")
         answered = wait_for("TODO: [x] step one", 60)
-        widget = "Tasks (1/2 done)" in plain(seen)
+        widget = "To-do (1/2 done)" in plain(seen)
         os.write(fd, b"/cost")
         time.sleep(0.5)
         os.write(fd, b"\r")
@@ -461,6 +463,10 @@ def check_tui(root: Path, work: Path) -> None:
         time.sleep(0.5)
         os.write(fd, b"\r")
         help_shown = wait_for("Ferry commands", 20)
+        os.write(fd, b"/tasks")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        tasks_shown = wait_for("To-do list:", 15)
 
         def typed(text: bytes, then: bytes = b"\r") -> None:
             os.write(fd, text)
@@ -478,11 +484,13 @@ def check_tui(root: Path, work: Path) -> None:
         hidden = "Enable/disable models" not in plain(seen[mark:])
         typed(b"\x7f" * 7, b"")
         # /context changes the size right away
-        typed(b"/context 300k")
-        resized = wait_for("Context size for auto: 300.0k", 15)
+        typed(b"/context 100k")
+        resized = wait_for("Context size for auto: 100.0k", 15)
         mark = len(seen)
         typed(b"/context")
-        shows = wait_for("of 300.0k tokens", 15)
+        shows = wait_for("of 100.0k tokens", 15) and wait_for("Keep 100.0k", 5)
+        os.write(fd, b"\x1b")  # close the size picker
+        time.sleep(0.5)
         # /rewind: back to before the message, which goes into the input box again
         typed(b"/rewind")
         asked = wait_for("Go back to just before which message?", 15)
@@ -512,11 +520,11 @@ def check_tui(root: Path, work: Path) -> None:
             os.waitpid(pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
-        ok = (started and answered and widget and cost_shown and help_shown and listed and hidden and resized and shows and asked
+        ok = (started and answered and widget and cost_shown and help_shown and tasks_shown and listed and hidden and resized and shows and asked
               and rewound and wrote and files_back and resume)
-        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示任务清单；/cost /help 能用；斜杠列表只有保留的命令；"
-              "/context 300k 立即生效；/rewind 回到某条消息之前，对话和 agent 改过的文件一起退回；退出时提示 ferry --session" if ok
-              else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown} listed={listed} "
+        check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示待办清单；/cost /help /tasks 能用；斜杠列表只有保留的命令；"
+              "/context 100k 立即生效，/context 列出可选的大小；/rewind 回到某条消息之前，对话和 agent 改过的文件一起退回；退出时提示 ferry --session" if ok
+              else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown} tasks={tasks_shown} listed={listed} "
                    f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back} "
                    f"resume={resume}: "
                    f"{plain(seen)[-400:]!r}")

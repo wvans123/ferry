@@ -64,6 +64,20 @@ def body_size(payload: dict) -> int:
     return len(_IMAGE_DATA.sub("data:image", json.dumps(payload, ensure_ascii=False)).encode("utf-8"))
 
 
+def estimate_tokens(payload: dict) -> int:
+    """A rough token count of what goes to the model (pictures left out): about 4 ASCII characters per token, about
+    one token per Chinese character. Only used to notice a conversation that cannot fit the model any more."""
+    text = _IMAGE_DATA.sub("", json.dumps({k: payload.get(k) for k in ("system", "messages", "tools")}, ensure_ascii=False))
+    other = sum(1 for ch in text if ord(ch) > 127)
+    return int((len(text) - other) / 4 + other)
+
+
+def overflow_message(tokens: int, window: int, model_id: str) -> str:
+    """Worded so the client recognises it as a full context: it then summarises the history and tries again."""
+    return (f"This conversation (about {tokens:,} tokens) exceeds the context window of model {model_id} "
+            f"({window:,} tokens): context_length_exceeded. The history will be summarised.")
+
+
 def restore_cache_marks(payload: dict, marks: list) -> None:
     """Put back the prompt-cache markers the client took out before syncing (they move every turn, so they are not
     part of the synced conversation). marks: [[message index, block index or -1 for a plain string, cache_control]]."""

@@ -21,7 +21,11 @@ function tailOf(text, lines = 40, maxBytes = 8000) {
 	return t;
 }
 
+let refresh = () => {}; // redraws the "running" line above the input box
+
 function finished(job) {
+	refresh();
+	if (job.foreground) return; // the agent waited for it and has the report already
 	const what = job.kind === "subagent" ? `Background subagent ${job.id} (${job.name})` : `Background job ${job.id} (${job.name})`;
 	const how = job.status === "stopped" ? "was stopped" : job.kind === "subagent" ? (job.status === "done" ? "finished" : "failed")
 		: `exited with code ${job.code}`;
@@ -36,6 +40,24 @@ function output(job) {
 	} catch {
 		return "";
 	}
+}
+
+/** A subagent the agent waits for (task without background): listed in /tasks while and after it runs. */
+export function trackSubagent(name) {
+	const id = nextId++;
+	const job = { id, kind: "subagent", foreground: true, name, status: "running", started: Date.now(), controller: new AbortController() };
+	jobs.set(id, job);
+	refresh();
+	return {
+		job,
+		end(report, error) {
+			if (job.status === "running") job.status = error ? "failed" : "done";
+			job.report = report;
+			job.error = error;
+			job.ended = Date.now();
+			finished(job);
+		},
+	};
 }
 
 /** Start a shell command in the background. */
@@ -62,6 +84,7 @@ export function startCommand(command, name, cwd) {
 		finished(job);
 	});
 	jobs.set(id, job);
+	refresh();
 	return job;
 }
 
@@ -71,6 +94,7 @@ export function startSubagentJob(name, run) {
 	const controller = new AbortController();
 	const job = { id, kind: "subagent", name, status: "running", started: Date.now(), controller };
 	jobs.set(id, job);
+	refresh();
 	run(controller.signal).then((report) => {
 		if (job.status === "running") job.status = "done";
 		job.report = report;
@@ -103,13 +127,20 @@ export function stopJob(job) {
 
 const age = (job) => `${Math.round(((job.ended ?? Date.now()) - job.started) / 1000)}s`;
 export const listJobs = () => [...jobs.values()];
-export const describeJob = (j) => `#${j.id} ${j.kind === "subagent" ? "subagent" : "command"} ${j.status} ${age(j)}  ${j.name}`;
+export const describeJob = (j) => `#${j.id} ${j.kind === "subagent" ? (j.foreground ? "subagent" : "background subagent") : "background command"} ` +
+	`${j.status} ${age(j)}  ${j.name}`;
 
-export function createJobs() {
+export function createJobs(deps = { todoText: () => "" }) {
 	return (pi) => {
 		hooks.tell = (text) => pi.sendMessage({ customType: "ferry-job", content: text, display: false }, { deliverAs: "nextTurn" });
 		pi.on("session_start", (_e, ctx) => {
-			if (ctx.hasUI) hooks.ui = ctx.ui;
+			if (!ctx.hasUI) return;
+			hooks.ui = ctx.ui;
+			refresh = () => {
+				const running = [...jobs.values()].filter((j) => j.status === "running");
+				ctx.ui.setWidget("ferry-jobs", running.length ? [`Running (${running.length}, /tasks to see them):`,
+					...running.slice(-4).map((j) => `  #${j.id} ${j.kind === "subagent" ? "subagent" : "command"}: ${j.name}`)] : undefined);
+			};
 		});
 		pi.on("session_shutdown", () => {
 			for (const j of jobs.values()) stopJob(j);
@@ -171,17 +202,26 @@ export function createJobs() {
 		});
 
 		pi.registerCommand("tasks", {
-			description: "Background commands and subagents: see their output, stop them",
+			description: "The to-do list, subagents, and background commands: see their output, stop them",
 			handler: async (_a, ctx) => {
+				const todo = deps.todoText();
 				const all = listJobs().reverse();
-				if (!all.length) return ctx.ui.notify("No background tasks. The agent starts them with job_start, or task(background).", "info");
-				const pick = await ctx.ui.select("Background tasks", [...all.map(describeJob), "Done"]);
-				const job = all.find((j) => pick === describeJob(j));
-				if (!job) return;
-				const what = await ctx.ui.select(describeJob(job), job.status === "running" ? ["Show output", "Stop it", "Back"] : ["Show output", "Back"]);
-				if (what === "Stop it") stopJob(job);
-				if (what === "Show output") {
-					ctx.ui.notify(job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), 60) || "(no output)", "info");
+				const head = [todo ? `To-do list:\n${todo.split("\n").map((l) => `  ${l}`).join("\n")}` : "No to-do list in this conversation.",
+					all.length ? "" : "No subagents or background commands yet."].filter(Boolean).join("\n\n");
+				if (!ctx.hasUI || !all.length) {
+					if (ctx.hasUI) return ctx.ui.notify(head, "info");
+					return process.stdout.write(`${head}\n${all.map(describeJob).join("\n")}\n`);
+				}
+				for (;;) {
+					const pick = await ctx.ui.select(`${head}\n\nSubagents and background commands (pick one):`, [...all.map(describeJob), "Done"]);
+					const job = all.find((j) => pick === describeJob(j));
+					if (!job) return;
+					const what = await ctx.ui.select(describeJob(job), job.status === "running" ? ["Show output", "Stop it", "Back"] : ["Show output", "Back"]);
+					if (what === "Stop it") stopJob(job);
+					if (what === "Show output") {
+						ctx.ui.notify(job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), 60) || "(no output)", "info");
+						return;
+					}
 				}
 			},
 		});

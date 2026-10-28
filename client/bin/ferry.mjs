@@ -32,7 +32,7 @@ import {
 } from "../lib/config.mjs";
 import { APP_ROOT, findPython, install, startLocalServer, update } from "../lib/setup.mjs";
 import { BIN_DIR, installBundled, toolStatus } from "../lib/toolbins.mjs";
-import { gatewayOf, waitThroughGateway } from "../lib/gateway.mjs";
+import { gatewayOf, waitThroughGateway, whoAnswered } from "../lib/gateway.mjs";
 
 const PKG = JSON.parse(readFileSync(join(APP_ROOT, "package.json"), "utf8"));
 const VERSION = PKG.version;
@@ -54,7 +54,7 @@ async function getJson(cfg, path, timeoutMs = 8000) {
 		signal: AbortSignal.timeout(timeoutMs),
 	});
 	const json = res.headers.get("content-type")?.includes("json");
-	return { status: res.status, location: res.headers.get("location") ?? "", json,
+	return { status: res.status, location: res.headers.get("location") ?? "", json, headers: res.headers,
 		body: json ? await res.json() : await res.text() };
 }
 
@@ -72,7 +72,7 @@ function notFerry(r) {
 			"browser and continues once you confirm. If the gateway does not allow confirming, ask IT to allow the server address.";
 	}
 	if (r.status >= 300 && r.status < 400) return `the server address redirects to ${r.location || "another page"}; use the final https address`;
-	return `HTTP ${r.status} with a web page instead of the Ferry server: check the address (and the proxy settings)`;
+	return whoAnswered(r);
 }
 
 async function healthy(server) {
@@ -294,7 +294,7 @@ async function run(args) {
 	const { createBrand } = await import("../lib/brand.mjs");
 	const { createMemory } = await import("../lib/memory.mjs");
 	const { createPrompt } = await import("../lib/prompt.mjs");
-	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations } = await import("../lib/tools.mjs");
+	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations, todoText } = await import("../lib/tools.mjs");
 	const { createSubagents, discoverAgents } = await import("../lib/subagent.mjs");
 	const { createCommands } = await import("../lib/commands.mjs");
 	const { createCheckpoints } = await import("../lib/checkpoint.mjs");
@@ -330,7 +330,7 @@ async function run(args) {
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },
 			{ name: "ferry-goal", factory: createGoal(cfg), hidden: true },
-			{ name: "ferry-jobs", factory: createJobs(), hidden: true },
+			{ name: "ferry-jobs", factory: createJobs({ todoText }), hidden: true },
 			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
 			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents,
 				doctor: () => new Promise((done) => {

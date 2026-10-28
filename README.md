@@ -66,7 +66,9 @@ C:\my-project> ferry
 - **GPT**（gpt-6.1-sol 等）：走 OpenAI 接口，OpenAI 会自动缓存。
 - 也可以用 DeepSeek、Kimi、通义、智谱，或者任何 OpenAI 兼容接口。
 
-**上下文长度**：每个模型能装多少，在管理页 → 服务商和模型 → 编辑里改（"上下文"和"最大输出"两栏）。预设值：Claude 1M，GPT 400k（gpt-6.1-sol 最多能收约 92 万输入 token，但一次请求超过 27.2 万时按更高的单价算，输入价翻倍），deepseek-flash 1M。工作电脑上也可以用 `/context 400k` 只给自己改。
+**同一个模型有几家服务商**（比如 Claude 既走官方又走中转）：名字一样的模型自动合成一组，工作电脑上只看到一个。每个会话固定用一家（这样提示词缓存有效）；同时有几个会话时，新会话分给当前最闲的那家；一家出错（限流、超载、Key 失效、连不上）就自动换另一家，那家先歇一会儿。管理页上这类模型旁边标着"⇄ 2 家"。
+
+**上下文长度**：每个模型能装多少，在管理页 → 服务商和模型 → 编辑里改（"上下文"和"最大输出"两栏，旁边还能填价格）。预设值：Claude 1M，GPT 400k（gpt-6.1-sol 最多能收约 92 万输入 token，但一次请求超过 27.2 万时按更高的单价算，输入价翻倍），deepseek-flash 1M。这是上限；工作电脑上用 `/context` 在上限以内挑一个常用的（128k、200k、300k……），省钱又不会超。
 
 Anthropic 和 OpenAI 的 API 不对中国大陆和香港提供服务。要用这两家，服务端得放在它们支持的地区，比如海外的云服务器，见 [DEPLOY-LINUX.md](docs/DEPLOY-LINUX.md)。
 
@@ -225,7 +227,9 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 
 - **后台命令**：长时间运行的命令（开发服务器、监听、长时间的构建或测试）用 `job_start` 放到后台，agent 接着干别的，用 `job_output` 查看进度。
 - **后台子 agent**：`task` 加上 `background`，子 agent 在后台做一件独立的事，做完自动把报告交回来。
-- `/tasks` 查看全部后台任务，可以看输出、停止。任务结束时会通知你，agent 在你下一条消息时也会知道。退出 ferry 时，后台任务一起停掉。
+- **子 agent**：agent 自己判断要不要把一件事交给子 agent（`task`），子 agent 用全新的上下文干完，只把报告带回来。对话里会出现一个小框显示它在做什么。
+- **待办清单**：多步的活，agent 先列待办（输入框上方的 `To-do (1/3 done)`），做一步勾一步。这和 Cursor 里的待办列表是一回事。
+- `/tasks` 一次看全：待办清单、子 agent（正在跑的和跑完的）、后台命令，可以看输出、停止。正在跑的显示在输入框上方。任务结束时会通知你，agent 在你下一条消息时也会知道。退出 ferry 时，后台任务一起停掉。
 
 ### 权限：该问的才问
 
@@ -318,6 +322,7 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry`，它会在浏览器里打开确认页；长期办法是请 IT 加白名单 |
 | `cannot reach the server` | 浏览器能打开但 ferry 连不上，通常是浏览器走了公司代理。执行 `setx HTTPS_PROXY http://代理:端口`，然后重开 cmd |
 | `unable to get local issuer certificate` | 公司代理会解开 HTTPS 再加密。把公司根证书导出成 .pem，执行 `setx NODE_EXTRA_CA_CERTS C:\路径\证书.pem` |
+| `The Ferry server did not get this request: ...` | 请求在半路被挡了，后面那句会说是谁：**Cloudflare 的机器人防护**（按提示在 Cloudflare 后台关掉 Bot Fight Mode，或给 Ferry 的域名加一条跳过规则）、**公司网关**（Ferry 会在浏览器里打开服务端地址，网关的确认页会出现在那里，确认后重发）、或公司代理。服务端的调用记录里看不到这类请求 |
 | `a Cloudflare Access login page answered` | 服务端地址前挡着 Cloudflare 的登录页，见 [DEPLOY-MAC.md](docs/DEPLOY-MAC.md#关于那个-cloudflare-登录页) |
 | `token rejected` | 令牌不对或换过了。到管理页复制新的登录命令 |
 | `HTTP 502 / 530` | 服务端那台电脑睡眠了，或者服务端、cloudflared 没在运行 |

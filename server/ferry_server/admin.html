@@ -125,11 +125,12 @@ dialog::backdrop { background: rgba(10, 30, 34, .45); }
 .dlg-body { padding: 14px 22px; max-height: 70vh; overflow: auto; }
 .dlg-foot { padding: 12px 22px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
 .modellist { border: 1px solid var(--line); border-radius: var(--r-sm); max-height: 260px; overflow: auto; margin-top: 8px; }
-.modellist label { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.modellist label { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .modellist label:last-child { border-bottom: 0; }
 .modellist .sug { margin-left: auto; }
 .modellist .sizes { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .modellist .sug + .sizes { margin-left: 8px; }
+.modellist .sizes input.price { width: 52px; }
 .modellist .sizes input { width: 64px; padding: 2px 6px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
 
 /* prompts */
@@ -435,7 +436,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
   <div class="dlg-foot" id="dlgFoot" hidden>
     <button class="btn" id="dlgBack">换一个服务商</button>
     <span class="msg" id="dlgMsg" style="flex:1"></span>
-    <button class="btn primary" id="dlgSave">保存并测试</button>
+    <button class="btn primary" id="dlgSave">保存</button>
   </div>
 </dialog>
 
@@ -545,15 +546,21 @@ async function loadProviders() {
       : p.key_source === "env" ? `<span class="tag good">Key 来自环境变量 ${esc(p.api_key_env)}</span>`
       : p.key_tail ? `<span class="tag good">Key 已保存 ••••${esc(p.key_tail)}</span>` : '<span class="tag bad">缺少 Key</span>';
     return `<div class="prov"><div class="prov-head"><h3>${esc(p.name)}</h3>${key}<span class="addr">${esc(p.base_url)}</span>
-      <span class="acts"><button class="btn small" data-edit="${i}">编辑</button><button class="btn small danger" data-del="${i}">删除</button></span></div>
-      <div class="chips">${p.models.map((m) => `<span class="chip"><span class="dot ${m.ready ? "" : "off"}"></span>${esc(m.model)}<span class="muted" title="上下文长度">${m.context_window >= 1e6 ? (m.context_window / 1e6).toFixed(m.context_window % 1e6 ? 1 : 0) + "M" : Math.round(m.context_window / 1000) + "k"}</span>${m.id === P.routing.default ? ' <span class="tag">默认</span>' : ""}${m.id === P.routing.summary ? ' <span class="tag lamp">写摘要</span>' : ""}<span class="res" data-res="${esc(m.id)}"></span></span>`).join("")}</div></div>`;
+      <span class="acts"><button class="btn small" data-test="${i}" title="给这家的每个模型发一个很小的请求">测试</button><button class="btn small" data-edit="${i}">编辑</button><button class="btn small danger" data-del="${i}">删除</button></span></div>
+      <div class="chips">${p.models.map((m) => `<span class="chip"><span class="dot ${m.ready ? "" : "off"}"></span>${esc(m.model)}<span class="muted" title="上下文长度">${m.context_window >= 1e6 ? (m.context_window / 1e6).toFixed(m.context_window % 1e6 ? 1 : 0) + "M" : Math.round(m.context_window / 1000) + "k"}</span>${(P.groups || {})[m.id] ? `<span class="tag" title="有 ${P.groups[m.id].length} 家服务商提供这个模型：不同会话分到不同的服务商，一家出错时自动换另一家">⇄ ${P.groups[m.id].length} 家</span>` : ""}${m.price && m.price.input != null ? `<span class="muted" title="每百万 token 的价格（美元）：输入 / 输出">$${m.price.input}/${m.price.output ?? "?"}</span>` : ""}${m.id === P.routing.default ? ' <span class="tag">默认</span>' : ""}${m.id === P.routing.summary ? ' <span class="tag lamp">写摘要</span>' : ""}<span class="res" data-res="${esc(m.id)}"></span></span>`).join("")}</div></div>`;
   }).join("") || `<div class="card empty">还没有服务商。点右上角"添加服务商"，选一个预设，填上 API Key 就能用。</div>`;
   for (const b of document.querySelectorAll("[data-edit]")) b.onclick = () => openEditor(P.providers[+b.dataset.edit]);
+  for (const b of document.querySelectorAll("[data-test]")) b.onclick = async () => {
+    const p = P.providers[+b.dataset.test]; b.disabled = true; say("provMsg", `正在测试 ${p.name}……`);
+    try { const r = await testModels(p.models.map((m) => m.id)); const bad = r.filter((m) => !m.ok);
+      say("provMsg", bad.length ? bad.map((m) => `${m.id}：${m.error}`).join("\n") : `${p.name}：全部能用`, !bad.length); }
+    catch (e) { say("provMsg", e.message, false); }
+    b.disabled = false; };
   for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => removeProvider(+b.dataset.del);
 }
 function payload(list, routing) {
   return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "",
-    models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens })) })),
+    models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, ...(m.price ? { price: m.price } : {}) })) })),
     routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, expose: $("rExpose").checked } };
 }
 async function saveAll(list, routing) { P = await api("providers", "PUT", payload(list, routing)); }
@@ -563,7 +570,7 @@ async function removeProvider(i) {
   try { const list = P.providers.filter((_, j) => j !== i); await saveAll(list); say("provMsg", "已删除"); loadProviders(); } catch (e) { say("provMsg", e.message, false); }
 }
 async function testModels(ids) {
-  const r = await api("models/test", "POST", {});
+  const r = await api("models/test", "POST", ids ? { ids } : {});
   for (const m of r.models) { const e = document.querySelector(`[data-res="${CSS.escape(m.id)}"]`); if (e) { e.className = "res" + (m.ok ? "" : " bad"); e.textContent = m.ok ? ` ${m.ms} 毫秒` : " 不能用"; e.title = m.error || ""; } }
   return r.models.filter((m) => !ids || ids.includes(m.id));
 }
@@ -588,7 +595,7 @@ function renderPresets() {
 function fillForm(pre, prov) {
   const idx = prov ? P.providers.indexOf(prov) : -1;
   ED = { idx, preset: pre, id: prov?.id || uniqueId(pre.id), api_key_env: prov?.api_key_env || "",
-    models: prov ? prov.models.map((m) => ({ model: m.model, id: m.id, on: true, context_window: m.context_window, max_tokens: m.max_tokens, suggested: !!pre.models.find((x) => x.model === m.model) }))
+    models: prov ? prov.models.map((m) => ({ model: m.model, id: m.id, on: true, context_window: m.context_window, max_tokens: m.max_tokens, price: m.price && Object.keys(m.price).length ? m.price : undefined, suggested: !!pre.models.find((x) => x.model === m.model) }))
       : pre.models.map((m) => ({ ...m, on: true, suggested: true })), keyTail: prov?.key_tail, keySource: prov?.key_source };
   $("dlgTitle").textContent = prov ? `编辑 ${prov.name}` : `添加 ${pre.name}`;
   $("pickStep").hidden = true; $("formStep").hidden = false; $("dlgFoot").hidden = false; $("dlgBack").hidden = !!prov;
@@ -607,14 +614,22 @@ function renderModelList() {
   const f = $("fFilter").value.trim().toLowerCase();
   const rows = ED.models.filter((m) => !f || m.model.toLowerCase().includes(f));
   const preOf = (m) => ED.preset.models.find((x) => x.model === m.model) || {};
+  const priceOf = (m) => m.price || preOf(m).price || {};
   const sizes = (m) => m.on ? `<span class="sizes">上下文 <input type="number" min="16" step="1" data-ctx="${esc(m.model)}" value="${Math.round((m.context_window || preOf(m).context_window || 128000) / 1000)}">k
-      最大输出 <input type="number" min="1" step="1" data-out="${esc(m.model)}" value="${Math.round((m.max_tokens || preOf(m).max_tokens || 8192) / 1000)}">k</span>` : "";
+      最大输出 <input type="number" min="1" step="1" data-out="${esc(m.model)}" value="${Math.round((m.max_tokens || preOf(m).max_tokens || 8192) / 1000)}">k
+      <span title="每百万 token 的价格（美元），用来算花费；空着就不算">· 每百万 token $ 输入 <input class="price" type="number" min="0" step="any" data-pin="${esc(m.model)}" value="${priceOf(m).input ?? ""}">
+      输出 <input class="price" type="number" min="0" step="any" data-pout="${esc(m.model)}" value="${priceOf(m).output ?? ""}">
+      缓存 <input class="price" type="number" min="0" step="any" data-pcache="${esc(m.model)}" value="${priceOf(m).cache_read ?? ""}"></span></span>` : "";
   $("fModels").innerHTML = rows.map((m) => `<label><input type="checkbox" data-m="${esc(m.model)}" ${m.on ? "checked" : ""}> <span class="mono">${esc(m.model)}</span>${m.suggested ? '<span class="tag sug">推荐</span>' : ""}${sizes(m)}</label>`).join("")
     || '<div class="empty" style="padding:14px">还没有模型。</div>';
   const byName = (n) => ED.models.find((m) => m.model === n);
   for (const c of document.querySelectorAll("#fModels input[data-m]")) c.onchange = () => { byName(c.dataset.m).on = c.checked; renderModelList(); };
   for (const c of document.querySelectorAll("#fModels input[data-ctx]")) c.onchange = () => { byName(c.dataset.ctx).context_window = Math.max(16, +c.value || 128) * 1000; };
   for (const c of document.querySelectorAll("#fModels input[data-out]")) c.onchange = () => { byName(c.dataset.out).max_tokens = Math.max(1, +c.value || 8) * 1000; };
+  const setPrice = (name, k, v) => { const m = byName(name); m.price = { ...priceOf(m) }; if (v === "") delete m.price[k]; else m.price[k] = +v; };
+  for (const [attr, k] of [["pin", "input"], ["pout", "output"], ["pcache", "cache_read"]]) {
+    for (const c of document.querySelectorAll(`#fModels input[data-${attr}]`)) c.onchange = () => setPrice(c.dataset[attr], k, c.value.trim());
+  }
   $("fFilter").hidden = ED.models.length < 10;
 }
 $("fFilter").oninput = renderModelList;
@@ -640,19 +655,15 @@ $("dlgSave").onclick = async () => {
   const models = ED.models.filter((m) => m.on);
   if (!models.length) return say("dlgMsg", "至少勾选一个模型", false);
   const entry = { id: ED.id, name: $("fName").value.trim() || pre.name, preset: pre.id, base_url: base, api_key_env: ED.api_key_env, key,
-    models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192 })) };
+    models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192,
+      ...(m.price ? { price: m.price } : {}) })) };
   const list = P.providers.slice();
   if (ED.idx >= 0) list[ED.idx] = entry; else list.push(entry);
   $("dlgSave").disabled = true; say("dlgMsg", "正在保存……");
   try {
     await saveAll(list);
     await loadProviders();
-    say("dlgMsg", "已保存，正在测试……");
-    const ids = P.providers.find((p) => p.id === entry.id)?.models.map((m) => m.id) || [];
-    const res = await testModels(ids);
-    const bad = res.filter((m) => !m.ok);
-    if (bad.length) say("dlgMsg", "已保存，但测试没通过：" + bad[0].error, false);
-    else { $("provDlg").close(); toast(`${entry.name} 可以用了`); }
+    $("provDlg").close(); toast(`已保存 ${entry.name}。要确认能用，点它旁边的"测试"`);
   } catch (e) { say("dlgMsg", e.message, false); }
   $("dlgSave").disabled = false;
 };

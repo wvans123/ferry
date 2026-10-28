@@ -53,3 +53,31 @@ export async function waitThroughGateway(page, server, check, { waitMs = 180000,
 	}
 	return false;
 }
+
+const titleOf = (html) => (/<title[^>]*>([^<]{1,120})/i.exec(html ?? "")?.[1] ?? "").replace(/\s+/g, " ").trim();
+
+/**
+ * Who answered instead of the Ferry server, in one sentence: Cloudflare's bot protection, Cloudflare Access, the
+ * company gateway or proxy. r: { status, headers (a Headers or plain object), body (text) }.
+ */
+export function whoAnswered(r) {
+	const h = (k) => (typeof r.headers?.get === "function" ? r.headers.get(k) : r.headers?.[k]) ?? "";
+	const body = typeof r.body === "string" ? r.body.slice(0, 20000) : "";
+	const title = titleOf(body);
+	const server = h("server");
+	const cloudflare = /cloudflare/i.test(server) || !!h("cf-ray");
+	const page = title ? ` (page title: "${title}")` : "";
+	if (h("cf-mitigated") === "challenge" || (cloudflare && /Just a moment|Attention Required|challenge-platform|cf-chl/i.test(body))) {
+		return `Cloudflare's bot protection stopped the request${page}. In the Cloudflare dashboard, for the Ferry hostname: ` +
+			"Security > Bots: turn off Bot Fight Mode, or Security > WAF: add a custom rule \"Hostname equals <ferry host> -> Skip " +
+			"(all remaining custom rules, Bot Fight Mode, Browser Integrity Check)\".";
+	}
+	if (cloudflare && /cloudflareaccess|cf-access|Cloudflare Access/i.test(`${h("location")} ${body}`)) {
+		return "a Cloudflare Access login answered instead of the Ferry server: remove the Access policy from this hostname or use a service token (ferry login ... --header).";
+	}
+	if (cloudflare) return `Cloudflare answered HTTP ${r.status}${page} (ray ${h("cf-ray") || "?"}): look at Security > Events in the Cloudflare dashboard.`;
+	if (gatewayPage(h("location"), body)) return `the company network gateway answered HTTP ${r.status}${page}.`;
+	const via = h("via") || h("proxy-agent") || server;
+	return `something between this computer and the Ferry server answered HTTP ${r.status}${via ? ` (${via})` : ""}${page}: ` +
+		"probably the company proxy or gateway.";
+}

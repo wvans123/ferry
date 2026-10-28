@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { PROTOCOL, serverHeaders } from "./config.mjs";
-import { gatewayPage, openInBrowser } from "./gateway.mjs";
+import { gatewayPage, openInBrowser, whoAnswered } from "./gateway.mjs";
 
 let lastOpened = 0;
 
@@ -77,7 +77,8 @@ export function modelDef(m, cfg) {
 		// USD per million tokens, from the server's price list: pi adds up the cost (/cost, the footer)
 		cost: { input: m.price?.input ?? 0, output: m.price?.output ?? 0,
 			cacheRead: m.price?.cache_read ?? m.price?.input ?? 0, cacheWrite: m.price?.cache_write ?? m.price?.input ?? 0 },
-		contextWindow: Number(own) > 0 ? Number(own) : (m.contextWindow ?? 128000),
+		// your size (/context) only within what the server allows
+		contextWindow: Number(own) > 0 ? Math.min(Number(own), m.contextWindow ?? Infinity) : (m.contextWindow ?? 128000),
 		maxTokens: m.maxTokens ?? 8192,
 	};
 }
@@ -139,6 +140,10 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		const blob = (b, withTools) => JSON.stringify({ append: msgs.slice(b), tools: withTools ? toolsJson : null });
 
 		let res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
+		if (!res.headers.get("content-type")?.includes("json") && [403, 502, 503, 504].includes(res.status)) {
+			await new Promise((r) => setTimeout(r, 1500)); // a gateway or tunnel hiccup: once more before giving up
+			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
+		}
 		if (res.status === 409) res = await commit(conv, 0, "", blob(0, !!toolsHash), signal); // server lost it
 		if (res.status === 401) throw new FerryError("Ferry token rejected by the server. Run: ferry login <server> <token>");
 		if (res.status === 426) throw new FerryError(`Ferry client and server versions do not match: ${await res.text()}`);
@@ -152,8 +157,18 @@ export function createSyncProvider(cfg, models, opts = {}) {
 				throw new FerryError("The company network gateway wants a confirmation again. It is open in your browser " +
 					`(${loc}): confirm there, then send your message again.`);
 			}
-			throw new FerryError(`Ferry sync failed: HTTP ${res.status} from something that is not the Ferry server ` +
-				'(a login page or proxy in between?). Run "ferry doctor".');
+			const text = await res.text().catch(() => "");
+			const who = whoAnswered({ status: res.status, headers: res.headers, body: text });
+			if (gatewayPage(loc, text) || (res.status === 403 && !/Cloudflare/.test(who))) {
+				// the gateway's page has no address of its own: open the server's, the gateway shows its page there
+				if (Date.now() - lastOpened > 60000) {
+					lastOpened = Date.now();
+					openInBrowser(`${cfg.server}/`);
+				}
+				throw new FerryError(`The Ferry server did not get this request: ${who} If it is the company gateway, confirm in ` +
+					"the browser window just opened, then send your message again. (ferry doctor checks the path.)");
+			}
+			throw new FerryError(`The Ferry server did not get this request: ${who}`);
 		}
 		if (!res.ok) throw new FerryError(`Ferry sync failed: HTTP ${res.status} ${await res.text()}`);
 		const ack = await res.json();

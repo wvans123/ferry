@@ -246,7 +246,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def test_models(request: Request):
         if not allowed(request, True):
             return denied()
-        return {"models": await run_check((await body(request)).get("model"), "admin")}
+        b = await body(request)
+        return {"models": await run_check(b.get("ids") or b.get("model"), "admin")}
 
     @app.put("/admin/api/settings")
     async def put_settings(request: Request):
@@ -400,7 +401,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def get_providers(request: Request):
         if not allowed(request):
             return denied()
-        return {"providers": provider_views(), "editable": bool(cfg.models_file),
+        from .pool import groups
+        return {"providers": provider_views(), "editable": bool(cfg.models_file), "groups": groups(cfg),
+                "pool": live.pool.state(),
                 "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "expose": cfg.expose_models}}
 
     @app.post("/admin/api/providers/models")

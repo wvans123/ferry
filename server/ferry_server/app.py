@@ -33,7 +33,8 @@ from .config import Config, refresh_models
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
-from .prompt import adapt_params, apply_rules, cap_upstream, load_rules, restore_cache_marks
+from .pool import RETRY_STATUSES, Pool, groups
+from .prompt import adapt_params, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message, restore_cache_marks
 from .redact import Redactor
 from .store import BaseMismatch, Store
 from .stream import restore_message, restore_sse
@@ -61,7 +62,7 @@ def details_of(call_id: str, payload: dict, project: str, model: str, purpose: s
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
     # session store and redactor can be swapped at run time from the admin page (settings, word list)
-    live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20))
+    live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20), pool=Pool())
 
     def rebuild(store_too: bool = True) -> None:
         if store_too or live.store is None:
@@ -160,7 +161,21 @@ def create_app(cfg: Config) -> FastAPI:
         if cfg.summary_model:  # a summary request carries the whole history, so it must fit the smaller window
             auto["contextWindow"] = min(d.context_window, cfg.models[cfg.summary_model].context_window)
             auto["summaryTo"] = cfg.summary_model
-        listed = [auto] + ([describe(m) for m in cfg.models.values()] if cfg.expose_models else [])
+        # a model several providers offer is listed once; the server spreads conversations over the providers
+        shared = groups(cfg)
+        listed = [auto]
+        for m in cfg.models.values() if cfg.expose_models else []:
+            ids = shared.get(m.id)
+            if ids and any(x["id"] in ids for x in listed[1:]):
+                continue  # another provider's copy of this model is listed already
+            row = describe(m)
+            if ids:
+                row["contextWindow"] = min(cfg.models[i].context_window for i in ids)
+                row["providers"] = len(ids)
+            listed.append(row)
+        if shared.get(d.id):
+            auto["providers"] = len(shared[d.id])
+            auto["contextWindow"] = min(auto["contextWindow"], *(cfg.models[i].context_window for i in shared[d.id]))
         return {"models": listed, "sessionStore": cfg.session_store, "web": cfg.web_enabled}
 
     async def web_call(request: Request, kind: str):
@@ -208,13 +223,13 @@ def create_app(cfg: Config) -> FastAPI:
             return cfg.models[cfg.summary_model]  # (a summary model with another API cannot take this request)
         return default
 
-    async def run_check(want: str | None, user: str) -> list[dict]:
+    async def run_check(want: str | list | None, user: str) -> list[dict]:
         """Ask each model (or the one named) for a two-word answer: proves the key, the network path and the model
         name work, which `ferry doctor` cannot know otherwise. Costs a few tokens."""
         reload()
         out = []
         for m in list(cfg.models.values()):
-            if want and m.id != want:
+            if want and m.id not in (want if isinstance(want, list) else [want]):
                 continue
             row = {"id": m.id, "model": m.model, "base_url": m.base_url}
             if not m.ready:
@@ -311,62 +326,90 @@ def create_app(cfg: Config) -> FastAPI:
             write(audit_log, event="chat", user=user, project=project, model=model.id, status=413, trimmed=trimmed,
                   upstream_bytes=size)
             return JSONResponse({"error": {"message": f"the conversation is still {size:,} bytes after dropping old "
-                                                      f"tool outputs (limit {cfg.max_upstream_bytes:,}). Run /compact "
-                                                      f"or start a new session."}}, status_code=413)
+                                                      f"tool outputs (limit {cfg.max_upstream_bytes:,}): "
+                                                      "context_length_exceeded. The history will be summarised.",
+                                           "code": "context_length_exceeded"}}, status_code=413)
+        conv = key(request, ref["conv"]) if ref else ""
+        tries = live.pool.order(cfg, model, conv)
+        model = tries[0]
         if not model.ready:
             how = (f"set {model.api_key_env} and restart ferry-server" if model.api_key_env
                    else "add the key on the server's admin page")
             return JSONResponse({"error": {"message": f"the Ferry server has no API key for model {model.id}: {how}"}},
                                 status_code=503)
-        body = json.dumps(adapt_params(payload, model), ensure_ascii=False).encode("utf-8")
+        tokens_est = estimate_tokens(payload)
+        if tokens_est > model.context_window * 1.15:  # the client thinks the model holds more than it does
+            write(audit_log, event="chat", user=user, project=project, model=model.id, status=400, overflow=tokens_est)
+            return JSONResponse({"error": {"message": overflow_message(tokens_est, model.context_window, model.id),
+                                           "type": "invalid_request_error", "code": "context_length_exceeded"}},
+                                status_code=400)
         call_id = secrets.token_hex(4)
-        if cfg.record_details:
-            live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
-        audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
-                     purpose=purpose,
-                     messages=len(payload.get("messages", [])), upstream_bytes=len(body), masked=dict(hits),
-                     trimmed=trimmed)
-        headers = {"Content-Type": "application/json"}
-        if model.api_key:
-            headers["Authorization"] = f"Bearer {model.api_key}"
-        url = chat_url(model.base_url)
 
         def done() -> None:
             if ref and cfg.session_store == "none":
                 live.store.forget(key(request, ref["conv"]))
 
-        if not payload.get("stream"):
-            r = await client.post(url, content=body, headers=headers)
-            tokens = normalize(r.json().get("usage") or {}) if r.status_code == 200 else {}
-            write(audit_log, **audit, status=r.status_code, ms=int((time.time() - started) * 1000),
-                  tokens=tokens, cost=usage_cost(tokens, model.price))
-            done()
-            if r.status_code != 200:
-                return Response(r.content, status_code=r.status_code, media_type="application/json")
-            return JSONResponse(restore_message(r.json(), live.red, user))
-
-        upstream = await client.send(client.build_request("POST", url, content=body, headers=headers), stream=True)
-        if upstream.status_code != 200:
-            err = await upstream.aread()
-            await upstream.aclose()
-            write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
-            done()
-            return Response(err, status_code=upstream.status_code,
-                            media_type=upstream.headers.get("content-type", "application/json"))
-
-        usage: dict = {}
-
-        async def relay():
+        last_err: tuple[int, bytes, str] = (502, b'{"error":{"message":"no provider answered"}}', "application/json")
+        for n, model in enumerate(tries):
+            body = json.dumps(adapt_params(payload, model), ensure_ascii=False).encode("utf-8")
+            if cfg.record_details and n == 0:
+                live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
+            audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
+                         purpose=purpose, messages=len(payload.get("messages", [])), upstream_bytes=len(body),
+                         masked=dict(hits), trimmed=trimmed, **({"attempt": n + 1} if n else {}))
+            headers = {"Content-Type": "application/json"}
+            if model.api_key:
+                headers["Authorization"] = f"Bearer {model.api_key}"
+            url = chat_url(model.base_url)
+            more = n + 1 < len(tries)
+            live.pool.start(model.id)
             try:
-                async for b in restore_sse(upstream.aiter_lines(), live.red, usage, user):
-                    yield b
-            finally:
-                tokens = normalize(usage)
-                write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=usage,
+                if not payload.get("stream"):
+                    r = await client.post(url, content=body, headers=headers)
+                else:
+                    r = await client.send(client.build_request("POST", url, content=body, headers=headers), stream=True)
+            except httpx.HTTPError as e:
+                live.pool.end(model.id)
+                live.pool.failed(model.id, None)
+                write(audit_log, **audit, status=502, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
+                last_err = (502, json.dumps({"error": {"message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
+                if more:
+                    continue
+                break
+            if r.status_code != 200:
+                err = await r.aread()
+                await r.aclose()
+                live.pool.end(model.id)
+                write(audit_log, **audit, status=r.status_code, ms=int((time.time() - started) * 1000))
+                last_err = (r.status_code, err, r.headers.get("content-type", "application/json"))
+                if more and r.status_code in RETRY_STATUSES:
+                    live.pool.failed(model.id, r.status_code)
+                    continue
+                break
+            live.pool.served(conv, model.id)
+            if not payload.get("stream"):
+                live.pool.end(model.id)
+                tokens = normalize(r.json().get("usage") or {})
+                write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000),
                       tokens=tokens, cost=usage_cost(tokens, model.price))
                 done()
+                return JSONResponse(restore_message(r.json(), live.red, user))
+            usage: dict = {}
 
-        return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(upstream.aclose))
+            async def relay(upstream=r, model=model, audit=audit):
+                try:
+                    async for b in restore_sse(upstream.aiter_lines(), live.red, usage, user):
+                        yield b
+                finally:
+                    live.pool.end(model.id)
+                    tokens = normalize(usage)
+                    write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=usage,
+                          tokens=tokens, cost=usage_cost(tokens, model.price))
+                    done()
+
+            return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(r.aclose))
+        done()
+        return Response(last_err[1], status_code=last_err[0], media_type=last_err[2])
 
     @app.post("/anthropic/v1/messages")
     async def anthropic_messages(request: Request):
@@ -397,6 +440,9 @@ def create_app(cfg: Config) -> FastAPI:
         if model.api != "anthropic":
             return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
                                                             "message": f"model {model.id} is not an Anthropic model"}}, status_code=400)
+        conv = key(request, ref["conv"]) if ref else ""
+        tries = live.pool.order(cfg, model, conv)
+        model = tries[0]
         if not model.ready:
             return JSONResponse({"type": "error", "error": {"type": "authentication_error", "message":
                                  f"the Ferry server has no API key for model {model.id}: add it on the admin page"}}, status_code=503)
@@ -409,48 +455,78 @@ def create_app(cfg: Config) -> FastAPI:
             if isinstance(system, str):
                 system = [{"type": "text", "text": system}]
             payload["system"] = [*system, {"type": "text", "text": f"<server-rules>\n{rules}\n</server-rules>"}]
-        payload["model"] = model.model
-        for k in model.drop_params:
-            payload.pop(k, None)
-        if isinstance(payload.get("max_tokens"), int):
-            payload["max_tokens"] = min(payload["max_tokens"], model.max_tokens)
-        payload.update(model.extra_params)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        tokens_est = estimate_tokens(payload)
+        if tokens_est > model.context_window * 1.15:
+            write(audit_log, event="chat", user=request.state.user, project=project, model=model.id, status=400, overflow=tokens_est)
+            return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
+                                 "message": f"prompt is too long: {tokens_est} tokens > {model.context_window} maximum "
+                                            "(the history will be summarised)"}}, status_code=400)
         call_id = secrets.token_hex(4)
-        audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id, purpose=purpose,
-                     messages=len(payload.get("messages", [])), upstream_bytes=len(body), masked={}, trimmed=0)
-        headers = {"Content-Type": "application/json", "x-api-key": model.api_key,
-                   "anthropic-version": request.headers.get("anthropic-version", "2023-06-01")}
-        if request.headers.get("anthropic-beta"):
-            headers["anthropic-beta"] = request.headers["anthropic-beta"]
 
         def done() -> None:
             if ref and cfg.session_store == "none":
                 live.store.forget(key(request, ref["conv"]))
 
-        upstream = await client.send(client.build_request("POST", anthropic_url(model.base_url), content=body,
-                                                          headers=headers), stream=True)
-        if upstream.status_code != 200:
-            err = await upstream.aread()
-            await upstream.aclose()
-            write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
-            done()
-            return Response(err, status_code=upstream.status_code,
-                            media_type=upstream.headers.get("content-type", "application/json"))
-        seen = AnthropicSSEUsage()
-
-        async def relay():
+        last_err: tuple[int, bytes, str] = (502, b'{"type":"error","error":{"type":"api_error","message":"no provider answered"}}',
+                                            "application/json")
+        for n, model in enumerate(tries):
+            one = dict(payload)
+            one["model"] = model.model
+            for k in model.drop_params:
+                one.pop(k, None)
+            if isinstance(one.get("max_tokens"), int):
+                one["max_tokens"] = min(one["max_tokens"], model.max_tokens)
+            one.update(model.extra_params)
+            body = json.dumps(one, ensure_ascii=False).encode("utf-8")
+            audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id, purpose=purpose,
+                         messages=len(one.get("messages", [])), upstream_bytes=len(body), masked={}, trimmed=0,
+                         **({"attempt": n + 1} if n else {}))
+            headers = {"Content-Type": "application/json", "x-api-key": model.api_key,
+                       "anthropic-version": request.headers.get("anthropic-version", "2023-06-01")}
+            if request.headers.get("anthropic-beta"):
+                headers["anthropic-beta"] = request.headers["anthropic-beta"]
+            more = n + 1 < len(tries)
+            live.pool.start(model.id)
             try:
-                async for line in upstream.aiter_lines():
-                    seen.feed(line)
-                    yield (line + "\n").encode("utf-8")
-            finally:
-                tokens = normalize(seen.usage)
-                write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=seen.usage,
-                      tokens=tokens, cost=usage_cost(tokens, model.price))
-                done()
+                upstream = await client.send(client.build_request("POST", anthropic_url(model.base_url), content=body,
+                                                                  headers=headers), stream=True)
+            except httpx.HTTPError as e:
+                live.pool.end(model.id)
+                live.pool.failed(model.id, None)
+                write(audit_log, **audit, status=502, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
+                last_err = (502, json.dumps({"type": "error", "error": {"type": "api_error",
+                            "message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
+                if more:
+                    continue
+                break
+            if upstream.status_code != 200:
+                err = await upstream.aread()
+                await upstream.aclose()
+                live.pool.end(model.id)
+                write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
+                last_err = (upstream.status_code, err, upstream.headers.get("content-type", "application/json"))
+                if more and upstream.status_code in RETRY_STATUSES:
+                    live.pool.failed(model.id, upstream.status_code)
+                    continue
+                break
+            live.pool.served(conv, model.id)
+            seen = AnthropicSSEUsage()
 
-        return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(upstream.aclose))
+            async def relay(upstream=upstream, model=model, audit=audit, seen=seen):
+                try:
+                    async for line in upstream.aiter_lines():
+                        seen.feed(line)
+                        yield (line + "\n").encode("utf-8")
+                finally:
+                    live.pool.end(model.id)
+                    tokens = normalize(seen.usage)
+                    write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=seen.usage,
+                          tokens=tokens, cost=usage_cost(tokens, model.price))
+                    done()
+
+            return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(upstream.aclose))
+        done()
+        return Response(last_err[1], status_code=last_err[0], media_type=last_err[2])
 
     from .admin import mount_admin
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)

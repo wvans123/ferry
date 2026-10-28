@@ -15,7 +15,7 @@ import { AGENT_DIR, FERRY_HOME } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
 import { createPrompt } from "./prompt.mjs";
 import { createWeb } from "./web.mjs";
-import { startSubagentJob } from "./jobs.mjs";
+import { startSubagentJob, trackSubagent } from "./jobs.mjs";
 import { createBigOutputs } from "./tools.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
@@ -122,7 +122,19 @@ export function createSubagents(cfg, deps) {
 					return { content: [{ type: "text", text: `Started background subagent ${job.id} (${job.name}). You will be told ` +
 						"when it is done; job_output shows its report." }], details: { id: job.id } };
 				}
-				return runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cwd, pi });
+				const t = trackSubagent(`${agent.name}: ${params.description}`); // shown in /tasks while it runs
+				const stop = () => t.job.controller.abort();
+				signal?.addEventListener("abort", stop, { once: true });
+				try {
+					const r = await runSubagent({ cfg, deps, agent, params, signal: t.job.controller.signal, onUpdate, ctx, cwd, pi });
+					t.end(r.content[0].text);
+					return r;
+				} catch (e) {
+					t.end(undefined, String(e?.message ?? e));
+					throw e;
+				} finally {
+					signal?.removeEventListener("abort", stop);
+				}
 			},
 		});
 	};

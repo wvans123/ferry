@@ -7,6 +7,8 @@ format. `base_url` either is a base (".../v1", "/chat/completions" is appended) 
 """
 from __future__ import annotations
 
+import re
+
 # (model name, context window in tokens, max output tokens[, extras]); extras: vision (takes images) and
 # price (USD per million tokens: input, output, cache_read, cache_write), from the providers' price pages.
 Model = tuple
@@ -127,11 +129,18 @@ def public() -> list[dict]:
             for p in PRESETS]
 
 
+def norm(name: str) -> str:
+    """Model names as providers spell them differently: "anthropic/Claude-Opus-5.5" -> "claude-opus-5-5"."""
+    n = name.lower().strip().rsplit("/", 1)[-1]
+    return re.sub(r"[._\s]+", "-", n)
+
+
 def model_extras(model: str) -> dict:
-    """vision and price of a model name any preset knows, else {}."""
+    """vision and price of a model name any preset knows (however the provider spells it), else {}."""
+    want = norm(model)
     for p in PRESETS:
         for m in p["models"]:
-            if m[0] == model and len(m) > 3:
+            if norm(m[0]) == want and len(m) > 3:
                 return dict(m[3])
     return {}
 

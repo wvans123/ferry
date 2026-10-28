@@ -79,7 +79,7 @@ export function parseTokens(text) {
 
 /** Headers every request to the Ferry server carries. */
 export function serverHeaders(cfg, extra = {}) {
-	return { ...(cfg.headers ?? {}), "x-ferry-protocol": PROTOCOL,
+	return { "User-Agent": `Ferry/${PROTOCOL}`, ...(cfg.headers ?? {}), "x-ferry-protocol": PROTOCOL,
 		...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}), ...extra };
 }
 

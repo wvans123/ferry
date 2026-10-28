@@ -27,13 +27,19 @@ const TodoParams = Type.Object({
 const MARK = { pending: "[ ]", in_progress: "[>]", completed: "[x]" };
 const render = (todos) => todos.map((t) => `${MARK[t.status] ?? "[ ]"} ${t.content}`).join("\n");
 
+let shared = []; // the main agent's to-do list, for /tasks
+
+/** The to-do list as text, or "" when there is none. */
+export const todoText = () => (shared.length ? render(shared) : "");
+
 export function createTodo() {
 	return (pi) => {
 		let todos = [];
 		const show = (ctx) => {
 			if (!ctx?.hasUI) return;
+			shared = todos;
 			const open = todos.filter((t) => t.status !== "completed").length;
-			ctx.ui.setWidget("ferry-todo", todos.length && open ? [`Tasks (${todos.length - open}/${todos.length} done)`,
+			ctx.ui.setWidget("ferry-todo", todos.length && open ? [`To-do (${todos.length - open}/${todos.length} done)`,
 				...render(todos).split("\n").map((l) => `  ${l}`)] : undefined);
 		};
 		const restore = (_event, ctx) => {

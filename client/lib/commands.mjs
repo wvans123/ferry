@@ -168,9 +168,10 @@ export function createCommands(cfg, deps) {
 			},
 		});
 
+		const SIZES = [64e3, 128e3, 200e3, 256e3, 300e3, 400e3, 500e3, 600e3, 800e3, 1e6];
 		pi.registerCommand("context", {
-			description: "How full the context is; /context 400k (or 1m, auto) changes its size for this model",
-			getArgumentCompletions: (prefix) => ["auto", "128k", "200k", "400k", "1m"].filter((x) => x.startsWith(prefix.trim()))
+			description: "How full the context is, and how big it may get for this model (up to what the server allows)",
+			getArgumentCompletions: (prefix) => ["auto", "128k", "200k", "300k", "400k", "1m"].filter((x) => x.startsWith(prefix.trim()))
 				.map((x) => ({ value: x, label: x })),
 			handler: async (args, ctx) => {
 				const want = String(args ?? "").trim().toLowerCase();
@@ -184,14 +185,22 @@ export function createCommands(cfg, deps) {
 				const conv = Math.max(0, used - sys - tools);
 				const parts = [["system prompt (rules, memory index, AGENTS.md)", sys], ["tool definitions", tools], ["conversation", conv]];
 				const own = loadConfig().contextWindow?.[ctx.model?.id];
+				const max = deps.serverWindow(ctx.model?.id) ?? windowSize;
 				const lines = [
 					`${bar(parts, windowSize)} ${fmt(used)} of ${fmt(windowSize)} tokens (${Math.round((used / windowSize) * 100)}%)`,
 					...parts.map(([name, n], i) => `  ${["#", "=", "-"][i]} ${name}: ${fmt(n)}`),
 					`  . free: ${fmt(Math.max(0, windowSize - used))}`,
-					`Size: ${fmt(windowSize)} (${own ? "set by you" : "the server's setting for this model"}). Change it: /context 400k, /context 1m, /context auto.`,
+					`Size: ${fmt(windowSize)} (${own ? "your choice" : "the server's setting"}; this model takes up to ${fmt(max)}).`,
 					"When it gets full, older parts are summarised automatically; /compact does it now.",
 				];
-				tell(ctx, lines.join("\n"), "info");
+				if (!ctx.hasUI) return tell(ctx, lines.join("\n"));
+				// pick a size right here: the usual ones up to what the server allows
+				const options = [`Keep ${fmt(windowSize)}`, ...SIZES.filter((n) => n < max && n !== windowSize).map((n) => fmt(n)),
+					`${fmt(max)} (the most this model takes${own ? "; back to the server's setting" : ""})`];
+				const pick = await ctx.ui.select(`${lines.join("\n")}\n\nContext size for ${ctx.model?.id}: smaller is cheaper per ` +
+					"request and summarises sooner; bigger keeps more history.", options);
+				if (!pick || pick.startsWith("Keep")) return;
+				return setContext(pick.includes("the most") ? "auto" : pick, ctx);
 			},
 		});
 
@@ -199,10 +208,14 @@ export function createCommands(cfg, deps) {
 			const model = ctx.model;
 			if (!model) return tell(ctx, "No model selected", "warning");
 			const all = { ...(loadConfig().contextWindow ?? {}) };
+			const max = deps.serverWindow(model.id);
 			let n = 0;
-			if (want !== "auto" && want !== "reset") {
+			if (want !== "auto" && want !== "reset" && want !== "max") {
 				n = parseTokens(want);
-				if (!n || n < 16000) return tell(ctx, "Usage: /context 400k  (or 200000, 1m; auto = the server's setting). At least 16k.", "warning");
+				if (!n || n < 16000) return tell(ctx, "Usage: /context 300k  (or 128k, 1m; auto = the most the server allows). At least 16k.", "warning");
+				if (max && n > max) return tell(ctx, `${model.id} takes at most ${fmt(max)} tokens (the server's setting). ` +
+					"Pick a smaller size, or raise it on the server's admin page first.", "warning");
+				if (max && n === max) n = 0;
 			}
 			if (n) all[model.id] = n;
 			else delete all[model.id];
@@ -211,12 +224,9 @@ export function createCommands(cfg, deps) {
 			deps.reregister(pi, cfg);
 			const fresh = ctx.modelRegistry?.find?.("ferry", model.id);
 			if (fresh) await pi.setModel(fresh);
-			const server = deps.serverWindow(model.id);
 			const size = fresh?.contextWindow ?? n;
-			tell(ctx, `Context size for ${model.id}: ${fmt(size)} tokens${n ? "" : " (the server's setting)"}.` +
-				(n && server && n > server ? `\nThe server lists this model with ${fmt(server)}. If the model really takes less, ` +
-					"requests fail once the conversation grows past that; go back with /context auto." : "") +
-				"\nA bigger context keeps more history before summarising, but every request costs more.", "info");
+			tell(ctx, `Context size for ${model.id}: ${fmt(size)} tokens${n ? "" : " (the most the server allows)"}. ` +
+				"Smaller is cheaper per request and summarises sooner; bigger keeps more history.", "info");
 		}
 
 		pi.registerCommand("config", {
