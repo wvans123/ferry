@@ -18,9 +18,10 @@ async function ask(ui, verdict, event, cwd, who) {
 	const tool = event.toolName;
 	const input = event.input ?? {};
 	const detail = short(String(input.command ?? input.path ?? input.url ?? JSON.stringify(input)));
-	const head = verdict.danger ? `Careful: this ${verdict.danger}.\n\n` : verdict.outside ? "This is outside the project folder.\n\n" : "";
+	const head = verdict.danger ? `Careful: this ${verdict.danger}.\n\n` : verdict.outside ? "This is outside the project folder.\n\n"
+		: verdict.judged ? `Auto mode is not sure: ${verdict.judged}\n\n` : "";
 	const isShell = tool === "bash" || tool === "powershell";
-	const isEdit = tool === "edit" || tool === "write";
+	const isEdit = ["edit", "write", "office_edit", "office_create"].includes(tool);
 	const rules = isShell ? [...new Set((verdict.pending ?? verdict.segments ?? [input.command ?? ""]).map((s) => prefixRule(tool, s)))]
 		: tool === "web_fetch" ? [`web_fetch(${hostOf(input.url)})`] // one site
 		: [tool.startsWith("mcp__") ? `${tool.split("__").slice(0, 2).join("__")}__*` : tool]; // a whole MCP server
@@ -70,9 +71,23 @@ export function createGuard(cfg, opts = {}) {
 					if (verdict.blocked && ui) ui.notify(`Ferry blocked ${event.toolName} on a protected path (${verdict.blocked})`, "warning");
 					return { block: true, reason: verdict.reason };
 				}
+				// auto mode: what the rules could not decide goes to a model on the server; anything but a clear yes asks
+				if (state.mode === "auto" && !verdict.danger && !verdict.outside && cfg.judge) {
+					const j = await cfg.judge({ tool, input: event.input, cwd }).catch(() => null);
+					if (j?.verdict === "allow") {
+						ui?.setStatus?.("ferry-auto", `auto: allowed ${tool} (${String(j.reason ?? "").slice(0, 60)})`);
+						return undefined;
+					}
+					verdict.judged = j?.reason || "the judge did not answer";
+				}
 				if (!ui) return { block: true, reason: "This needs the user's approval and no terminal is available. " +
 					"Run ferry interactively, or allow it with a rule (ferry config) or mode." };
-				return ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ? ` (${opts.label})` : "");
+				state.onAsk?.(tool);
+				try {
+					return await ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ? ` (${opts.label})` : "");
+				} finally {
+					state.onAnswered?.();
+				}
 			};
 			// one question at a time: parallel tool calls wait, and see rules saved by the previous answer
 			const result = state.queue.then(run, run);

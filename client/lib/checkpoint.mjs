@@ -94,7 +94,7 @@ export function createCheckpoints() {
 			if (event.messageType === "user") store?.begin(event.prompt ?? "");
 		});
 		pi.on("tool_call", (event, ctx) => {
-			if ((event.toolName === "edit" || event.toolName === "write") && typeof event.input?.path === "string") {
+			if (["edit", "write", "office_edit", "office_create"].includes(event.toolName) && typeof event.input?.path === "string") {
 				try {
 					store?.snapshot(resolve(ctx?.cwd ?? process.cwd(), event.input.path));
 				} catch {

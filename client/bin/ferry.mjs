@@ -327,7 +327,7 @@ async function run(args) {
 	const { createBrand } = await import("../lib/brand.mjs");
 	const { createMemory } = await import("../lib/memory.mjs");
 	const { createPrompt } = await import("../lib/prompt.mjs");
-	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations, todoText } = await import("../lib/tools.mjs");
+	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations, createTrimOldOutputs, todoText } = await import("../lib/tools.mjs");
 	const { createSubagents, discoverAgents } = await import("../lib/subagent.mjs");
 	const { createCommands } = await import("../lib/commands.mjs");
 	const { createCheckpoints } = await import("../lib/checkpoint.mjs");
@@ -351,6 +351,21 @@ async function run(args) {
 	const { createWeb } = await import("../lib/web.mjs");
 	const { createBrowser } = await import("../lib/browser.mjs");
 	const sync = createSyncProvider(cfg, models);
+	cfg.phone = (await import("../lib/phone.mjs")).phoneNotifier(cfg);
+	// auto mode: a model on the server judges actions the rules cannot decide
+	cfg.judge = async (action) => {
+		const res = await fetch(`${cfg.server}/v1/ferry/judge`, { method: "POST", body: JSON.stringify(action),
+			headers: serverHeaders(cfg, { "Content-Type": "application/json" }), signal: AbortSignal.timeout(30000) });
+		return res.ok && res.headers.get("content-type")?.includes("json") ? res.json() : null;
+	};
+	// an approval left waiting: tell the phone after a while
+	let waitTimer = null;
+	permState.onAsk = (tool) => {
+		clearTimeout(waitTimer);
+		waitTimer = setTimeout(() => cfg.phone("Waiting for your approval", tool, "approval"), (cfg.phoneAfterSeconds ?? 300) * 1000);
+		waitTimer.unref?.();
+	};
+	permState.onAnswered = () => clearTimeout(waitTimer);
 	// on exit pi prints "To resume this session: pi --session <id>"; with Ferry it is ferry --session <id>
 	const write = process.stdout.write.bind(process.stdout);
 	process.stdout.write = (chunk, ...rest) => write(typeof chunk === "string" && chunk.includes("To resume this session:")
@@ -377,6 +392,8 @@ async function run(args) {
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },
 			{ name: "ferry-past", factory: createPastConversations(), hidden: true },
+			{ name: "ferry-trim", factory: createTrimOldOutputs(cfg), hidden: true },
+			{ name: "ferry-office", factory: (await import("../lib/office.mjs")).createOffice(), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },
 			{ name: "ferry-browser", factory: createBrowser(cfg), hidden: true },
 			{ name: "ferry-project-mcp", factory: createProjectMcp(), hidden: true },

@@ -195,3 +195,17 @@
 - 服务端给中转后面的 Claude 请求加上 Anthropic 缓存标记（系统提示、最后一个工具、最后一条消息）；中转回 400/422 就去掉标记重发，并记住这个模型不再加。
 - 用量统计认中转返回的 `cache_read_input_tokens` / `cache_creation_input_tokens`。
 - 自定义服务商可以选"接口格式：Anthropic"（Claude 原生 /v1/messages）；"测试"会检查中转是否支持，并提示切换。
+
+## v0.16
+
+| 新增 | 说明 | 自测 |
+|---|---|---|
+| 省略旧工具输出 | 上下文超过 `trimOldOutputs`（默认 80k）时，一次性把旧的长工具输出换成一行说明（保留最近 6 个），记在会话里（pi 的 context edit），恢复会话后也一样 | F48 |
+| 批量派活 | `task_batch`：每个条目一个子 agent，最多 `maxParallel` 个同时跑，报告汇总到 `%USERPROFILE%\.ferry\batches\` | F49 |
+| 并行上限 | 客户端子 agent 排队；服务端每个用户同时最多 `max_concurrent` 个模型请求（管理页可改），多的排队 | F49 + 服务端单元测试 |
+| 子 agent 模型 | agent 文件里的 `model:` 字段 | — |
+| Office | `office_read` / `office_edit` / `office_create` 和内置的 office 技能；修订痕迹在 LibreOffice 里核对过 | F50 + 客户端单元测试 |
+| auto 模式 | 规则 → 服务端判断模型（`/v1/ferry/judge`，管理页选模型）→ 拿不准就问；危险操作不经判断 | F51 + 服务端单元测试 |
+| 手机通知 | Bark：目标结束、长任务做完、确认等待过久；服务端 `/v1/ferry/notify`，管理页能发测试 | F52 + 服务端单元测试 |
+
+不做：控制网页和桌面软件（先不需要）、/loop、插件市场。

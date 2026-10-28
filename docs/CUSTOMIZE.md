@@ -90,11 +90,13 @@ description: Write release notes from git history in this team's format. Use whe
 name: security-reviewer
 description: Read-only security review of given files or changes. Use it after writing code that handles input ...
 tools: read, grep, find, ls
+model: deepseek-flash
 ---
 You are a security reviewer. ...
 ```
 
 - `tools` 不写，就用主 agent 的全部工具。
+- `model` 不写，就用主对话的模型；写了服务端提供的模型名（管理页里列的，比如 `deepseek-flash`），这个子 agent 就用它。查资料、整理这类杂活用便宜的模型能省不少钱。服务端要打开"工作电脑可以用 /model 自己挑"。
 - 子 agent 改文件、执行命令同样要过权限，确认框会弹在你的主窗口里。
 - `/help` 的最后列出现有的子 agent。
 

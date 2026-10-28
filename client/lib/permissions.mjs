@@ -18,19 +18,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FERRY_HOME } from "./config.mjs";
 
-export const MODES = ["default", "acceptEdits", "plan", "bypass"];
+export const MODES = ["default", "acceptEdits", "auto", "plan", "bypass"];
 export const MODE_LABEL = {
 	default: "ask before edits and commands",
 	acceptEdits: "auto-edit: file changes go ahead",
+	auto: "auto: a model decides, asks only when unsure",
 	plan: "plan: read-only",
 	bypass: "full access: nothing asks",
 };
 const SHELL = new Set(["bash", "powershell"]);
-const EDIT = new Set(["edit", "write"]);
-const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
+const EDIT = new Set(["edit", "write", "office_edit", "office_create"]);
+const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "office_read", "office_edit", "office_create"]);
 // tools that only look, or that are fenced in by themselves (memory: its own folder; task: the subagent's
 // tools are checked one by one; web_*: the server's own allow list)
-const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "web_search",
+const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "task_batch",
+	"past_conversations", "office_read", "web_search",
 	"job_output", "job_stop", "goal_update"]);
 // reads, but from a site the user may not want contacted: asked per site (like Claude Code's WebFetch), also in plan mode
 const NET = new Set(["web_fetch"]);
@@ -307,7 +309,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	if (EDIT.has(tool)) {
 		if (![cwd, ...extraDirs].some((d) => insideProject(d, resolve(cwd, String(input.path ?? ""))))) return { action: "ask", outside: true };
-		if (mode === "acceptEdits" || any(rules.allow)) return { action: "allow" };
+		if (mode === "acceptEdits" || mode === "auto" || any(rules.allow)) return { action: "allow" };
 		return { action: "ask" };
 	}
 	if (shell) {

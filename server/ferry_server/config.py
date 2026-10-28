@@ -88,6 +88,9 @@ class Config:
     secret: str = ""
     session_ttl_days: int = 7
     max_upstream_bytes: int = 0  # 0 = no cap; otherwise old tool outputs are dropped to stay under it
+    max_concurrent: int = 6      # model calls one user may have running at once; more wait their turn
+    bark_url: str = ""           # Bark push address (https://api.day.app/<key>): notifications to an iPhone
+    judge_model: str = ""        # model that judges uncertain actions in the client's auto mode ("" = the summary/default model)
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
@@ -138,6 +141,9 @@ def load(path: str | os.PathLike) -> Config:
         web_allow=list(s.get("web_allow", [])),
         web_engine=s.get("web_engine", "bing"),
         web_proxy=s.get("web_proxy", ""),
+        max_concurrent=int(s.get("max_concurrent", 6)),
+        bark_url=os.environ.get("FERRY_BARK_URL") or s.get("bark_url", ""),
+        judge_model=s.get("judge_model", ""),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -487,7 +493,10 @@ def load_default() -> Config:
         dictionary=dictionary,
         secret=secret,
         users={token: "local"},
-        max_upstream_bytes=int(env("FERRY_MAX_UPSTREAM_BYTES") or saved.get("max_upstream_bytes", 900_000)),
+        max_upstream_bytes=int(env("FERRY_MAX_UPSTREAM_BYTES") or saved.get("max_upstream_bytes", 0)),
+        max_concurrent=int(saved.get("max_concurrent", 6)),
+        bark_url=env("FERRY_BARK_URL") or saved.get("bark_url", ""),
+        judge_model=saved.get("judge_model", ""),
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
@@ -523,4 +532,7 @@ def save_settings(cfg: Config) -> None:
         f"web = {'true' if cfg.web_enabled else 'false'}\n"
         f"web_allow = {json.dumps(cfg.web_allow, ensure_ascii=False)}\n"
         f"web_engine = {json.dumps(cfg.web_engine)}\n"
-        f"web_proxy = {json.dumps(cfg.web_proxy)}\n", encoding="utf-8")
+        f"web_proxy = {json.dumps(cfg.web_proxy)}\n"
+        f"max_concurrent = {int(cfg.max_concurrent)}\n"
+        f"bark_url = {json.dumps(cfg.bark_url)}\n"
+        f"judge_model = {json.dumps(cfg.judge_model)}\n", encoding="utf-8")

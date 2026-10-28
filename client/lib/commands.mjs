@@ -11,7 +11,8 @@
 // Also here: a desktop notification when a long request finishes.
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, loadConfig, parseTokens, saveConfig } from "./config.mjs";
 import { MODE_LABEL, ruleFiles } from "./permissions.mjs";
 
@@ -29,7 +30,7 @@ Information    /context [size]  how full the context is; with a size (400k, 1m, 
                /cost  tokens and money       /status  server, model, settings, and a quick check
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
 
-Keys           Shift+Tab   permission mode: ask first > auto-edit (file changes go ahead) > plan (read only) > allow all
+Keys           Shift+Tab   permission mode: ask first > auto-edit > auto (a model decides; asks when unsure) > plan > allow all
                Esc  stop the agent        Ctrl+C  clear the input (twice: quit)       Ctrl+D  quit      ?  this help
                Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
                Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
@@ -81,8 +82,11 @@ export function commandFiles(cwd) {
 	return [...byName.values()];
 }
 
+// Ferry's own skills (office) come first; yours and the project's with the same name replace them
+const BUILTIN_SKILLS = join(dirname(fileURLToPath(import.meta.url)), "..", "skills");
+
 export function skillDirs(cwd) {
-	return [join(FERRY_HOME, "skills"), join(cwd, ".claude", "skills"), join(cwd, ".ferry", "skills")].filter((d) => existsSync(d));
+	return [BUILTIN_SKILLS, join(FERRY_HOME, "skills"), join(cwd, ".claude", "skills"), join(cwd, ".ferry", "skills")].filter((d) => existsSync(d));
 }
 
 function notifyDone(seconds) {
@@ -116,6 +120,8 @@ export function createCommands(cfg, deps) {
 		pi.on("agent_settled", (_e, ctx) => {
 			const secs = (Date.now() - started) / 1000;
 			if (ctx?.hasUI && started && cfg.notify !== false && secs >= (cfg.notifyAfterSeconds ?? 30)) notifyDone(secs);
+			// a long piece of work: also to the phone (you have probably walked away)
+			if (ctx?.hasUI && started && secs >= (cfg.phoneAfterSeconds ?? 300)) cfg.phone?.("Done", `after ${Math.round(secs / 60)} min`, "done");
 			started = 0;
 		});
 

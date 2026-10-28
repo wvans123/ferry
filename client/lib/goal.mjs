@@ -116,6 +116,8 @@ export function createGoal(cfg) {
 				status(ctx);
 				ctx?.ui?.notify?.(params.status === "achieved" ? `Goal achieved: ${params.summary}` : `Goal needs you: ${params.summary}`,
 					params.status === "achieved" ? "info" : "warning");
+				cfg.phone?.(params.status === "achieved" ? "Goal achieved" : "Goal needs you", String(params.summary ?? "").slice(0, 120),
+					params.status === "achieved" ? "goal" : "approval");
 				return { content: [{ type: "text", text: `Goal marked ${params.status}. Now give the user a short final report.` }], details: undefined };
 			},
 		});
@@ -136,6 +138,7 @@ export function createGoal(cfg) {
 			if ((goal.budget && used >= goal.budget) || goal.turns >= maxTurns) {
 				goal.status = "budget";
 				goal.note = goal.budget && used >= goal.budget ? `token budget used (${fmt(used)})` : `turn limit reached (${maxTurns})`;
+				cfg.phone?.("Goal stopped", goal.note, "goal");
 				text = `The ${goal.note.startsWith("token") ? "token budget" : "turn limit"} for the goal is used up. Do not start new work. ` +
 					"Write a short progress report: what is done and checked, what remains, and what you would do next.";
 			} else {

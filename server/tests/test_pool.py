@@ -197,3 +197,58 @@ def test_usage_from_a_claude_relay_counts_the_cache():
     from ferry_server.usage import normalize
     u = normalize({"prompt_tokens": 1000, "completion_tokens": 10, "cache_read_input_tokens": 900})
     assert u == {"input": 100, "cache_read": 900, "cache_write": 0, "output": 10}
+
+
+def test_one_user_has_at_most_max_concurrent_model_calls(tmp_path, monkeypatch):
+    state = {"now": 0, "max": 0}
+
+    async def handler(req: httpx.Request):
+        state["now"] += 1
+        state["max"] = max(state["max"], state["now"])
+        await asyncio.sleep(0.05)
+        state["now"] -= 1
+        return answer()
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    cfg.max_concurrent = 2
+    token = (tmp_path / "token").read_text().strip()
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            rs = await asyncio.gather(*[c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                               json={"model": "other", "messages": [{"role": "user", "content": f"hi {i}"}]})
+                                        for i in range(6)])
+            return [r.status_code for r in rs]
+
+    assert asyncio.run(go()) == [200] * 6
+    assert state["max"] == 2
+
+
+def test_judge_and_notify(tmp_path, monkeypatch):
+    sent = []
+
+    def handler(req: httpx.Request):
+        if req.url.host == "api.day.app":
+            sent.append(json.loads(req.content))
+            return httpx.Response(200, json={"code": 200})
+        text = json.loads(req.content)["messages"][-1]["content"]
+        return answer("ALLOW: runs the tests" if "npm test" in text else "ASK: deletes files")
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            a = (await c.post("/v1/ferry/judge", headers=hdr, json={"tool": "bash", "input": {"command": "npm test"}, "cwd": "D:/p"})).json()
+            b = (await c.post("/v1/ferry/judge", headers=hdr, json={"tool": "bash", "input": {"command": "rm -rf build"}, "cwd": "D:/p"})).json()
+            n0 = (await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "goal done"})).json()
+            cfg.bark_url = "https://api.day.app/KEY"
+            n1 = (await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "goal done"})).json()
+            return a, b, n0, n1
+
+    import ferry_server.notify as nt
+    monkeypatch.setattr(nt.httpx, "AsyncClient", lambda **kw: REAL(transport=httpx.MockTransport(handler), **kw))
+    a, b, n0, n1 = asyncio.run(go())
+    assert a["verdict"] == "allow" and b["verdict"] == "ask"
+    assert n0["ok"] is False and n1["ok"] is True and sent[0]["body"] == "goal done"

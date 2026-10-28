@@ -112,6 +112,9 @@ class Stack:
         (srv / "ferry-server.toml").write_text(cfg + extra_toml, encoding="utf-8")
         self.config = srv / "ferry-server.toml"
         self.home = root / "ferry-home"
+        if mode.startswith("long:"):  # these check the transport with a really big context: keep every tool output
+            self.home.mkdir(parents=True, exist_ok=True)
+            (self.home / "config.json").write_text(json.dumps({"trimOldOutputs": "0"}), encoding="utf-8")
         self.env = {**os.environ, "FERRY_SECRET": SECRET, "FERRY_TOKEN_WESLEY": TOKEN, "FERRY_TOKEN_BOB": TOKEN_BOB,
                     "DEEPSEEK_API_KEY": "x", "FERRY_TEST_DROP_EVERY": str(drop_every), "FERRY_HOME": str(self.home),
                     "FERRY_TEST_DROP_BEFORE_CHAT": str(drop_before_chat), "FERRY_AUTO_APPROVE": "1",
@@ -342,6 +345,50 @@ def check_resume_upload(root: Path, work: Path) -> None:
     finally:
         s.close()
         (work / "big-notes.txt").unlink(missing_ok=True)
+
+
+def check_v016(root: Path, work: Path) -> None:
+    """Old tool outputs left out, task_batch, Office files, auto mode, phone notifications."""
+    (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(400)), encoding="utf-8")
+    s = Stack(root, work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark"})
+    try:
+        s.home.mkdir(parents=True, exist_ok=True)
+        cfgf = s.home / "config.json"
+        cfgf.write_text(json.dumps({"trimOldOutputs": "2k", "maxParallel": 2}), encoding="utf-8")
+        c1, o1 = s.ferry("-p", "TRIMTEST: read the notes again and again")
+        last = jsonl(s.upstream)[-1]
+        stubs = sum("was left out to keep the context small" in json.dumps(m) for m in last.get("messages", []))
+        ok = c1 == 0 and stubs >= 1 and "TRIM:" in o1
+        check("F48 旧的工具输出自动省略", ok, f"上下文超过设定值后，旧的长工具输出换成一行说明（这次省略 {stubs} 段），最近的保留"
+              if ok else f"c={c1} stubs={stubs} {o1[-300:]}")
+        c2, o2 = s.ferry("-p", "BATCHTEST: check the four items")
+        files = sorted((s.home / "batches").glob("*.md"))
+        report = files[-1].read_text(encoding="utf-8") if files else ""
+        ok = c2 == 0 and "4 of 4 done" in o2 and all(f"ITEM {x} ok" in report for x in ("alpha", "beta", "gamma", "delta"))
+        check("F49 批量派活", ok, "task_batch 给 4 个条目各派一个子 agent（最多 2 个同时跑），报告汇总到一个文件" if ok else f"{o2[-300:]} | {report[:200]}")
+        c3, o3 = s.ferry("-p", "OFFICETEST: make a change request")
+        ok = c3 == 0 and "{-every 10 s-}{+every 20 s+}" in o3 and (work / "cr.docx").exists()
+        check("F50 Office 文件", ok, "agent 新建 Word、按修订方式改、再读出修订痕迹" if ok else o3[-300:])
+        cfgf.write_text(json.dumps({"permissionMode": "auto"}), encoding="utf-8")
+        no_bypass = {"FERRY_AUTO_APPROVE": "0"}
+        c4, o4 = s.ferry("-p", "AUTOTEST: make a file", env_extra=no_bypass)
+        c5, o5 = s.ferry("-p", "AUTOTEST: clean the build", env_extra=no_bypass)
+        judged = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "judge"]
+        ok = (c4 == 0 and (work / "auto-made.txt").exists() and c5 == 0 and "approval" in o5
+              and [j["verdict"] for j in judged] == ["allow"])
+        check("F51 auto 模式", ok, "规则定不了的命令交给服务端的模型判断：建文件放行；rm -rf 属于危险操作，不经判断直接要确认"
+              if ok else f"{[j.get('verdict') for j in judged]} | {o4[-200:]} | {o5[-200:]}")
+        cfgf.write_text(json.dumps({}), encoding="utf-8")
+        c6, o6 = s.ferry("-p", "/goal GOALTEST write three notes")
+        barks = [u for u in jsonl(s.upstream) if "group" in u and u.get("group") == "Ferry"]
+        ok = c6 == 0 and any("Goal achieved" in b.get("body", "") for b in barks)
+        check("F52 手机通知", ok, "目标完成后，服务端给 Bark 推了一条（只有一句话，没有对话内容）" if ok else f"{barks} | {o6[-200:]}")
+    finally:
+        s.close()
+        for n in ("big-notes.txt", "cr.docx", "auto-made.txt"):
+            (work / n).unlink(missing_ok=True)
+        for p in work.glob("goal-note*.txt"):
+            p.unlink()
 
 
 def check_context_and_mcp(root: Path, work: Path) -> None:
@@ -926,6 +973,7 @@ def main() -> int:
     check_web_browser(base / "web", work)
     check_gateway(base / "gateway", work)
     check_resume_upload(base / "resume", work)
+    check_v016(base / "v016", work)
     check_context_and_mcp(base / "ctx", work)
     check_project_mcp(base / "pmcp")
     check_tui(base / "tui", work)

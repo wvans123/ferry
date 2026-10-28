@@ -38,6 +38,10 @@ export const DEFAULTS = {
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
 	thinking: "medium", // how long Claude / GPT think: low, medium, high, xhigh
+	trimOldOutputs: "80k", // past this many tokens of context, old long tool outputs are left out ("0" = never)
+	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
+	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
+	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 };
 
@@ -45,6 +49,7 @@ export const DEFAULTS = {
 export const SETTINGS = {
 	permissionMode: ["string", "how much the agent may do without asking, when ferry starts (Shift+Tab switches while it runs)",
 		["default  ask before changing files and running commands", "acceptEdits  file changes in the project go ahead; commands still ask",
+			"auto  like acceptEdits; commands the rules cannot decide are judged by a model on the server, and asked only when unsure",
 			"plan  read and search only", "bypass  nothing asks (protected paths stay blocked)"]],
 	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
 		["low", "medium  (default)", "high", "xhigh"]],
@@ -55,6 +60,7 @@ export const SETTINGS = {
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
+	phoneNotify: ["boolean", "phone notifications through the Ferry server (set Bark on its admin page): goal done, long work done, approval waiting"],
 	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
 	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
 };
@@ -68,6 +74,9 @@ export const ADVANCED_SETTINGS = {
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window"],
 	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
+	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
+	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
+	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
 };
 
 /** "400k", "1m", "1.5M", "200000" -> tokens; 0 when it is not a size. */

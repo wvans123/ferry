@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { FERRY_HOME } from "./config.mjs";
+import { FERRY_HOME, parseTokens } from "./config.mjs";
 
 export const OUTPUTS_DIR = join(FERRY_HOME, "outputs");
 const KEEP_DAYS = 7;
@@ -295,6 +295,53 @@ export function createHistorySearch() {
 				const text = searchHistory(ctx.sessionManager.getBranch(), String(params.query ?? ""), Number(params.max_results) || 8);
 				return { content: [{ type: "text", text }], details: undefined };
 			},
+		});
+	};
+}
+
+// ---------- leave old tool outputs out ----------
+//
+// The longest part of a long conversation is usually tool output the agent has long finished with (a file it read
+// twenty steps ago, a long command output). Once the context passes trimOldOutputs tokens, Ferry replaces old,
+// long tool results with a one-line note, all at once (so the cached prefix changes rarely), keeping the latest few.
+// The replacement is stored in the session (pi's context edits), so it stays the same after /resume.
+// Your messages and the agent's answers are never touched; history_search still finds the full text.
+
+const TRIM_KEEP = 6; // the latest tool results always stay
+const TRIM_MIN_CHARS = 2000;
+const TRIM_TOOLS = new Set(["read", "bash", "powershell", "grep", "find", "ls", "web_fetch", "web_search", "job_output",
+	"office_read", "history_search", "past_conversations"]);
+
+/** Context-edit drafts for the old, long tool results of a branch (exported for tests). */
+export function trimDrafts(entries, keep = TRIM_KEEP, minChars = TRIM_MIN_CHARS) {
+	const edited = new Set(entries.filter((e) => e.type === "context_edit").map((e) => e.targetId));
+	const results = entries.filter((e) => e.type === "message" && e.message?.role === "toolResult");
+	const old = results.slice(0, Math.max(0, results.length - keep));
+	const drafts = [];
+	for (const e of old) {
+		const m = e.message;
+		if (edited.has(e.id) || !TRIM_TOOLS.has(m.toolName)) continue;
+		const text = (m.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+		if (text.length < minChars) continue;
+		const kb = Math.max(1, Math.round(Buffer.byteLength(text) / 1024));
+		drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: [{ type: "text",
+			text: `[Ferry: this ${m.toolName} output (${kb} KB) was left out to keep the context small; the agent saw it ` +
+				"earlier. Run the tool again, or use history_search, if you need it.]" }] } });
+	}
+	return drafts;
+}
+
+export function createTrimOldOutputs(cfg) {
+	return (pi) => {
+		const at = parseTokens(cfg.trimOldOutputs ?? "80k");
+		if (!at) return; // off
+		pi.on("turn_end", (_event, ctx) => {
+			const used = ctx.getContextUsage?.()?.tokens ?? 0;
+			if (used < at) return undefined;
+			const drafts = trimDrafts(ctx.sessionManager.getBranch());
+			if (!drafts.length) return undefined;
+			if (ctx.hasUI) ctx.ui.setStatus("ferry-trim", `left out ${drafts.length} old tool output(s)`);
+			return { entries: drafts };
 		});
 	};
 }

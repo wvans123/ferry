@@ -149,7 +149,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "home": str(cfg.home or cfg.data_dir), "public_url": cfg.public_url,
             "token": next(iter(cfg.users)) if cfg.home else "", "zero_config": bool(cfg.home),
             "session_store": cfg.session_store, "redact": cfg.redact, "max_upstream_bytes": cfg.max_upstream_bytes,
-            "record_details": cfg.record_details,
+            "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
+            "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "judge_model": cfg.judge_model,
             "web": {"enabled": cfg.web_enabled, "allow": cfg.web_allow, "engine": cfg.web_engine, "proxy": cfg.web_proxy},
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
@@ -274,6 +275,12 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                 cfg.web_engine = w["engine"]
             if "proxy" in w:
                 cfg.web_proxy = str(w["proxy"]).strip()
+        if "max_concurrent" in b:
+            cfg.max_concurrent = max(1, min(50, int(b["max_concurrent"] or 6)))
+        if "bark_url" in b:
+            cfg.bark_url = str(b["bark_url"]).strip().rstrip("/")
+        if "judge_model" in b:
+            cfg.judge_model = str(b["judge_model"]).strip()
         if "record_details" in b:
             cfg.record_details = bool(b["record_details"])
             if not cfg.record_details:
@@ -281,6 +288,14 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         rebuild(store_changed)
         save_settings(cfg)
         return status()
+
+    @app.post("/admin/api/notify/test")
+    async def notify_test(request: Request):
+        if not allowed(request, True):
+            return denied()
+        from .notify import send
+        ok, err = await send(cfg, "Ferry", "测试通知：手机能收到就说明设置好了。", "test")
+        return {"ok": ok, "error": err}
 
     @app.post("/admin/api/token/rotate")
     async def rotate(request: Request):

@@ -240,12 +240,13 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 
 ### 权限：该问的才问
 
-**Shift+Tab** 在四种模式之间切换，底栏显示当前模式：
+**Shift+Tab** 在五种模式之间切换，底栏显示当前模式：
 
 | 模式 | 改文件 | 执行命令 |
 |---|---|---|
 | 默认 | 问 | 只读命令（`git status`、`dir`、`rg`……）不问，其他问 |
 | 自动改文件 | 项目文件夹里的不问 | 同上 |
+| auto | 项目文件夹里的不问 | 规则定不了的，交给服务端的一个模型判断（管理页 → 设置里选，比如 DeepSeek），它说"明显安全"才放行，否则照常问你。危险操作不经判断，直接问 |
 | 只读规划 | 不允许 | 只允许只读命令 |
 | 全部放行 | 不问 | 不问 |
 
@@ -272,6 +273,10 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型（模型要支持看图，Claude、GPT、deepseek-flash 都支持） |
 | 花费 | 底栏显示本次对话花了多少钱；`/cost` 看明细；服务端管理页的"用量和费用"按天、按项目、按模型汇总 |
 | 提醒 | 一个请求超过 30 秒才做完时，会响一声并弹出 Windows 通知 |
+| 手机通知 | 目标完成或卡住、做了 5 分钟以上的活做完、确认框等你超过 5 分钟时，推到手机（iPhone 用 Bark：管理页 → 设置 → 手机通知，贴上 Bark 的地址）。只发一句话，不带对话内容 |
+| Office 文件 | 读 Word（含修订痕迹和批注）、Excel、PowerPoint、PDF；按修订方式改 Word（像 change request 那样显示删了什么、加了什么）；改 Excel 单元格；从 Markdown 新建 Word、从表格新建 Excel。直接处理文件，不需要装 Office，也不会去操作屏幕上的窗口 |
+| 批量派活 | "把这个文件夹里 40 篇稿件每篇看一遍"：每篇派一个子 agent，同时最多 3 个（`maxParallel`），报告汇总到一个文件。服务端也限制每个用户同时的模型请求数（管理页 → 设置），多的排队，不会把服务端压垮 |
+| 省 token | 上下文超过 80k（`trimOldOutputs`）时，很久以前的长工具输出（读过的大文件、长命令输出）换成一行说明，最近 6 个保留；需要时它会重读，`history_search` 也能找回原文 |
 
 ## 自己动手扩展
 
@@ -303,10 +308,11 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome） |
 | `goalMaxTurns` / `goalBudget` | `100` / `0` | `/goal` 最多轮数和 token 预算（如 `2m`，0 = 不限） |
 | `notify` | `true` | 长请求结束时响铃加通知 |
+| `phoneNotify` | `true` | 让服务端推手机通知（服务端要先在管理页设好 Bark） |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
 
-很少需要改的（`ferry config --all` 或 `/config` → More settings）：`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`。上下文长度用 `/context` 改，存在同一个文件里。
 
 **服务端**：大多在管理页里改，存在服务端数据目录的 `server.toml`。也可以用环境变量：
 

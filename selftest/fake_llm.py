@@ -33,6 +33,8 @@ def text_of(m):
 def decide(msgs):
     if msgs and text_of(msgs[-1]) == "Reply with OK":  # ferry doctor's model check
         return ("text", "OK")
+    if msgs and "You check one action" in text_of(msgs[0]):  # auto mode's judge
+        return ("text", "ASK: it deletes files" if "rm " in text_of(msgs[-1]) else "ALLOW: it only creates a file in the project")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if MODE == "basic":
@@ -91,6 +93,8 @@ def decide_agent(msgs):
     if any("GOALTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
         return decide_goal(msgs)
     if "<ferry_subagent>" in system:  # a subagent's own conversation
+        if "SUBBATCH" in first:  # one item of a task_batch
+            return ("text", "ITEM " + first.split()[2] + " ok")
         if "SUBRUN" in first:  # a general subagent that runs a command (needs the user's approval)
             if not tools:
                 return ("tool", "bash", {"command": "echo sub-approved-$((6*7))"})
@@ -170,6 +174,30 @@ def decide_agent(msgs):
             return ("tool", "task", {"agent": "general", "description": "run a check command",
                                      "prompt": "SUBRUN: run the check command and report its output."})
         return ("text", "MAIN GOT: " + text_of(tools[-1])[:300])
+    if "TRIMTEST" in first:  # many long tool outputs: old ones get left out
+        if len(tools) < 8:
+            return ("tool", "read", {"path": "big-notes.txt"})
+        return ("text", "TRIM: " + str(sum("was left out to keep the context small" in text_of(t) for t in tools)) + " left out")
+    if "BATCHTEST" in first:
+        if not tools:
+            return ("tool", "task_batch", {"description": "check four items", "items": ["alpha", "beta", "gamma", "delta"],
+                                           "prompt": "SUBBATCH check {item} and report", "agent": "explore"})
+        return ("text", "BATCH: " + text_of(tools[-1])[:400].replace("\n", " | "))
+    if "SUBBATCH" in first:
+        return ("text", "ITEM " + first.split()[2] + " ok")
+    if "OFFICETEST" in first:
+        names = [n for m in msgs if m.get("role") == "assistant" for n in [c["function"]["name"] for c in (m.get("tool_calls") or [])]]
+        if not names:
+            return ("tool", "office_create", {"path": "cr.docx", "markdown": "# CR\n\nThe UE shall report every 10 s."})
+        if len(names) == 1:
+            return ("tool", "office_edit", {"path": "cr.docx", "edits": [{"find": "every 10 s", "replace": "every 20 s"}]})
+        if len(names) == 2:
+            return ("tool", "office_read", {"path": "cr.docx"})
+        return ("text", "OFFICE: " + text_of(tools[-1])[:300].replace("\n", " | "))
+    if "AUTOTEST" in first:
+        if not tools:
+            return ("tool", "bash", {"command": "touch auto-made.txt" if "make" in first else "rm -rf auto-build"})
+        return ("text", "AUTO: " + text_of(tools[-1])[:200])
     if "READBIG" in first:  # a long tool result in the history
         if not tools:
             return ("tool", "read", {"path": "big-notes.txt"})
@@ -323,6 +351,8 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(raw)
         with open(LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(body, ensure_ascii=False) + "\n")
+        if self.path.endswith("/bark"):  # a phone notification (Bark)
+            return self.send_json(200, {"code": 200, "message": "success"})
         if self.path.endswith("/v1/messages"):
             return self.anthropic(body, raw)
         bad = [k for k in REJECT if k in body]

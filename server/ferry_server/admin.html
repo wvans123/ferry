@@ -379,6 +379,18 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
           <div class="row"><input type="number" id="setCap" min="0" step="50" style="width:140px"> <span class="muted">KB</span><button class="btn primary" id="saveCap">保存</button></div>
         </div>
         <div class="card">
+          <h2>手机通知</h2>
+          <p class="hint">目标完成、长任务做完、等你确认太久时，推一条到手机。用 iPhone 上的 Bark：打开 App，复制里面的推送地址（形如 https://api.day.app/xxxxx）贴到这里。只发一句话，不带对话内容。</p>
+          <div class="row"><input type="text" id="setBark" placeholder="https://api.day.app/你的key" style="flex:1"><button class="btn primary" id="saveBark">保存</button><button class="btn" id="testBark">发一条试试</button></div>
+          <p class="muted" id="barkMsg" style="font-size:13px;margin:6px 0 0"></p>
+        </div>
+        <div class="card">
+          <h2>同时调用上限和 auto 模式</h2>
+          <p class="hint">一个用户同时最多几个模型请求，超过的排队等（批量派活时保护服务端和服务商）。auto 模式下，规则判断不了的操作交给下面这个模型判断，只发操作本身（命令或文件名），它说不准就照常问你。</p>
+          <div class="row"><span>同时最多</span><input type="number" id="setConc" min="1" max="50" style="width:90px"><span>个请求</span>
+            <span style="margin-left:16px">判断用</span><select id="setJudge"></select><button class="btn primary" id="saveConc">保存</button></div>
+        </div>
+        <div class="card">
           <h2>详细记录</h2>
           <p class="hint">在内存里保留最近 20 次请求的系统提示和最后一条消息（脱敏后的样子），用来检查提示词有没有生效。不写磁盘，重启就没了。</p>
           <label class="switch"><input type="checkbox" id="setDetails"> 打开详细记录</label>
@@ -793,6 +805,10 @@ async function loadSettings() {
   $("storeLocked").hidden = !S.locked.session_store;
   $("setCap").value = Math.round(S.max_upstream_bytes / 1000);
   $("setDetails").checked = S.record_details;
+  if (document.activeElement !== $("setBark")) $("setBark").value = "";
+  $("setBark").placeholder = S.bark ? `已设置（${S.bark_hint}），要换就贴新的` : "https://api.day.app/你的key";
+  $("setConc").value = S.max_concurrent || 6;
+  $("setJudge").innerHTML = `<option value="">写摘要用的模型（没有就用默认模型）</option>` + S.models.map((m) => `<option value="${esc(m.id)}" ${m.id === S.judge_model ? "selected" : ""}>${esc(m.model)}</option>`).join("");
   $("webOn").checked = S.web.enabled; $("webEngine").value = S.web.engine;
   if (document.activeElement !== $("webAllow")) $("webAllow").value = S.web.allow.join("\n");
   if (document.activeElement !== $("webProxy")) $("webProxy").value = S.web.proxy;
@@ -805,6 +821,9 @@ $("saveUrl").onclick = () => setting({ public_url: $("setUrl").value }, "已保�
 for (const r of document.querySelectorAll("input[name=store]")) r.onchange = () => setting({ session_store: r.value }, "已切换");
 $("webOn").onchange = () => setting({ web: { enabled: $("webOn").checked } }, $("webOn").checked ? "已允许联网" : "已关闭联网");
 $("saveWeb").onclick = () => setting({ web: { enabled: $("webOn").checked, allow: $("webAllow").value, engine: $("webEngine").value, proxy: $("webProxy").value } }, "已保存联网设置");
+$("saveBark").onclick = () => setting({ bark_url: $("setBark").value.trim() }, $("setBark").value.trim() ? "已保存 Bark 地址" : "已关闭手机通知");
+$("testBark").onclick = async () => { say("barkMsg", "正在发……"); try { const r = await api("notify/test", "POST", {}); say("barkMsg", r.ok ? "已发出，看看手机" : r.error, r.ok); } catch (e) { say("barkMsg", e.message, false); } };
+$("saveConc").onclick = () => setting({ max_concurrent: Math.max(1, +$("setConc").value || 6), judge_model: $("setJudge").value }, "已保存");
 $("saveCap").onclick = () => setting({ max_upstream_bytes: Math.max(0, +$("setCap").value) * 1000 });
 $("setDetails").onchange = () => setting({ record_details: $("setDetails").checked }, $("setDetails").checked ? "已打开详细记录" : "已关闭详细记录");
 $("setAuto").onchange = async () => { try { S = await api("autostart", "PUT", { on: $("setAuto").checked }); toast($("setAuto").checked ? "已开启开机启动" : "已关闭开机启动"); } catch (e) { toast(e.message); $("setAuto").checked = !$("setAuto").checked; } };
