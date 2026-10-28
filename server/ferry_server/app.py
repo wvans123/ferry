@@ -25,7 +25,7 @@ from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from . import PROTOCOL, __version__
@@ -107,6 +107,12 @@ def create_app(cfg: Config) -> FastAPI:
             return Response(status_code=302, headers={"location": "http://127.0.0.1:9100/proxycontrolwarn?url=ferry"})
         if request.url.path == "/health" or request.url.path.startswith("/admin"):
             return await call_next(request)  # the admin page has its own, local-only sign-in
+        if request.method == "GET" and request.url.path in ("/", "/favicon.ico", "/robots.txt"):
+            # a browser lands here, e.g. after the company gateway's confirmation page: not an error, not logged
+            if request.url.path != "/":
+                return Response(status_code=204)
+            return HTMLResponse("<!doctype html><meta charset=utf-8><title>Ferry</title>"
+                                "<p style='font:16px system-ui;margin:40px'>Ferry 服务端在运行。可以关掉这个页面，回到 ferry 继续。</p>")
         body = await request.body()
         # Bearer for the OpenAI-style calls; x-api-key for the Anthropic-style ones (the Anthropic SDK sends that)
         user = find_user(request.headers.get("authorization", "")) or find_user(f"Bearer {request.headers.get('x-api-key', '')}")

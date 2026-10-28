@@ -142,3 +142,20 @@ def test_usage_and_cost(tmp_path, monkeypatch):
             assert len(u["days"]) == 1
 
     run(go())
+
+
+def test_a_browser_landing_on_the_server_is_not_an_error(tmp_path, monkeypatch):
+    cfg, app = make(tmp_path, monkeypatch)
+    key = (tmp_path / "admin-key").read_text().strip()
+
+    async def go():
+        async with client(app) as c:
+            assert (await c.get("/favicon.ico")).status_code == 204
+            r = await c.get("/")
+            assert r.status_code == 200 and "Ferry" in r.text
+            assert (await c.get("/v1/ferry/models")).status_code == 401  # the API still needs the token
+            c.cookies.set("ferry_admin", key)
+            ov = (await c.get("/admin/api/traffic?minutes=60")).json()
+            return ov
+    ov = run(go())
+    assert ov["totals"]["errors"] == 1 and ov["totals"]["requests"] == 1

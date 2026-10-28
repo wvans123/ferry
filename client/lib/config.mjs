@@ -170,6 +170,7 @@ export function findBash() {
 
 /** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept). */
 export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking = "medium") {
+	scaffoldHome();
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
 	const file = join(AGENT_DIR, "settings.json");
 	const cur = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
@@ -192,4 +193,34 @@ export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking
 	const kb = join(AGENT_DIR, "keybindings.json");
 	const keys = existsSync(kb) ? JSON.parse(readFileSync(kb, "utf8")) : {};
 	if (!("app.thinking.cycle" in keys)) writeFileSync(kb, JSON.stringify({ ...keys, "app.thinking.cycle": [] }, null, 2), "utf8");
+}
+
+const HOME_README = `# Ferry: your settings for every project
+
+Put your own things here; they apply in every project. A project's own go in its .ferry folder.
+
+| What | Where |
+|---|---|
+| Rules the agent always follows (how you like to work, your team's conventions) | AGENTS.md |
+| Skills: how to do one kind of task, with notes and scripts | skills/<name>/SKILL.md |
+| Your own slash commands | commands/<name>.md |
+| Your own subagents | agents/<name>.md |
+| Commands that run after edits or when a request is done | hooks.json |
+| What may run without asking, what is never allowed | permissions.json |
+| MCP servers (or: ferry mcp import) | agent/mcp.json |
+| Memory (Ferry writes it; you may edit it) | memory/ |
+| Client settings (or: ferry config, /config) | config.json |
+
+Examples of each: https://github.com/wvans123/ferry/tree/main/examples
+`;
+
+/** Make the folders for your own skills, commands and subagents, and a README that says what goes where. */
+export function scaffoldHome() {
+	try {
+		for (const d of ["skills", "commands", "agents"]) mkdirSync(join(FERRY_HOME, d), { recursive: true });
+		const readme = join(FERRY_HOME, "README.md");
+		if (!existsSync(readme)) writeFileSync(readme, HOME_README, "utf8");
+	} catch {
+		// read-only home: not important
+	}
 }

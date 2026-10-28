@@ -8,6 +8,7 @@ import {
 	mkdtempSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 	writeSync,
@@ -183,6 +184,15 @@ export async function install(version, clientOnly = !!process.env.FERRY_CLIENT_O
 	// the `ferry` command: a tiny launcher that always runs the current version
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "current.txt"), dest, "utf8");
+	// how it was installed, so `ferry update` can do the same again (a git checkout: pull it and install from it)
+	let prev = {};
+	try {
+		prev = JSON.parse(readFileSync(join(dir, "install.json"), "utf8"));
+	} catch {
+		// first install
+	}
+	const source = existsSync(join(APP_ROOT, ".git")) ? APP_ROOT : prev.source && existsSync(join(prev.source, ".git")) && !process.env.FERRY_FROM_ZIP ? prev.source : "";
+	writeFileSync(join(dir, "install.json"), JSON.stringify({ source, clientOnly: !!clientOnly }, null, 2), "utf8");
 	writeFileSync(join(dir, "launcher.mjs"), [
 		"// Runs the Ferry version named in current.txt (written by ferry install / ferry update)",
 		'import { readFileSync } from "node:fs";',
@@ -227,7 +237,46 @@ function newer(a, b) {
 }
 
 /** `ferry update [file.zip]`: get the latest release from GitHub (or use a zip you downloaded) and install it. */
+/** Installed from a git checkout (git clone, npm ci, ferry install): git pull, npm ci, and install from it again. */
+function updateCheckout(checkout, info, env) {
+	const run = (cmd, args) => {
+		console.log(`> ${cmd} ${args.join(" ")}   (in ${checkout})`);
+		const r = spawnSync(cmd, args, { cwd: checkout, stdio: "inherit", shell: WIN, env });
+		if (r.status !== 0) throw new Error(`"${cmd} ${args.join(" ")}" failed in ${checkout}`);
+	};
+	const head = () => spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8", shell: WIN }).stdout?.trim();
+	const before = head();
+	run("git", ["pull", "--ff-only"]);
+	if (before && before === head() && existsSync(join(checkout, "node_modules"))) {
+		const v = JSON.parse(readFileSync(join(checkout, "package.json"), "utf8")).version;
+		if (resolve(APP_ROOT) === resolve(checkout) || resolve(APP_ROOT).endsWith(v)) return console.log(`Ferry ${v} is the latest version.`);
+	}
+	run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"]);
+	if (resolve(APP_ROOT) !== resolve(checkout)) { // the ferry command runs an installed copy: install the new one
+		run(process.execPath, [join(checkout, "client", "bin", "ferry.mjs"), "install", ...(info.clientOnly ? ["--client-only"] : [])]);
+	}
+	const v = JSON.parse(readFileSync(join(checkout, "package.json"), "utf8")).version;
+	console.log(`\nUpdated to ${v}. Restart any open ferry windows.`);
+}
+
 export async function update(version, repo, zipArg) {
+	// install the new version where this one is (e.g. D:\ferry\app), not in the default folder
+	const here = installedHere();
+	const defaultDir = installBase().dir;
+	const env = here && resolve(here).toLowerCase() !== resolve(defaultDir).toLowerCase() ? { ...process.env, FERRY_INSTALL_DIR: here } : { ...process.env };
+	let info = {};
+	try {
+		info = JSON.parse(readFileSync(join(here || defaultDir, "install.json"), "utf8"));
+	} catch {
+		// installed by an older Ferry
+	}
+	// `ferry update --release` (or a release feed set with FERRY_UPDATE_URL): the release zip even for a git checkout
+	const release = zipArg === "--release" || !!process.env.FERRY_UPDATE_URL;
+	if (zipArg === "--release") zipArg = undefined;
+	const checkout = existsSync(join(APP_ROOT, ".git")) ? APP_ROOT : info.source && existsSync(join(info.source, ".git")) ? info.source : "";
+	if (!zipArg && checkout && !release) return updateCheckout(checkout, info, env);
+	if (info.clientOnly) env.FERRY_CLIENT_ONLY = "1";
+	env.FERRY_FROM_ZIP = "1";
 	let zip = zipArg && resolve(zipArg);
 	const tmp = mkdtempSync(join(tmpdir(), "ferry-update-"));
 	try {
@@ -260,10 +309,6 @@ export async function update(version, repo, zipArg) {
 		if (x.status !== 0) throw new Error(`could not unpack ${zip}`);
 		const root = [out, ...readdirSync(out).map((n) => join(out, n))].find((d) => existsSync(join(d, "client", "bin", "ferry.mjs")));
 		if (!root) throw new Error(`${zip} does not look like a Ferry package`);
-		// install the new version where this one is (e.g. D:\ferry\app), not in the default folder
-		const here = installedHere();
-		const defaultDir = installBase().dir;
-		const env = here && resolve(here).toLowerCase() !== resolve(defaultDir).toLowerCase() ? { ...process.env, FERRY_INSTALL_DIR: here } : process.env;
 		const r = spawnSync(process.execPath, [join(root, "client", "bin", "ferry.mjs"), "install"], { stdio: "inherit", env });
 		if (r.status === 0) {
 			console.log(`\nUpdated from ${version}. Restart any open ferry windows.`);

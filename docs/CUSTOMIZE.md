@@ -4,14 +4,14 @@ Ferry 的大部分能力都可以用**普通文本文件**来定制，不用写�
 
 文件放在哪决定了它管多大范围：
 
-- **放在 `%USERPROFILE%\.ferry\` 下**：只给你自己用，所有项目都生效。
+- **放在 `%USERPROFILE%\.ferry\` 下**：只给你自己用，所有项目都生效。第一次运行 ferry 时会建好 `skills`、`commands`、`agents` 三个文件夹和一份 `README.md`，写明什么放哪。
 - **放在项目的 `.ferry\` 下**：只在这个项目里生效。可以提交进仓库，团队一起用。
 
 改完重新打开 ferry 就生效（不想退出的话，输入 `/reload` 也行）。
 
 | 想做的事 | 用什么 | 放在哪 |
 |---|---|---|
-| 让 agent 了解项目：怎么构建、目录结构、约定 | 规则文件 `AGENTS.md` | 项目根目录；所有项目通用的放 `%USERPROFILE%\.ferry\agent\AGENTS.md` |
+| 让 agent 了解项目：怎么构建、目录结构、约定 | 规则文件 `AGENTS.md` | 项目根目录；所有项目通用的放 `%USERPROFILE%\.ferry\AGENTS.md`（也认 `CLAUDE.md`） |
 | 一句话触发一套固定要求 | 斜杠命令 | `commands\*.md` |
 | 一类任务的详细做法，带参考资料和脚本 | 技能 | `skills\<名字>\SKILL.md` |
 | 一个专门干某类活的帮手 | 子 agent | `agents\*.md` |

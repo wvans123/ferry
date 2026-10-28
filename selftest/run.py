@@ -297,12 +297,14 @@ def check_diy(root: Path) -> None:
     try:
         (s.home / "commands").mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / "examples" / "commands" / "review.md", s.home / "commands" / "review.md")
+        (s.home / "AGENTS.md").write_text("- HOME-RULE-42: always answer politely.\n", encoding="utf-8")
         c1, o1 = s.ferry("-p", "/hello Wesley")
         before = len(jsonl(s.upstream))
         c2, _ = s.ferry("-p", "/review src/api")
         review = [m for m in jsonl(s.upstream)[before]["messages"] if m.get("role") == "user"] if len(jsonl(s.upstream)) > before else []
         review_ok = c2 == 0 and review and "Review src/api" in str(review[-1]) and "Report each finding" in str(review[-1])
-        skill_ok = "demo-skill" in system_text(jsonl(s.upstream)[-1])
+        skill_ok = "demo-skill" in system_text(jsonl(s.upstream)[-1]) and "HOME-RULE-42" in system_text(jsonl(s.upstream)[-1])
+        scaffold_ok = all((s.home / d).is_dir() for d in ("skills", "commands", "agents")) and (s.home / "README.md").exists()
         s.home.mkdir(parents=True, exist_ok=True)
         (s.home / "hooks.json").write_text(json.dumps({"afterEdit": [
             {"match": "**/*.txt", "run": "echo HOOKRAN $FERRY_FILE_REL && exit 3"}]}), encoding="utf-8")
@@ -312,10 +314,10 @@ def check_diy(root: Path) -> None:
         c5, o5 = s.ferry("-p", "PASTTEST: what did I ask in my other conversation?")
         check("F46 读以前的对话", c5 == 0 and "PAST: found greet Wesley" in o5,
               "agent 用 past_conversations 搜到另一个对话并读出里面的内容" if c5 == 0 and "PAST: found" in o5 else o5[-300:])
-        check("F39 斜杠命令和自定义", c1 == 0 and "DIY: Wesley" in o1 and review_ok and skill_ok
+        check("F39 斜杠命令和自定义", c1 == 0 and "DIY: Wesley" in o1 and review_ok and skill_ok and scaffold_ok
               and c3 == 0 and "HOOKRAN made-by-agent.txt" in o3 and "exit code 3" in o3
               and c4 == 0 and any("port 9999" in m.read_text(encoding="utf-8") for m in mem),
-              "项目里自己写的 /hello 命令能用；放在自己目录里的 /review 展开成审查要求；项目技能出现在系统提示里；"
+              "项目里自己写的 /hello 命令能用；放在自己目录里的 /review 展开成审查要求；项目技能和自己目录的 AGENTS.md 出现在系统提示里；"
               "改文件后钩子运行、失败输出交给模型；/memory 加一句话直接存进记忆")
     finally:
         s.close()
@@ -504,18 +506,19 @@ def check_tui(root: Path, work: Path) -> None:
         os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
-        time.sleep(1)
+        resume = wait_for("ferry --session", 10) and "pi --session" not in plain(seen)
         try:
             os.kill(pid, signal.SIGTERM)
             os.waitpid(pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
         ok = (started and answered and widget and cost_shown and help_shown and listed and hidden and resized and shows and asked
-              and rewound and wrote and files_back)
+              and rewound and wrote and files_back and resume)
         check("F38 交互界面", ok, "终端界面能启动、显示权限模式、收发消息、显示任务清单；/cost /help 能用；斜杠列表只有保留的命令；"
-              "/context 300k 立即生效；/rewind 回到某条消息之前，对话和 agent 改过的文件一起退回" if ok
+              "/context 300k 立即生效；/rewind 回到某条消息之前，对话和 agent 改过的文件一起退回；退出时提示 ferry --session" if ok
               else f"started={started} answered={answered} widget={widget} cost={cost_shown} help={help_shown} listed={listed} "
-                   f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back}: "
+                   f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back} "
+                   f"resume={resume}: "
                    f"{plain(seen)[-400:]!r}")
     finally:
         s.close()

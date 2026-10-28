@@ -148,7 +148,7 @@ ferry doctor
 
 `ferry doctor` 全是 OK 就可以用了。
 
-**更新**：用安装包装的执行 `ferry update`；git clone 的执行 `git pull`、`npm ci`，再跑一遍 `install`。有新版本时，ferry 启动时会提醒你。
+**更新**：都是 `ferry update`。用安装包装的，从 GitHub 下载新的安装包；用 git clone 装的，自动执行 `git pull`、`npm ci` 和重新安装（想改用安装包：`ferry update --release`）。有新版本时，ferry 启动时会提醒你。
 
 **公司网关先要你确认**：如果服务端地址被公司网关拦下，要你先确认一下（"访问提醒"页），ferry 会自动在浏览器里打开那一页。你点"继续"后，它自己接着启动。想一劳永逸，就请 IT 把服务端地址加进白名单。
 
@@ -183,7 +183,7 @@ ferry doctor
 | `ferry config` | 查看和修改客户端设置 |
 | `ferry mcp list` / `ferry mcp import` | 查看用到的 MCP 服务器 / 从 Claude Desktop、Claude Code、Cursor、VS Code 导入 |
 | `ferry login <地址> <令牌>` / `ferry logout` | 连到远程服务端 / 改回本机服务端 |
-| `ferry update` | 更新到最新版（从 GitHub 下载；公司网络打不开 GitHub 时，在别的电脑下载 `ferry-windows-*.zip` 拷过来，`ferry update 文件.zip`）。装在哪就更新在哪；本机有服务端时一起升级，升级后重启服务端 |
+| `ferry update` | 更新到最新版。git clone 装的会自己 `git pull` + `npm ci`；安装包装的从 GitHub 下载（打不开 GitHub 时，在别的电脑下载 `ferry-windows-*.zip` 拷过来，`ferry update 文件.zip`）。装在哪就更新在哪；本机有服务端时一起升级，升级后重启服务端 |
 | `ferry pkg install npm:<包名>` | 安装 pi 生态的扩展包（扩展、技能、命令）；`ferry pkg list` / `remove` |
 | `ferry --version --all` | 显示 Ferry 和 pi 的版本 |
 

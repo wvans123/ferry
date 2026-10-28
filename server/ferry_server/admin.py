@@ -184,7 +184,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             b["requests"] += 1
             totals["in"] += a.get("bytes", 0)
             totals["requests"] += 1
-            if a.get("status", 200) >= 400 and a.get("status") != 409:
+            # errors of Ferry's own API; a browser asking for /favicon.ico is not one
+            if a.get("status", 200) >= 400 and a.get("status") != 409 and str(a.get("path", "")).startswith(("/v1/", "/anthropic/")):
                 totals["errors"] += 1
         recent = []
         for a in _tail_jsonl(audit_log):

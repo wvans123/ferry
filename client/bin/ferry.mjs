@@ -318,6 +318,10 @@ async function run(args) {
 	const { createWeb } = await import("../lib/web.mjs");
 	const { createBrowser } = await import("../lib/browser.mjs");
 	const sync = createSyncProvider(cfg, models);
+	// on exit pi prints "To resume this session: pi --session <id>"; with Ferry it is ferry --session <id>
+	const write = process.stdout.write.bind(process.stdout);
+	process.stdout.write = (chunk, ...rest) => write(typeof chunk === "string" && chunk.includes("To resume this session:")
+		? chunk.replace(/\bpi(?= --session)/g, "ferry") : chunk, ...rest);
 	await main(["--offline", ...args], {
 		extensionFactories: [
 			{ name: "ferry-sync", factory: sync, hidden: true },

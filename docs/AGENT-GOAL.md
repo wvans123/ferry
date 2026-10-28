@@ -163,3 +163,10 @@
 
 - `past_conversations` 工具：列出、搜索、读取以前的对话（用户说"看看我另一个对话"时用）。F46。
 - `ferry update` 装在原来的位置（比如 `D:\ferry\app`），不再装到默认文件夹；本机有服务端在运行时提醒重启。
+
+### 0.14.2
+
+- 你自己的规则文件放在 `%USERPROFILE%\.ferry\AGENTS.md`（和 skills、hooks.json、permissions.json 在一起）；第一次运行时建好 skills / commands / agents 文件夹和说明。
+- `ferry update`：git clone 装的自动 `git pull` + `npm ci` + 重新安装；`--release` 改用安装包。
+- 退出时提示 `ferry --session <id>`（不再是 pi）。
+- 服务端：浏览器访问服务端地址（比如过了公司网关的确认页后）显示一句说明，不再算作出错；管理页"出错"只数 Ferry 接口的错误。

@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { dirname, join } from "node:path";
-import { findBash } from "./config.mjs";
+import { FERRY_HOME, findBash } from "./config.mjs";
 
 const IDENTITY = `You are Ferry, a coding agent that works on the user's computer from a terminal. You help with software
 engineering: understanding code, changing it, running commands, debugging, planning and explaining. Your tools run on
@@ -86,6 +86,15 @@ export function createPrompt() {
 	return (pi) => {
 		pi.on("before_agent_start", (event, ctx) => {
 			const o = event.systemPromptOptions;
+			// your rules for every project: <FERRY_HOME>/AGENTS.md (or CLAUDE.md), next to your skills and hooks
+			const mine = ["AGENTS.md", "CLAUDE.md"].map((f) => join(FERRY_HOME, f)).find((f) => existsSync(f));
+			if (mine && Array.isArray(o.contextFiles) && !o.contextFiles.some((c) => c.path === mine)) {
+				try {
+					o.contextFiles.unshift({ path: mine, content: readFileSync(mine, "utf8") });
+				} catch {
+					// unreadable: skip it
+				}
+			}
 			// the user set SYSTEM.md or --system-prompt: theirs wins
 			if (o.forceSystemPrompt || (o.customPrompt && !o.customPrompt.startsWith(IDENTITY))) return;
 			const cwd = ctx?.cwd ?? o.cwd ?? process.cwd();
