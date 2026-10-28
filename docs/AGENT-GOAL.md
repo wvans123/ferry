@@ -158,3 +158,8 @@
 | MCP | 你的 `agent/mcp.json`、项目的 `.ferry/mcp.json` / `.mcp.json`（先问一次）；`ferry mcp import` 从 Claude Desktop、Claude Code、Cursor、VS Code、Windsurf 导入；`ferry mcp list / check`；`/mcp` 看连接状态 | F44、F45 |
 | 设置 | `/config` 只列 10 项常用的，其余放在"More settings"和 `ferry config --all` | — |
 | print 模式 | `ferry -p "/cost"` 这类命令把结果打印出来 | F43 |
+
+### 0.14.1
+
+- `past_conversations` 工具：列出、搜索、读取以前的对话（用户说"看看我另一个对话"时用）。F46。
+- `ferry update` 装在原来的位置（比如 `D:\ferry\app`），不再装到默认文件夹；本机有服务端在运行时提醒重启。

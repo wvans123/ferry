@@ -124,6 +124,12 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "mcp__browser__browser_snapshot", {})
         return ("text", "BROWSER: " + ("pelican-42" if "pelican-42" in text_of(tools[-1]) else text_of(tools[-1])[:200]))
+    if "PASTTEST" in first:  # the user asks about another conversation
+        if not tools:
+            return ("tool", "past_conversations", {"action": "search", "query": "DIYCMD"})
+        if len(tools) == 1:
+            return ("tool", "past_conversations", {"action": "read", "conversation": "1"})
+        return ("text", "PAST: " + ("found greet Wesley" if "DIYCMD greet Wesley" in text_of(tools[-1]) else text_of(tools[-1])[:300]))
     if "MCPTEST" in first:  # a project's own MCP server
         if not tools:
             return ("tool", "mcp__notes__notes_lookup", {"key": "build"})

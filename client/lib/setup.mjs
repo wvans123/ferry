@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FERRY_HOME, saveConfig } from "./config.mjs";
 import { downloadMissing, installBundled, toolStatus } from "./toolbins.mjs";
@@ -106,6 +106,12 @@ function installBase() {
 	if (process.env.FERRY_INSTALL_DIR) return { dir: process.env.FERRY_INSTALL_DIR, cmdDir: null };
 	if (WIN) return { dir: join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Ferry"), cmdDir: "%LOCALAPPDATA%\\Ferry" };
 	return { dir: join(homedir(), ".local", "share", "ferry"), cmdDir: null };
+}
+
+/** The folder this copy was installed into (…\\versions\\<v> under it), or "" for a git checkout / unpacked zip. */
+function installedHere() {
+	const here = resolve(APP_ROOT, "..", "..");
+	return basename(resolve(APP_ROOT, "..")) === "versions" && existsSync(join(here, "current.txt")) ? here : "";
 }
 
 const onPath = (dir) => (process.env.PATH ?? process.env.Path ?? "").split(delimiter)
@@ -254,8 +260,17 @@ export async function update(version, repo, zipArg) {
 		if (x.status !== 0) throw new Error(`could not unpack ${zip}`);
 		const root = [out, ...readdirSync(out).map((n) => join(out, n))].find((d) => existsSync(join(d, "client", "bin", "ferry.mjs")));
 		if (!root) throw new Error(`${zip} does not look like a Ferry package`);
-		const r = spawnSync(process.execPath, [join(root, "client", "bin", "ferry.mjs"), "install"], { stdio: "inherit" });
-		if (r.status === 0) console.log(`\nUpdated from ${version}. Restart any open ferry windows.`);
+		// install the new version where this one is (e.g. D:\ferry\app), not in the default folder
+		const here = installedHere();
+		const defaultDir = installBase().dir;
+		const env = here && resolve(here).toLowerCase() !== resolve(defaultDir).toLowerCase() ? { ...process.env, FERRY_INSTALL_DIR: here } : process.env;
+		const r = spawnSync(process.execPath, [join(root, "client", "bin", "ferry.mjs"), "install"], { stdio: "inherit", env });
+		if (r.status === 0) {
+			console.log(`\nUpdated from ${version}. Restart any open ferry windows.`);
+			const h = await fetch("http://127.0.0.1:8787/health", { signal: AbortSignal.timeout(1500) }).then((x) => x.json()).catch(() => null);
+			if (h?.version) console.log(`A Ferry server ${h.version} is running on this computer: restart it to use the new version ` +
+				"(admin page > 停止服务端, then the Ferry Server icon).");
+		}
 		if (r.status !== 0) throw new Error("install step failed");
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });

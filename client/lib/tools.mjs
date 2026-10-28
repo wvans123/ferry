@@ -13,7 +13,7 @@ import { FERRY_HOME } from "./config.mjs";
 export const OUTPUTS_DIR = join(FERRY_HOME, "outputs");
 const KEEP_DAYS = 7;
 // Tools whose output is data the model asked for on purpose: never cut (read has its own paging)
-const NEVER_CUT = new Set(["read", "edit", "write", "memory", "todo", "task", "history_search"]);
+const NEVER_CUT = new Set(["read", "edit", "write", "memory", "todo", "task", "history_search", "past_conversations"]);
 
 // ---------- todo ----------
 
@@ -177,6 +177,101 @@ export function searchHistory(entries, query, max = 8) {
 	if (!hits.length) return `Nothing in this conversation matches "${query}".`;
 	const shown = hits.slice(-max); // the latest matches are usually the relevant ones
 	return `${hits.length} match(es), showing the last ${shown.length}:\n\n${shown.join("\n\n---\n\n")}`.slice(0, 12000);
+}
+
+// ---------- past_conversations ----------
+
+const PastParams = Type.Object({
+	action: StringEnum(["list", "search", "read"], { description: "list: recent conversations; search: find the ones " +
+		"that mention something; read: one conversation's messages (with query: only the parts that match)" }),
+	query: Type.Optional(Type.String({ description: "search / read: words that must all appear, or /regex/" })),
+	conversation: Type.Optional(Type.String({ description: "read: the number or id from list / search" })),
+	all_projects: Type.Optional(Type.Boolean({ description: "Also conversations started in other folders (default: this folder only)" })),
+	max_results: Type.Optional(Type.Number({ description: "Default 15" })),
+});
+
+const day = (d) => new Date(d).toLocaleString("sv-SE", { hour12: false }).slice(0, 16);
+
+/** A conversation as plain text: what the user and the agent said, tool calls in one line, tool results cut short. */
+export function transcript(entries, maxBytes = 40000) {
+	const out = [];
+	for (const e of entries) {
+		if (e.type === "compaction" && e.summary) out.push(`[summary of the earlier part]\n${e.summary}`);
+		if (e.type !== "message") continue;
+		const m = e.message;
+		if (m.role === "user") out.push(`USER: ${entryText(m)}`);
+		else if (m.role === "assistant") {
+			const text = entryText(m).trim();
+			if (text) out.push(`AGENT: ${text}`);
+		} else if (m.role === "toolResult") {
+			const t = entryText(m);
+			out.push(`  (${m.toolName} result: ${t.length > 400 ? `${t.slice(0, 400)}...` : t})`);
+		}
+	}
+	let text = out.join("\n\n");
+	if (Buffer.byteLength(text) > maxBytes) text = `...(earlier part cut; ask with a query to find it)\n\n${text.slice(-maxBytes)}`;
+	return text;
+}
+
+export function createPastConversations() {
+	return (pi) => {
+		let lastList = [];
+		pi.registerTool({
+			name: "past_conversations",
+			label: "Past conversations",
+			description: "Look through the user's earlier Ferry conversations (stored on this computer): list the recent ones, " +
+				"search them for a topic, or read one. Use it when the user refers to another or an earlier conversation " +
+				"(\"what did we decide last time\", \"continue the work from yesterday's session\", \"read my other conversation " +
+				"about X\"). Start with list or search, then read the one that fits.",
+			promptSnippet: "List, search and read the user's earlier conversations",
+			parameters: PastParams,
+			annotations: { readOnlyHint: true, openWorldHint: false },
+			async execute(_id, params, _signal, _onUpdate, ctx) {
+				const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+				const cwd = ctx?.cwd ?? process.cwd();
+				const current = ctx?.sessionManager?.getSessionFile?.();
+				const all = (params.all_projects ? await SessionManager.listAll() : await SessionManager.list(cwd))
+					.filter((s) => s.path !== current && s.messageCount > 0)
+					.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+				const max = Number(params.max_results) || 15;
+				const line = (s, i) => `${i + 1}. [${s.id.slice(0, 8)}] ${day(s.modified)}  ${s.name ? `"${s.name}"  ` : ""}` +
+					`${s.messageCount} messages${params.all_projects ? `  (${s.cwd || "?"})` : ""}\n   first: ${String(s.firstMessage ?? "").replace(/\s+/g, " ").slice(0, 120)}`;
+				const text = (t) => ({ content: [{ type: "text", text: t }], details: undefined });
+				if (params.action === "list") {
+					lastList = all.slice(0, max);
+					return text(lastList.length ? `${all.length} earlier conversation(s)${params.all_projects ? "" : " in this folder"}, newest first:\n\n` +
+						lastList.map(line).join("\n") : "No earlier conversations here. Try all_projects: true.");
+				}
+				if (params.action === "search") {
+					const q = String(params.query ?? "").trim();
+					if (!q) throw new Error("search needs a query");
+					const rx = /^\/(.+)\/([a-z]*)$/.exec(q);
+					const re = rx ? new RegExp(rx[1], rx[2].includes("i") ? rx[2] : `${rx[2]}i`) : null;
+					const words = rx ? [] : q.toLowerCase().split(/\s+/);
+					const hits = all.filter((s) => {
+						const t = `${s.name ?? ""}\n${s.allMessagesText ?? ""}`;
+						return re ? re.test(t) : words.every((w) => t.toLowerCase().includes(w));
+					}).slice(0, max);
+					lastList = hits;
+					if (!hits.length) return text(`No earlier conversation mentions "${q}"${params.all_projects ? "" : " in this folder (try all_projects: true)"}.`);
+					return text(hits.map((s, i) => {
+						const t = s.allMessagesText ?? "";
+						const at = re ? t.search(re) : t.toLowerCase().indexOf(words[0]);
+						return `${line(s, i)}\n   ...${t.slice(Math.max(0, at - 150), at + 250).replace(/\s+/g, " ")}...`;
+					}).join("\n\n"));
+				}
+				const want = String(params.conversation ?? "").trim();
+				if (!want) throw new Error("read needs conversation: a number or id from list / search");
+				const pool = [...lastList, ...all];
+				const s = /^\d{1,3}$/.test(want) && lastList[Number(want) - 1] ? lastList[Number(want) - 1]
+					: pool.find((x) => x.id.startsWith(want) || x.name === want);
+				if (!s) throw new Error(`No conversation "${want}". Use list or search first.`);
+				const branch = SessionManager.open(s.path).getBranch();
+				const head = `Conversation [${s.id.slice(0, 8)}] ${s.name ? `"${s.name}" ` : ""}from ${day(s.created)} to ${day(s.modified)}\n\n`;
+				return text(head + (params.query ? searchHistory(branch, String(params.query), Number(params.max_results) || 8) : transcript(branch)));
+			},
+		});
+	};
 }
 
 export function createHistorySearch() {

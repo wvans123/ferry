@@ -309,6 +309,9 @@ def check_diy(root: Path) -> None:
         c3, o3 = s.ferry("-p", "EDITTEST: write a file")
         c4, o4 = s.ferry("-p", "/memory integration tests use port 9999")
         mem = list((s.home / "memory" / "projects").glob("*/*.md"))
+        c5, o5 = s.ferry("-p", "PASTTEST: what did I ask in my other conversation?")
+        check("F46 读以前的对话", c5 == 0 and "PAST: found greet Wesley" in o5,
+              "agent 用 past_conversations 搜到另一个对话并读出里面的内容" if c5 == 0 and "PAST: found" in o5 else o5[-300:])
         check("F39 斜杠命令和自定义", c1 == 0 and "DIY: Wesley" in o1 and review_ok and skill_ok
               and c3 == 0 and "HOOKRAN made-by-agent.txt" in o3 and "exit code 3" in o3
               and c4 == 0 and any("port 9999" in m.read_text(encoding="utf-8") for m in mem),

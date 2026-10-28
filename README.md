@@ -183,7 +183,7 @@ ferry doctor
 | `ferry config` | 查看和修改客户端设置 |
 | `ferry mcp list` / `ferry mcp import` | 查看用到的 MCP 服务器 / 从 Claude Desktop、Claude Code、Cursor、VS Code 导入 |
 | `ferry login <地址> <令牌>` / `ferry logout` | 连到远程服务端 / 改回本机服务端 |
-| `ferry update` | 更新到最新版 |
+| `ferry update` | 更新到最新版（从 GitHub 下载；公司网络打不开 GitHub 时，在别的电脑下载 `ferry-windows-*.zip` 拷过来，`ferry update 文件.zip`）。装在哪就更新在哪；本机有服务端时一起升级，升级后重启服务端 |
 | `ferry pkg install npm:<包名>` | 安装 pi 生态的扩展包（扩展、技能、命令）；`ferry pkg list` / `remove` |
 | `ferry --version --all` | 显示 Ferry 和 pi 的版本 |
 
@@ -255,6 +255,7 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | 浏览器 | `ferry config set browser true` 后，agent 能操作电脑上的 Edge：打开网页、点击、填表、读页面 |
 | 长输出 | 命令输出太长时，全文存到文件，只给模型看开头和结尾，需要时它自己去读 |
 | 压缩和找回 | 对话太长时自动写摘要；之后需要原文时，用 `history_search` 在本地完整记录里找回 |
+| 以前的对话 | 说"看看我昨天那个对话里定了什么"，它会用 `past_conversations` 列出、搜索、读取这台电脑上以前的对话（默认这个文件夹的，也可以搜全部） |
 | 回退 | `/rewind` 回到之前某条消息：对话、agent 改过的文件，或两样一起 |
 | 思考 | Claude 和 GPT 默认打开思考（中等）。难的活可以调高：`/config` → `thinking` |
 | 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型（模型要支持看图，Claude、GPT、deepseek-flash 都支持） |

@@ -294,7 +294,7 @@ async function run(args) {
 	const { createBrand } = await import("../lib/brand.mjs");
 	const { createMemory } = await import("../lib/memory.mjs");
 	const { createPrompt } = await import("../lib/prompt.mjs");
-	const { createTodo, createBigOutputs, createHistorySearch } = await import("../lib/tools.mjs");
+	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations } = await import("../lib/tools.mjs");
 	const { createSubagents, discoverAgents } = await import("../lib/subagent.mjs");
 	const { createCommands } = await import("../lib/commands.mjs");
 	const { createCheckpoints } = await import("../lib/checkpoint.mjs");
@@ -339,6 +339,7 @@ async function run(args) {
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },
+			{ name: "ferry-past", factory: createPastConversations(), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },
 			{ name: "ferry-browser", factory: createBrowser(cfg), hidden: true },
 			{ name: "ferry-project-mcp", factory: createProjectMcp(), hidden: true },
