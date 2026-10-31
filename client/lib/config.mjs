@@ -46,6 +46,8 @@ export const DEFAULTS = {
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
+	phoneConsole: true, // report this window's status to the server's phone console (only when the server has it on)
+	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 };
 
@@ -67,6 +69,7 @@ export const SETTINGS = {
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
 	phoneNotify: ["boolean", "phone notifications through the Ferry server (set Bark on its admin page): goal done, long work done, approval waiting"],
+	remoteApprove: ["boolean", "let the phone console (the server's /m page) approve actions waiting here; dangerous ones still need this computer"],
 	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
 	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
 };
@@ -85,6 +88,7 @@ export const ADVANCED_SETTINGS = {
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
+	phoneConsole: ["boolean", "show this computer's ferry on the phone console when the server has it on (status only, never files or the conversation)"],
 };
 
 /** "400k", "1m", "1.5M", "200000" -> tokens; 0 when it is not a size. */

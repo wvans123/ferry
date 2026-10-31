@@ -1,5 +1,6 @@
 // The permission gate: every tool call passes through decide() (permissions.mjs) before it runs.
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
+import { randomBytes } from "node:crypto";
 import { findBash } from "./config.mjs";
 import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule } from "./permissions.mjs";
 
@@ -35,7 +36,34 @@ async function ask(ui, verdict, event, cwd, who) {
 		else options.push(scope === "user" ? `Always allow this site: ${hostOf(input.url)}` : `Always allow in this project: ${rules.join(", ")}`);
 	}
 	options.push("Deny", "Deny, and tell the agent what to do instead");
-	const choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options);
+	// the phone console may answer instead (remote.mjs): it closes this question with its own answer
+	const remote = new AbortController();
+	let fromPhone = null;
+	state.pendingAsk = {
+		id: randomBytes(4).toString("hex"), tool, detail: short(detail, 300),
+		danger: verdict.danger || (verdict.outside ? "outside the project folder" : ""),
+		answer: (action, note) => {
+			if (fromPhone) return;
+			fromPhone = { action, note };
+			remote.abort();
+		},
+	};
+	state.onPending?.();
+	let choice;
+	try {
+		choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options, { signal: remote.signal });
+	} finally {
+		state.pendingAsk = null;
+		state.onPending?.();
+	}
+	if (fromPhone?.action === "approve") {
+		ui.notify(`Allowed from the phone: ${tool}`, "info");
+		return undefined;
+	}
+	if (fromPhone) {
+		ui.notify(`Denied from the phone: ${tool}`, "warning");
+		return { block: true, reason: fromPhone.note || "The user denied this action from their phone" };
+	}
 	if (choice === "Allow once") return undefined;
 	if (choice?.startsWith("Allow all file changes")) {
 		state.mode = "acceptEdits";

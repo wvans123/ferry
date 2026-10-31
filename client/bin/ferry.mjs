@@ -430,6 +430,7 @@ async function run(args) {
 			{ name: "ferry-brand", factory: createBrand(cfg, VERSION, newerRelease(cfg)), hidden: true },
 			{ name: "ferry-title", factory: createTitle(permState), hidden: true },
 			{ name: "ferry-team", factory: createTeam(), hidden: true },
+			{ name: "ferry-remote", factory: (await import("../lib/remote.mjs")).createRemote(cfg, permState, { version: VERSION }), hidden: true },
 		],
 	});
 }

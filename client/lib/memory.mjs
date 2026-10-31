@@ -3,6 +3,9 @@
 //   <FERRY_HOME>/memory/user/                    follows you into every project (your preferences, your corrections)
 //   <FERRY_HOME>/memory/projects/<name>-<hash>/  one folder per project folder (decisions, conventions, where things are)
 //
+// A third scope, global, lives on the Ferry server when its admin page has global memory on: shared by every
+// computer you log in from (your preferences, your terms). The two folders above stay on this computer.
+//
 // Each folder has MEMORY.md, an index with one line per memory, and one Markdown file per memory.
 // Only the two indexes go into the system prompt; the model reads a memory when its line looks relevant.
 // The model writes memories with the `memory` tool, which can touch nothing outside these folders.
@@ -11,7 +14,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { basename, join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { FERRY_HOME } from "./config.mjs";
+import { FERRY_HOME, serverHeaders } from "./config.mjs";
 
 export const MEMORY_ROOT = join(FERRY_HOME, "memory");
 const INDEX = "MEMORY.md";
@@ -89,8 +92,66 @@ something, delete it.
 Memories can be out of date. If one disagrees with the code or with what the user says now, trust the code and the
 user, and fix the memory. Rules in AGENTS.md and the user's current instructions take priority over memories.`;
 
-/** The system prompt section: what memory is, plus both indexes. */
-export function memorySection(cwd) {
+// ---------- global scope: on the Ferry server ----------
+
+const global = { enabled: false, index: "", at: 0 };
+const GLOBAL_TTL = 5 * 60_000;
+
+async function serverJson(cfg, method, path, body) {
+	const res = await fetch(`${cfg.server}${path}`, { method, redirect: "manual", signal: AbortSignal.timeout(8000),
+		headers: serverHeaders(cfg, body ? { "Content-Type": "application/json" } : {}), body: body ? JSON.stringify(body) : undefined });
+	const json = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+	if (!res.ok || !json) throw new Error(json?.error?.message ?? `the Ferry server answered HTTP ${res.status}`);
+	return json;
+}
+
+/** Whether the server keeps a global memory, and its index; looked up at most every 5 minutes. */
+export async function refreshGlobal(cfg, force = false) {
+	if (!cfg?.server || cfg.globalMemory === false) return global;
+	if (!force && Date.now() - global.at < GLOBAL_TTL) return global;
+	try {
+		const r = await serverJson(cfg, "GET", "/v1/ferry/memory");
+		global.enabled = Boolean(r.enabled);
+		global.index = String(r.index ?? "");
+	} catch {
+		// an older server, or not reachable right now: keep what we had
+	}
+	global.at = Date.now();
+	return global;
+}
+
+async function runGlobal(cfg, params) {
+	const name = slug(params.name);
+	const text = (t) => ({ content: [{ type: "text", text: t }], details: { action: params.action, scope: "global", name } });
+	const g = await refreshGlobal(cfg, true);
+	if (!g.enabled) throw new Error("Global memory is off on the Ferry server (its admin page: 设备和手机). Use the user scope instead.");
+	if (params.action === "list" || (params.action === "read" && !name)) return text(g.index || "(no global memories yet)");
+	if (!name) throw new Error("name is required");
+	const path = `/v1/ferry/memory/${encodeURIComponent(name)}`;
+	if (params.action === "read") return text((await serverJson(cfg, "GET", path)).content);
+	if (params.action === "delete") {
+		await serverJson(cfg, "DELETE", path);
+		await refreshGlobal(cfg, true);
+		return text(`Deleted global memory "${name}".`);
+	}
+	if (params.action === "save") {
+		const content = String(params.content ?? "").trim();
+		if (!content) throw new Error("content is required");
+		const r = await serverJson(cfg, "PUT", path, { description: String(params.description ?? "").trim(), content });
+		await refreshGlobal(cfg, true);
+		return text(`Saved global memory "${r.name}" (on the Ferry server, for all your computers).`);
+	}
+	throw new Error(`unknown action ${params.action}`);
+}
+
+const GLOBAL_GUIDE = `
+There is also a global scope, kept on the user's Ferry server and shared by every computer they use Ferry on. Use it
+only for things about the user that should follow them everywhere (preferences, how they want you to work, terms
+they use). Never put content from their work there (code, documents, company or project details, names of people):
+that belongs in the project scope, which stays on this computer. When a memory fits both user and global, prefer global.`;
+
+/** The system prompt section: what memory is, plus the indexes. */
+export function memorySection(cwd, g = global) {
 	const user = loadIndex(scopeDir("user", cwd));
 	const project = loadIndex(scopeDir("project", cwd));
 	const team = teamMember() ? `
@@ -100,9 +161,14 @@ know. A third scope, role, is yours alone: how you do your part of the work, wha
 
 Your own (role) memory index:
 ${loadIndex(scopeDir("role", cwd)) || "(empty)"}` : "";
-	return `${GUIDE}
+	const glob = g.enabled ? `${GLOBAL_GUIDE}
 
-User memory index:
+Global memory index (on the Ferry server, all computers):
+${g.index || "(empty)"}
+` : "";
+	return `${GUIDE}
+${glob}
+User memory index (this computer):
 ${user || "(empty)"}
 
 Project memory index (${basename(cwd)}):
@@ -113,8 +179,9 @@ const Params = Type.Object({
 	action: StringEnum(["save", "read", "delete", "list"], {
 		description: "save: create or replace a memory; read: show one memory (or the index without name); delete; list: both indexes",
 	}),
-	scope: Type.Optional(StringEnum(["user", "project", "role"], {
-		description: "user: everywhere; project: this folder only (in a team: shared by all members); role: yours alone, only in a team. Default project." })),
+	scope: Type.Optional(StringEnum(["user", "project", "role", "global"], {
+		description: "user: every project on this computer; project: this folder only (in a team: shared by all members); " +
+			"role: yours alone, only in a team; global: on the Ferry server, every computer of the user (only if it is on). Default project." })),
 	name: Type.Optional(Type.String({ description: "Short file name, e.g. test-database or prefers-chinese-replies" })),
 	description: Type.Optional(Type.String({ description: "save: one line for the index, saying when this memory is useful" })),
 	content: Type.Optional(Type.String({ description: "save: the memory itself, in Markdown. Keep it short." })),
@@ -187,29 +254,43 @@ export function createMemory(cfg) {
 			parameters: Params,
 			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 			async execute(_id, params, _signal, _onUpdate, ctx) {
-				return runMemory(params, ctx?.cwd ?? process.cwd());
+				if (params.scope === "global") return runGlobal(cfg, params);
+				const r = runMemory(params, ctx?.cwd ?? process.cwd());
+				if (params.action === "list" && global.enabled) {
+					r.content[0].text += `\n\nGlobal memory (Ferry server):\n${global.index || "(empty)"}`;
+				}
+				return r;
 			},
 		});
-		pi.on("before_agent_start", (event, ctx) => {
+		pi.on("before_agent_start", async (event, ctx) => {
+			await refreshGlobal(cfg);
 			event.systemPromptOptions.sections.ferry_memory = memorySection(ctx?.cwd ?? process.cwd());
 		});
 		pi.registerCommand("memory", {
-			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects)",
+			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects here; /memory global <text>: all your computers)",
 			handler: async (args, ctx) => {
 				const cwd = ctx.cwd ?? process.cwd();
 				let text = String(args ?? "").trim();
-				if (!text) return tell(ctx, describeMemory(cwd), "info");
+				if (!text) {
+					const g = await refreshGlobal(cfg, true);
+					return tell(ctx, describeMemory(cwd) + (g.enabled ? `\n\nGlobal memory (on the Ferry server, all your computers; /memory global <text> saves one):\n${g.index || "  (empty)"}` : ""), "info");
+				}
 				let scope = "project";
 				if (/^(user|global)\s+/i.test(text)) {
-					scope = "user";
+					scope = /^global/i.test(text) ? "global" : "user";
 					text = text.replace(/^\S+\s+/, "");
 				}
 				const name = slug(text.split(/\s+/).slice(0, 6).join("-")) || `note-${Date.now()}`;
-				const r = runMemory({ action: "save", scope, name, description: text.slice(0, 120), content: text }, cwd);
-				tell(ctx, r.content[0].text, "info");
+				const params = { action: "save", scope, name, description: text.slice(0, 120), content: text };
+				try {
+					const r = scope === "global" ? await runGlobal(cfg, params) : runMemory(params, cwd);
+					tell(ctx, r.content[0].text, "info");
+				} catch (e) {
+					tell(ctx, e.message, "info");
+				}
 			},
 		});
 	};
 }
 
-export { runMemory as _runMemory };
+export { runMemory as _runMemory, runGlobal as _runGlobal };
