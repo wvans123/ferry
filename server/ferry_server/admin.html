@@ -164,6 +164,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
     <a href="#redaction" data-page="redaction">脱敏</a>
     <a href="#calls" data-page="calls">调用记录</a>
     <a href="#usage" data-page="usage">用量和费用</a>
+    <a href="#devices" data-page="devices">设备和手机</a>
     <a href="#settings" data-page="settings">设置</a>
     <div class="grow"></div>
     <button class="btn danger stop" id="stop">停止服务端</button>
@@ -339,6 +340,37 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       </div>
     </section>
 
+    <!-- devices, global memory, phone console -->
+    <section data-view="devices" hidden>
+      <h1>设备和手机</h1>
+      <p class="lead">每台电脑一个令牌；所有电脑共用一份全局记忆；在手机上看各台电脑在做什么。</p>
+      <div class="card">
+        <h2>设备</h2>
+        <p class="hint">给每台要登录的电脑单独加一个设备，各用各的令牌。某台电脑丢了或不用了，只作废它一个，别的不受影响。主令牌在"设置 → 令牌"里换。</p>
+        <div class="tablecard" style="margin:0 -4px"><table><thead><tr><th>名字</th><th>最后在线</th><th>来自</th><th></th></tr></thead><tbody id="devRows"></tbody></table></div>
+        <div class="row" style="margin-top:12px"><input type="text" id="devName" placeholder="比如：家里的笔记本" maxlength="40" style="flex:1;min-width:180px"><button class="btn primary" id="devAdd">添加设备</button></div>
+        <div id="devNew" hidden style="margin-top:12px">
+          <label class="f">在这台新电脑的 cmd 里执行（令牌只显示这一次，关掉就看不到了）</label>
+          <div class="copybox"><code id="devLogin"></code><button class="btn" id="devCopy">复制</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>全局记忆</h2>
+        <p class="hint">打开后，agent 多了一种记忆"global"，存在这台服务端上，所有电脑共用：适合放你的偏好、习惯、常用术语。每台电脑自己的记忆（项目记忆、本机的用户记忆）照旧留在那台电脑上。agent 被要求不把工作内容写进全局记忆。</p>
+        <label class="switch"><input type="checkbox" id="memOn"> <b>打开全局记忆</b></label>
+        <div class="tablecard" style="margin:12px -4px 0"><table><thead><tr><th>记忆</th><th>说明</th><th>更新</th><th></th></tr></thead><tbody id="memRows"></tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>手机控制台</h2>
+        <p class="hint">在手机浏览器打开 <b>外网地址/m</b>，输入密码，就能看到每台电脑上的 ferry 在做什么，可以<b>停止</b>，也可以<b>允许或拒绝</b>它在等的确认。打开后点 Bark 通知会直接跳到这个页面。</p>
+        <p class="hint">在手机上"允许"需要那台电脑同意：在那台电脑上运行 <code>ferry config set remoteApprove true</code>。危险操作和项目文件夹以外的操作只能在电脑上批准。停止和拒绝总是可以。</p>
+        <div class="row"><input type="password" id="conPw" placeholder="设一个密码（至少 8 个字符）" autocomplete="new-password" style="flex:1;min-width:200px"><button class="btn primary" id="conSavePw">保存密码</button></div>
+        <label class="switch" style="margin-top:12px"><input type="checkbox" id="conOn"> <b>打开手机控制台</b></label>
+        <p class="hint" id="conUrl" style="margin:10px 0 0"></p>
+        <div class="tablecard" style="margin:12px -4px 0"><table><thead><tr><th>电脑</th><th>项目</th><th>状态</th><th>最后报告</th></tr></thead><tbody id="conRows"></tbody></table></div>
+      </div>
+    </section>
+
     <!-- settings -->
     <section data-view="settings" hidden>
       <h1>设置</h1>
@@ -497,7 +529,7 @@ function show(name) {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   for (const s of document.querySelectorAll("[data-view]")) s.hidden = s.dataset.view !== name;
   for (const a of document.querySelectorAll(".side a")) a.toggleAttribute("aria-current", a.dataset.page === name), a.dataset.page === name && a.setAttribute("aria-current", "page");
-  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, redaction: loadRedaction, calls: loadCalls, usage: loadUsage, settings: loadSettings })[name]?.();
+  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, redaction: loadRedaction, calls: loadCalls, usage: loadUsage, devices: loadDevices, settings: loadSettings })[name]?.();
 }
 addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
 
@@ -797,6 +829,51 @@ async function openCall(a) {
   $("callBody").innerHTML = html; $("callDlg").showModal();
 }
 
+/* ---------- devices, global memory, phone console ---------- */
+function seen(ts) { if (!ts) return '<span class="muted">还没连过</span>'; const s = Date.now() / 1000 - ts; return s < 120 ? '<span class="tag good">在线</span>' : when(ts); }
+async function loadDevices() {
+  await loadStatus(); if (!S) return;
+  const d = await api("devices");
+  $("devRows").innerHTML = d.devices.map((x) => `<tr><td>${esc(x.name)}${x.main ? ' <span class="muted" style="font-size:13px">（' + (d.users.length > 1 ? esc(x.user) + " 的" : "") + "配置里的令牌）</span>" : ""}</td>
+    <td>${seen(x.last_seen)}</td><td class="mono">${esc(x.last_ip || "")}</td>
+    <td class="r">${x.main ? "" : `<button class="btn small danger" data-dev="${esc(x.id)}" data-name="${esc(x.name)}">作废</button>`}</td></tr>`).join("");
+  const m = await api("memory");
+  $("memOn").checked = m.enabled;
+  $("memRows").innerHTML = m.items.map((x) => `<tr><td class="mono">${esc(x.name)}</td><td>${esc(x.description)}</td><td class="num">${when(x.updated)}</td>
+    <td class="r"><button class="btn small" data-mem="${esc(x.user)}/${esc(x.name)}">删除</button></td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty">${m.enabled ? "还没有全局记忆。让 agent 记住什么时，它会自己决定放哪。" : "全局记忆没打开。"}</td></tr>`;
+  $("conOn").checked = S.console;
+  $("conPw").placeholder = S.console_password ? "已设密码；要换就输入新的" : "设一个密码（至少 8 个字符）";
+  $("conUrl").innerHTML = !S.console ? "" : S.console_url ? `手机上打开：<b class="mono">${esc(S.console_url)}</b>` : '<span style="color:var(--lamp)">先在"设置"里填外网地址，手机才知道去哪打开。</span>';
+  const c = await api("clients");
+  $("conRows").innerHTML = c.clients.map((x) => `<tr><td>${esc(x.device)}</td><td>${esc(x.project)}</td>
+    <td>${!x.online ? '<span class="muted">离线</span>' : x.state === "asking" ? '<span class="tag lamp">等确认</span>' : x.state === "working" ? '<span class="tag">工作中</span>' : '<span class="muted">空闲</span>'}</td>
+    <td class="num">${x.ago} 秒前</td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty">${S.console ? "现在没有 ferry 在报告。打开控制台后，新启动或正在运行的 ferry 会在半分钟内出现。" : "手机控制台没打开。"}</td></tr>`;
+}
+$("devAdd").onclick = async () => {
+  try {
+    const r = await api("devices", "POST", { name: $("devName").value });
+    $("devLogin").textContent = r.login; $("devNew").hidden = false; $("devName").value = "";
+    toast("已添加：" + r.name); loadDevices();
+  } catch (e) { toast(e.message); }
+};
+$("devCopy").onclick = () => navigator.clipboard.writeText($("devLogin").textContent).then(() => toast("已复制"));
+$("devRows").onclick = async (e) => {
+  const b = e.target.closest("button[data-dev]"); if (!b) return;
+  if (!confirm(`作废"${b.dataset.name}"的令牌？那台电脑会马上连不上，要用的话得重新添加。`)) return;
+  try { await api("devices/" + b.dataset.dev, "DELETE"); toast("已作废"); loadDevices(); } catch (err) { toast(err.message); }
+};
+$("memOn").onchange = async () => { try { S = await api("remote", "PUT", { shared_memory: $("memOn").checked }); toast($("memOn").checked ? "已打开全局记忆" : "已关闭全局记忆（已有的记忆保留着）"); loadDevices(); } catch (e) { toast(e.message); } };
+$("memRows").onclick = async (e) => {
+  const b = e.target.closest("button[data-mem]"); if (!b) return;
+  if (!confirm("删除这条全局记忆？")) return;
+  const [u, n] = b.dataset.mem.split("/");
+  try { await api(`memory/${encodeURIComponent(u)}/${encodeURIComponent(n)}`, "DELETE"); loadDevices(); } catch (err) { toast(err.message); }
+};
+$("conSavePw").onclick = async () => { try { S = await api("remote", "PUT", { password: $("conPw").value }); $("conPw").value = ""; toast("已保存密码；手机上要重新登录"); loadDevices(); } catch (e) { toast(e.message); } };
+$("conOn").onchange = async () => { try { S = await api("remote", "PUT", { console: $("conOn").checked }); toast($("conOn").checked ? "已打开手机控制台" : "已关闭手机控制台"); loadDevices(); } catch (e) { toast(e.message); $("conOn").checked = !$("conOn").checked; } };
+
 /* ---------- settings ---------- */
 async function loadSettings() {
   await loadStatus(); if (!S) return;
@@ -838,7 +915,7 @@ $("stop").onclick = async () => {
 };
 
 show(location.hash.slice(1) || "overview");
-setInterval(() => { if (page === "overview") loadOverview(); else loadStatus(); }, 5000);
+setInterval(() => { if (page === "overview") loadOverview(); else if (page === "devices" && !document.activeElement?.matches("input")) loadDevices(); else loadStatus(); }, 5000);
 addEventListener("resize", () => page === "overview" && loadOverview());
 </script>
 </body>

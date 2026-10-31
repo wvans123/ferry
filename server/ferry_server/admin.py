@@ -325,7 +325,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def list_devices(request: Request):
         if not allowed(request):
             return denied()
-        users = sorted(set(cfg.users.values()))
+        users = list(dict.fromkeys(cfg.users.values()))  # in the order of the configuration
         return {"devices": live.devices.listing(users), "users": users, "url": login_url()}
 
     @app.post("/admin/api/devices")
@@ -333,7 +333,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         if not allowed(request, True):
             return denied()
         b = json.loads(await request.body() or b"{}")
-        users = sorted(set(cfg.users.values()))
+        users = list(dict.fromkeys(cfg.users.values()))  # in the order of the configuration
         user = str(b.get("user") or users[0])
         if user not in users:
             return JSONResponse({"error": f"no user {user!r}"}, 400)

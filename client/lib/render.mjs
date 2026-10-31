@@ -122,8 +122,7 @@ class Host {
 				}
 			});
 		});
-		this.ready.catch(() => {});
-		this.hold(false);
+		this.ready.catch(() => {}); // stays referenced until the first page is done (render() lets go of it)
 		return this.ready;
 	}
 

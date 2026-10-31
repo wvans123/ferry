@@ -155,12 +155,27 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "read", {"path": "data/f03.txt", "limit": 2})
         return ("text", "EXPLORE REPORT: data has files; f03 starts with " + text_of(tools[-1])[:24])
+    if "GMEMTEST-SAVE" in first:  # global memory: kept on the Ferry server, for all of the user's computers
+        if not tools:
+            return ("tool", "memory", {"action": "save", "scope": "global", "name": "prefers-tea",
+                                       "description": "drinks tea, not coffee", "content": "The user prefers tea."})
+        return ("text", "GSAVED: " + text_of(tools[-1]))
+    if "GMEMTEST-RECALL" in first:
+        return ("text", "GINDEX HAS prefers-tea" if "[prefers-tea](prefers-tea.md)" in system else "NO GLOBAL MEMORY")
     if "MEMTEST-SAVE" in first:
         if not tools:
             return ("tool", "memory", {"action": "save", "scope": "project", "name": "test-db",
                                        "description": "integration tests use the real database",
                                        "content": "Integration tests must hit the real database, never mocks."})
         return ("text", "SAVED: " + text_of(tools[-1]))
+    if "RENDERTEST" in first:  # a page built by JavaScript: web_fetch hands it to the hidden browser by itself
+        if not tools:
+            return ("tool", "web_fetch", {"url": "http://127.0.0.1:9100/jsapp.html"})
+        return ("text", "RENDER: " + text_of(tools[-1]).replace("\n", " ")[:200])
+    if "BLOCKTEST" in first:  # a site on the user's blocked list
+        if not tools:
+            return ("tool", "web_render", {"url": "https://mail.blocked.test/inbox"})
+        return ("text", "BLOCK: " + text_of(tools[-1])[:160])
     if "MEMTEST-RECALL" in first:
         return ("text", "INDEX HAS test-db" if "[test-db](test-db.md)" in system else "NO MEMORY")
     if "SUBBGTEST" in first:
@@ -389,6 +404,10 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Location", "http://127.0.0.1:9100/proxycontrolwarn?url=gated")
             self.end_headers()
             return
+        if self.path == "/jsapp.html":  # empty until its script runs
+            return self.send_html("<html><head><title>JS app</title></head><body><div id='root'></div><script>"
+                                  "setTimeout(function(){document.getElementById('root').innerHTML="
+                                  "'<h1>Dashboard</h1><p>The animal is <b>otter-77</b>.</p>'},300)</script></body></html>")
         if self.path == "/page.html":
             return self.send_html("<html><head><title>Ferry page</title><script>var x=1;</script></head><body>"
                                   "<h1>Ferry</h1><p>The secret word is <b>pelican-42</b>.</p>"
