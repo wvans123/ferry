@@ -71,7 +71,9 @@
 
 ## 最近一次结果
 
-2026-10-26，v0.9.0，Linux，Node 22，Python 3.13，pi 1.4.0：服务端单元测试 25/25，端到端 28/28 通过。v0.5 的 25 项检查也在 GitHub Actions 的 Windows 机器上（Python 3.12、Node 22）全部通过。另用无效 Key 实测了 `ferry doctor` 对 Claude 官方接口的检查：正确识别为 401 并给出提示。
+2026-10-31，v0.18.0，Linux，Node 22，Python 3.13，pi 1.4.0，Electron（F57）：服务端单元测试 47/47，客户端单元测试 33/33，端到端 59/59 通过。
+
+2026-10-26，v0.9.0：服务端单元测试 25/25，端到端 28/28 通过。v0.5 的 25 项检查也在 GitHub Actions 的 Windows 机器上（Python 3.12、Node 22）全部通过。另用无效 Key 实测了 `ferry doctor` 对 Claude 官方接口的检查：正确识别为 401 并给出提示。
 
 | 指标 | 数值 |
 |---|---|
