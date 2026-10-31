@@ -322,6 +322,8 @@ async function run(args) {
 	// loaded only here, so install / update / doctor work even before the agent's packages are in place
 	const { main } = await import("@earendil-works/pi-coding-agent");
 	await (await import("../lib/trim.mjs")).trimPi(); // a shorter "/" list
+	const { createSteer, installSteerKeys } = await import("../lib/steer.mjs");
+	await installSteerKeys(); // Enter on an empty line while the agent works: interrupt now
 	const { createSyncProvider } = await import("../lib/sync.mjs");
 	const { createGuard, createModes, _state: permState } = await import("../lib/guard.mjs");
 	const { createBrand } = await import("../lib/brand.mjs");
@@ -374,6 +376,7 @@ async function run(args) {
 		extensionFactories: [
 			{ name: "ferry-sync", factory: sync, hidden: true },
 			{ name: "ferry-prompt", factory: createPrompt(), hidden: true },
+			{ name: "ferry-steer", factory: createSteer(), hidden: true }, // before the guard: skipped calls are not asked about
 			{ name: "ferry-modes", factory: createModes(cfg), hidden: true },
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },

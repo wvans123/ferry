@@ -9,6 +9,7 @@
 // Skills (folders with a SKILL.md; the model loads them when the task fits, or you call /skill:name):
 //   <FERRY_HOME>/skills/   <project>/.ferry/skills/   <project>/.claude/skills/
 // Also here: a desktop notification when a long request finishes.
+import { steerState } from "./steer.mjs";
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -35,6 +36,8 @@ Keys           Shift+Tab   permission mode: ask first > auto-edit > auto (a mode
                Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
                Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
                @file  attach a file       !command  run a command yourself (its output goes to the agent)
+While it works  Enter  your message goes in at the next step    Enter again on an empty line  interrupt now
+               Alt+Enter  send it after the agent finishes     Alt+Up  take waiting messages back to edit
 Your own commands: Markdown files in .ferry/commands/ or ${join(FERRY_HOME, "commands")} (docs/CUSTOMIZE.md)`;
 
 /** Show text to the user: in the terminal UI as a notice, with -p (print mode) on standard output. */
@@ -115,9 +118,10 @@ export function createCommands(cfg, deps) {
 
 		let started = 0;
 		pi.on("before_agent_start", (event) => {
-			if (event.messageType === "user") started = Date.now();
+			if (event.messageType === "user" && !(steerState.redirecting && started)) started = Date.now();
 		});
 		pi.on("agent_settled", (_e, ctx) => {
+			if (steerState.redirecting) return; // interrupted with a new message: the work goes on
 			const secs = (Date.now() - started) / 1000;
 			if (ctx?.hasUI && started && cfg.notify !== false && secs >= (cfg.notifyAfterSeconds ?? 30)) notifyDone(secs);
 			// a long piece of work: also to the phone (you have probably walked away)

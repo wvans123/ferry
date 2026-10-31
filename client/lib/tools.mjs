@@ -31,6 +31,8 @@ let shared = []; // the main agent's to-do list, for /tasks
 
 /** The to-do list as text, or "" when there is none. */
 export const todoText = () => (shared.length ? render(shared) : "");
+/** The item the agent is working on, or "". */
+export const currentTodo = () => shared.find((t) => t.status === "in_progress")?.content ?? "";
 
 export function createTodo() {
 	return (pi) => {

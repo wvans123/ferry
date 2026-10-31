@@ -9,6 +9,7 @@
 // States: pursuing, paused, achieved, unmet (blocked; needs you), budget (token budget used up).
 // While pursuing, every time the agent stops, Ferry sends it on ("continue toward the goal") unless it has reported
 // the goal achieved or unmet, the budget is used up, or the turn limit is reached. Esc pauses the goal.
+import { steerState } from "./steer.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -124,6 +125,7 @@ export function createGoal(cfg) {
 
 		pi.on("agent_before_settle", (event, ctx) => {
 			if (!goal || goal.status !== "pursuing") return undefined;
+			if (event.outcome === "aborted" && steerState.redirecting) return undefined; // interrupted with a new message: keep going
 			if (event.outcome === "aborted") { // Esc
 				goal.status = "paused";
 				save();

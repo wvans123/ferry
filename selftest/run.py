@@ -602,6 +602,102 @@ def check_tui(root: Path, work: Path) -> None:
         (work / "made-by-agent.txt").unlink(missing_ok=True)
 
 
+def check_steer(root: Path, work: Path) -> None:
+    """Talking to the agent while it works: Enter queues, Enter again on an empty line interrupts now."""
+    if WINDOWS:
+        print("  SKIP  F53 工作中插话（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    s = Stack(root, work, "agent")
+    seen = b""
+    try:
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float, since: int = 0) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[since:]):
+                    return True
+            return False
+
+        def typed(text: bytes) -> None:
+            os.write(fd, text)
+            time.sleep(0.4)
+            os.write(fd, b"\r")
+
+        wrong = work / "steer-wrong.txt"
+        wrong.unlink(missing_ok=True)
+        started = wait_for("shift+tab", 60)
+        # 1. a command is running: the interruption waits for it, then the agent gets the message and the note
+        typed(b"STEERTEST: run the slow command")
+        wait_for("sleep 3", 20)
+        typed(b"TURN LEFT instead")
+        hinted = wait_for("Enter on an empty line to interrupt now", 10)
+        os.write(fd, b"\r")
+        waiting = wait_for("Interrupting (when the running tool finishes): TURN LEFT", 10)
+        mark = len(seen)
+        first = wait_for("STEERED slow=True order=True ran=True", 40, mark)
+        time.sleep(1)
+        not_run = not wrong.exists()
+        # 2. the agent is writing a long answer: it is stopped at once
+        typed(b"/new")
+        time.sleep(1.5)
+        typed(b"STEERTEST SLOWTALK: explain")
+        talking = wait_for("explaining at length", 30)
+        t0 = time.time()
+        typed(b"TURN RIGHT now")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        mark = len(seen)
+        second = wait_for("wrote=True gist=True wish=TURN RIGHT", 30, mark) and time.time() - t0 < 8
+        # 3. Esc while the interruption waits: the agent stops and the message is back in the input box, not sent
+        typed(b"/new")
+        time.sleep(1.5)
+        typed(b"STEERTEST: run the slow command again")
+        wait_for("sleep 3", 20, mark)
+        typed(b"TURN UP")
+        time.sleep(0.5)
+        os.write(fd, b"\r")
+        wait_for("Interrupting (when the running tool finishes): TURN UP", 10, mark)
+        os.write(fd, b"\x1b")
+        time.sleep(5)
+        mark = len(seen)
+        os.write(fd, b"\r")  # send what Esc put back
+        back = wait_for("PLAIN TURN UP", 20, mark) and "STEERED" not in plain(seen[mark:])
+        for _ in range(2):
+            os.write(fd, b"\x03")
+            time.sleep(0.3)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        ok = started and hinted and waiting and first and not_run and talking and second and back
+        check("F53 工作中插话", ok, "agent 干活时按 Enter 排队、提示可立即插话；空行再按 Enter：正在跑的命令跑完、后面的工具调用不再执行，"
+              "agent 收到你的话和\"被打断\"说明；正在写长回答时立刻停下改方向；等待中按 Esc，话回到输入框不发出" if ok
+              else f"started={started} hinted={hinted} waiting={waiting} first={first} not_run={not_run} talking={talking} "
+                   f"second={second} back={back}: {plain(seen)[-600:]!r}")
+    finally:
+        s.close()
+        (work / "steer-wrong.txt").unlink(missing_ok=True)
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -977,6 +1073,7 @@ def main() -> int:
     check_context_and_mcp(base / "ctx", work)
     check_project_mcp(base / "pmcp")
     check_tui(base / "tui", work)
+    check_steer(base / "steer", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)
 

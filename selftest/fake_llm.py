@@ -90,6 +90,21 @@ def decide_agent(msgs):
     last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"], default=0)
     tools = [m for m in msgs[last_user:] if m.get("role") == "tool"]  # this request's tool results
     first = text_of(msgs[last_user]) if msgs else ""  # the latest user message picks the scenario
+    users = [text_of(m) for m in msgs if m.get("role") == "user"]
+    if any("STEERTEST" in u for u in users) and "<ferry_subagent>" not in system:  # talking to the agent while it works
+        notes = [u for u in users if "interrupted you" in u]
+        if notes:
+            out = " ".join(text_of(m) for m in msgs if m.get("role") == "tool")
+            order = users[-1].startswith("[Ferry: the user's message") and "TURN" in users[-2]
+            return ("text", f"STEERED slow={'SLOWDONE' in out} order={order} ran={'running bash' in notes[-1]} "
+                            f"wrote={'writing your next step' in notes[-1]} gist={'explaining at length' in notes[-1]} wish={users[-2][:12]}")
+        if users[-1].startswith("TURN"):  # sent the ordinary way (after Esc put it back in the input box)
+            return ("text", f"PLAIN {users[-1][:7]}")
+        if "SLOWTALK" in users[0]:
+            return ("slowtext", "I am explaining at length. " * 40)
+        if not [m for m in msgs if m.get("role") == "tool"]:
+            return ("tool", "bash", {"command": "sleep 3; echo SLOWDONE"})
+        return ("tool", "bash", {"command": "echo wrong > steer-wrong.txt"})
     if any("GOALTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
         return decide_goal(msgs)
     if "<ferry_subagent>" in system:  # a subagent's own conversation
@@ -285,7 +300,7 @@ class H(BaseHTTPRequestHandler):
         events = [("message_start", {"type": "message_start", "message": {"id": "msg_1", "type": "message", "role": "assistant",
                                                                            "model": body["model"], "content": [], "stop_reason": None,
                                                                            "usage": usage}})]
-        if kind == "text":
+        if kind in ("text", "slowtext"):
             text = rest[0]
             events.append(("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}))
             for i in range(0, len(text), 3):
@@ -361,7 +376,8 @@ class H(BaseHTTPRequestHandler):
         kind, *rest = decide(body.get("messages", []))
         base = {"id": "x1", "object": "chat.completion.chunk", "created": int(time.time()), "model": "fake"}
         usage = {"prompt_tokens": len(raw) // 4, "completion_tokens": 5, "total_tokens": len(raw) // 4 + 5}
-        if kind == "text":
+        slow = kind == "slowtext"  # streamed over about ten seconds, for interrupting
+        if kind in ("text", "slowtext"):
             text = rest[0]
             deltas = [{"role": "assistant", "content": ""}] + [{"content": text[i:i + 3]} for i in range(0, len(text), 3)]
             finish, message = "stop", {"role": "assistant", "content": text}
@@ -383,8 +399,14 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        for d in deltas:
-            self.wfile.write(f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': d, 'finish_reason': None}]})}\n\n".encode())
+        try:
+            for d in deltas:
+                self.wfile.write(f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': d, 'finish_reason': None}]})}\n\n".encode())
+                if slow:
+                    self.wfile.flush()
+                    time.sleep(0.03)
+        except (BrokenPipeError, ConnectionResetError):  # the client stopped listening
+            return
         last = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}], "usage": usage}
         self.wfile.write(f"data: {json.dumps(last)}\n\ndata: [DONE]\n\n".encode())
 
