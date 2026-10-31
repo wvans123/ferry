@@ -298,7 +298,20 @@ function modelHint(err, cfg) {
 	return "see the error above";
 }
 
+/** Arguments as pi should see them: Ferry's own models in --list-models, and under Paperclip, Ferry's tools kept. */
+function piArgs(args, env = process.env) {
+	const out = [...args];
+	const lm = out.indexOf("--list-models");
+	if (lm >= 0 && (!out[lm + 1] || out[lm + 1].startsWith("-"))) out.splice(lm + 1, 0, "ferry"); // not pi's whole catalog
+	if (env.PAPERCLIP_RUN_ID) { // Paperclip's pi adapter allows only pi's seven tools; Ferry's guard decides instead
+		const t = out.findIndex((a) => a === "--tools" || a === "-t");
+		if (t >= 0) out.splice(t, 2);
+	}
+	return out;
+}
+
 async function run(args) {
+	args = piArgs(args);
 	const cfg = loadConfig();
 	await applyProxy(cfg);
 	try {
@@ -328,6 +341,7 @@ async function run(args) {
 	await installTitle(); // the tab title: conversation · project · Ferry
 	const { createSyncProvider } = await import("../lib/sync.mjs");
 	const { createGuard, createModes, _state: permState } = await import("../lib/guard.mjs");
+	const { createTeam } = await import("../lib/team.mjs");
 	const { createBrand } = await import("../lib/brand.mjs");
 	const { createMemory } = await import("../lib/memory.mjs");
 	const { createPrompt } = await import("../lib/prompt.mjs");
@@ -406,6 +420,7 @@ async function run(args) {
 				makeSync: () => createSyncProvider(cfg, models, { purpose: "subagent" }) }), hidden: true },
 			{ name: "ferry-brand", factory: createBrand(cfg, VERSION, newerRelease(cfg)), hidden: true },
 			{ name: "ferry-title", factory: createTitle(permState), hidden: true },
+			{ name: "ferry-team", factory: createTeam(), hidden: true },
 		],
 	});
 }
@@ -547,6 +562,7 @@ else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | 
 	}
 }
 else if (cmd === "mcp") await mcp(rest);
+else if (cmd === "team") await (await import("../lib/teamcli.mjs")).teamCli(rest, { ferry: fileURLToPath(import.meta.url) }).then(exit);
 else if (cmd === "doctor") await doctor().then(exit);
 else if (cmd === "install") {
 	await applyProxy(loadConfig());
@@ -576,6 +592,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry config                      show the client settings (memory, subagents, approvals, blocked paths...)
   ferry config set <key> <value>    change one, e.g. ferry config set memory false
   ferry mcp list | import | add     MCP servers: see them, copy them from Claude Desktop / Cursor / Claude Code
+  ferry team add <name> ...         add a Ferry agent to a Paperclip team (ferry team for details)
   ferry pkg install npm:<package>   add a pi package (extensions, skills, commands); ferry pkg list | remove
   ferry update [file.zip]           install the latest release from GitHub (or a zip you downloaded)
   ferry install [--client-only]     install from an unpacked Ferry folder (--client-only: no local server)

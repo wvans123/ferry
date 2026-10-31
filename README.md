@@ -283,6 +283,19 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | 批量派活 | "把这个文件夹里 40 篇稿件每篇看一遍"：每篇派一个子 agent，同时最多 3 个（`maxParallel`），报告汇总到一个文件。服务端也限制每个用户同时的模型请求数（管理页 → 设置），多的排队，不会把服务端压垮 |
 | 省 token | 上下文超过 80k（`trimOldOutputs`）时，很久以前的长工具输出（读过的大文件、长命令输出）换成一行说明，最近 6 个保留；需要时它会重读，`history_search` 也能找回原文 |
 
+## Agent 团队
+
+想要"负责人派活、调研/分析/写 PPT 各管一摊、互相留言"的团队，用 [Paperclip](https://github.com/paperclipai/paperclip) 当看板（组织架构、任务、评论、仪表盘，在工作电脑本机打开），每个成员都跑 Ferry，模型调用照样走你的 Ferry 服务端：
+
+```powershell
+npx paperclipai onboard --yes          # 第一次；以后 npx paperclipai run（需要 Node 24.11+）
+ferry team add Lead --title "负责人" --about "拆解目标、派活、检查、汇总"
+ferry team add Researcher --title "调研" --about "查资料，结果写成 research/*.md"
+ferry team task "调研三种方案并写汇报 PPT" --to Lead
+```
+
+成员有 `team` 工具：派子任务、等它完成后被自动叫醒、留言、改状态；项目记忆全队共享，每个成员还有自己的角色记忆。详见 [docs/TEAM.md](docs/TEAM.md)。
+
 ## 自己动手扩展
 
 不用写代码，放几个文本文件就行。仓库的 [examples/](examples/) 里每样都有现成的例子，详细说明见 [docs/CUSTOMIZE.md](docs/CUSTOMIZE.md)。

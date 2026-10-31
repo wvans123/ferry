@@ -33,7 +33,7 @@ const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "offi
 // tools are checked one by one; web_*: the server's own allow list)
 const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "task_batch",
 	"past_conversations", "office_read", "web_search",
-	"job_output", "job_stop", "goal_update"]);
+	"job_output", "job_stop", "goal_update", "team"]); // team: only the team's own board
 // reads, but from a site the user may not want contacted: asked per site (like Claude Code's WebFetch), also in plan mode
 const NET = new Set(["web_fetch"]);
 

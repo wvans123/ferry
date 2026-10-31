@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ferry-server"
-version = "0.16.2"
+version = "0.17.0"
 description = "Ferry server: context engine and privacy gateway for the Ferry coding agent"
 requires-python = ">=3.11"
 dependencies = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]

@@ -223,3 +223,17 @@ pi 原本就有"引导"：agent 干活时按 Enter，话排队，等这一步的
 纠错时撤回文件不放进插话里，用 `/rewind`。目标模式（/goal）里插话不会暂停目标。
 
 v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`（原来是 `π - 项目`），F53 一起检查。
+
+## v0.17：agent 团队（Paperclip）
+
+不自己做看板：[Paperclip](https://github.com/paperclipai/paperclip) 已经有组织架构、任务、评论、审批、运行记录和仪表盘，它的 pi 接法可以把命令换成 ferry。Ferry 这边补的是让成员用得顺手、守住原有原则的部分。
+
+| 新增 | 说明 | 自测 |
+|---|---|---|
+| 被 Paperclip 启动 | `--list-models` 只列 Ferry 的模型；Paperclip 只放行 pi 的七个工具，ferry 在 Paperclip 下去掉这个限制，由 Ferry 的权限规则把关；没人确认时默认 auto 模式（`FERRY_PERMISSION_MODE` 可改） | F54 |
+| team 工具 | 看板操作：board / read / take / comment / update / create；`create` 加 `wait` 时，自己的任务被它挡住，完成后自动叫醒；请求自动带运行身份 | F54 |
+| 角色记忆 | 团队里每个成员多一层自己的记忆；项目记忆全队共享 | 客户端单元测试 |
+| `ferry team` | add / task / status：用命令行加成员（pi 接法、legacy runner、ferry 命令、Ferry 模型都设好）、派任务、看状态 | 真实 Paperclip 上手动跑通 |
+
+在真实的 Paperclip 2026.1023.0 上（Linux，测试模型）跑通：Lead 派子任务给 Researcher 并等待 → Researcher 写文件、完成 → Lead 被叫醒、写计划、完成。Paperclip 需要 Node 24.11+。
+

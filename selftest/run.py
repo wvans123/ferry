@@ -700,6 +700,84 @@ def check_steer(root: Path, work: Path) -> None:
         (work / "steer-wrong.txt").unlink(missing_ok=True)
 
 
+def check_team(root: Path, work: Path) -> None:
+    """Ferry run by Paperclip (its pi adapter): the team tool works the board; only Ferry's models are listed."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    calls = []
+    lead, researcher, task = "a1111111-1111-4111-8111-111111111111", "b2222222-2222-4222-8222-222222222222", \
+        "c3333333-3333-4333-8333-333333333333"
+
+    class Board(BaseHTTPRequestHandler):  # the few Paperclip endpoints the team tool uses
+        def log_message(self, *a):
+            pass
+
+        def reply(self, obj, code=200):
+            data = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def handle_any(self, method):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n)) if n else None
+            calls.append({"method": method, "path": self.path, "body": body, "auth": self.headers.get("Authorization"),
+                          "run": self.headers.get("X-Paperclip-Run-Id")})
+            if self.path.endswith("/agents"):
+                return self.reply([{"id": lead, "name": "Lead", "status": "running"},
+                                   {"id": researcher, "name": "Researcher", "status": "idle"}])
+            if method == "POST" and self.path.endswith("/issues"):
+                return self.reply({"id": "d4444444-4444-4444-8444-444444444444", "identifier": "LAB-2", "status": "todo",
+                                   "title": body["title"], "assigneeAgentId": body.get("assigneeAgentId")})
+            if method == "GET" and self.path == f"/api/issues/{task}":
+                return self.reply({"id": task, "identifier": "LAB-1", "status": "in_progress", "title": "TEAMTEST: plan", "blockedBy": []})
+            if method == "PATCH":
+                return self.reply({"id": task, "identifier": "LAB-1", "status": body.get("status", "in_progress"), "title": "TEAMTEST: plan"})
+            return self.reply({"ok": True})
+
+        def do_GET(self):
+            self.handle_any("GET")
+
+        def do_POST(self):
+            self.handle_any("POST")
+
+        def do_PATCH(self):
+            self.handle_any("PATCH")
+
+    board = ThreadingHTTPServer(("127.0.0.1", 0), Board)
+    threading.Thread(target=board.serve_forever, daemon=True).start()
+    s = Stack(root, work, "agent")
+    try:
+        team_env = {"PAPERCLIP_API_URL": f"http://127.0.0.1:{board.server_address[1]}", "PAPERCLIP_API_KEY": "run-jwt",
+                    "PAPERCLIP_AGENT_ID": lead, "PAPERCLIP_COMPANY_ID": "co1", "PAPERCLIP_RUN_ID": "run-1",
+                    "PAPERCLIP_TASK_ID": task, "FERRY_AUTO_APPROVE": "0"}
+        wake = ("## Paperclip Wake Payload\n\n- reason: issue_assigned\n- issue: LAB-1 TEAMTEST: plan the launch\n"
+                f'{{"issueId":"{task}"}}')
+        # exactly the arguments Paperclip's pi adapter passes (pi's seven tools only), with ferry as the command
+        code, out = s.ferry("--mode", "json", "-p", "--append-system-prompt", "You are agent Lead.", "--provider", "ferry",
+                            "--model", "auto", "--tools", "read,bash,edit,write,grep,find,ls", wake, env_extra=team_env)
+        create = next((c for c in calls if c["method"] == "POST" and c["path"] == "/api/companies/co1/issues"), None)
+        wait = next((c for c in calls if c["method"] == "PATCH" and c["path"] == f"/api/issues/{task}"), None)
+        comment = next((c for c in calls if c["path"] == f"/api/issues/{task}/comments"), None)
+        delegated = bool(create and create["body"].get("assigneeAgentId") == researcher and create["body"].get("parentId") == task)
+        waits = bool(wait and wait["body"].get("status") == "blocked" and wait["body"].get("blockedByIssueIds") == ["d4444444-4444-4444-8444-444444444444"])
+        headers = all(c["auth"] == "Bearer run-jwt" and c["run"] == "run-1" for c in calls)
+        said = "LEAD: delegated" in out and bool(comment)
+        code_m, models = s.ferry("--list-models")
+        only_ferry = code_m == 0 and "ferry" in models and "amazon-bedrock" not in models
+        ok = code == 0 and delegated and waits and headers and said and only_ferry
+        check("F54 团队成员（Paperclip）", ok, "按 Paperclip 的参数启动 ferry：用 team 工具把任务派给 Researcher、自己的任务改为等待它、"
+              "留言说明；请求都带运行身份；--list-models 只列 Ferry 的模型" if ok
+              else f"code={code} delegated={delegated} waits={waits} headers={headers} said={said} only_ferry={only_ferry} "
+                   f"calls={[(c['method'], c['path']) for c in calls]} out={out[-300:]!r}")
+    finally:
+        s.close()
+        board.shutdown()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1076,6 +1154,7 @@ def main() -> int:
     check_project_mcp(base / "pmcp")
     check_tui(base / "tui", work)
     check_steer(base / "steer", work)
+    check_team(base / "team", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)
 

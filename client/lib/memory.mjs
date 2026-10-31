@@ -25,7 +25,11 @@ export function projectDir(cwd) {
 	return join(MEMORY_ROOT, "projects", `${name}-${hash}`);
 }
 
+/** In a Paperclip team, each member also has a memory of its own (the project memory is the team's shared one). */
+const teamMember = () => (process.env.PAPERCLIP_AGENT_ID ?? "").replace(/[^\w-]+/g, "").slice(0, 64);
+
 export function scopeDir(scope, cwd) {
+	if (scope === "role" && teamMember()) return join(projectDir(cwd), "roles", teamMember());
 	return scope === "user" ? join(MEMORY_ROOT, "user") : projectDir(cwd);
 }
 
@@ -89,33 +93,42 @@ user, and fix the memory. Rules in AGENTS.md and the user's current instructions
 export function memorySection(cwd) {
 	const user = loadIndex(scopeDir("user", cwd));
 	const project = loadIndex(scopeDir("project", cwd));
+	const team = teamMember() ? `
+
+You are one member of a team. The project memory is shared by the whole team: save there what every member should
+know. A third scope, role, is yours alone: how you do your part of the work, what you learned doing it.
+
+Your own (role) memory index:
+${loadIndex(scopeDir("role", cwd)) || "(empty)"}` : "";
 	return `${GUIDE}
 
 User memory index:
 ${user || "(empty)"}
 
 Project memory index (${basename(cwd)}):
-${project || "(empty)"}`;
+${project || "(empty)"}${team}`;
 }
 
 const Params = Type.Object({
 	action: StringEnum(["save", "read", "delete", "list"], {
 		description: "save: create or replace a memory; read: show one memory (or the index without name); delete; list: both indexes",
 	}),
-	scope: Type.Optional(StringEnum(["user", "project"], { description: "user: everywhere; project: this folder only. Default project." })),
+	scope: Type.Optional(StringEnum(["user", "project", "role"], {
+		description: "user: everywhere; project: this folder only (in a team: shared by all members); role: yours alone, only in a team. Default project." })),
 	name: Type.Optional(Type.String({ description: "Short file name, e.g. test-database or prefers-chinese-replies" })),
 	description: Type.Optional(Type.String({ description: "save: one line for the index, saying when this memory is useful" })),
 	content: Type.Optional(Type.String({ description: "save: the memory itself, in Markdown. Keep it short." })),
 });
 
 function runMemory(params, cwd) {
-	const scope = params.scope === "user" ? "user" : "project";
+	const scope = params.scope === "user" ? "user" : params.scope === "role" && teamMember() ? "role" : "project";
 	const dir = scopeDir(scope, cwd);
 	const name = slug(params.name);
 	const text = (t) => ({ content: [{ type: "text", text: t }], details: { action: params.action, scope, name } });
 
 	if (params.action === "list") {
-		return text(`User memory:\n${loadIndex(scopeDir("user", cwd)) || "(empty)"}\n\nProject memory:\n${loadIndex(scopeDir("project", cwd)) || "(empty)"}`);
+		return text(`User memory:\n${loadIndex(scopeDir("user", cwd)) || "(empty)"}\n\nProject memory:\n${loadIndex(scopeDir("project", cwd)) || "(empty)"}` +
+			(teamMember() ? `\n\nYour own (role) memory:\n${loadIndex(scopeDir("role", cwd)) || "(empty)"}` : ""));
 	}
 	if (params.action === "read") {
 		if (!name) return text(loadIndex(dir) || `(no ${scope} memories yet)`);

@@ -8,6 +8,9 @@ const state = { mode: "default", queue: Promise.resolve(), extraDirs: [] }; // e
 
 export function initialMode(cfg) {
 	if (process.env.FERRY_AUTO_APPROVE === "1") return "bypass";
+	if (MODES.includes(process.env.FERRY_PERMISSION_MODE)) return process.env.FERRY_PERMISSION_MODE;
+	// run by Paperclip, nobody at a terminal to ask: a model judges what the rules cannot decide, the rest is refused
+	if (process.env.PAPERCLIP_RUN_ID && !["acceptEdits", "auto", "bypass"].includes(cfg.permissionMode)) return "auto";
 	return MODES.includes(cfg.permissionMode) ? cfg.permissionMode : "default";
 }
 

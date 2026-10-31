@@ -33,6 +33,8 @@ def text_of(m):
 def decide(msgs):
     if msgs and text_of(msgs[-1]) == "Reply with OK":  # ferry doctor's model check
         return ("text", "OK")
+    if msgs and text_of(msgs[-1]).strip().lower().startswith("respond with hello"):  # Paperclip's check of a new agent
+        return ("text", "hello")
     if msgs and "You check one action" in text_of(msgs[0]):  # auto mode's judge
         return ("text", "ASK: it deletes files" if "rm " in text_of(msgs[-1]) else "ALLOW: it only creates a file in the project")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
@@ -84,12 +86,46 @@ def decide_goal(msgs):
     return ("tool", "goal_update", {"status": "achieved", "summary": "three notes written", "evidence": "goal-note1..3.txt exist"})
 
 
+def decide_team(wake, tools):
+    """One heartbeat of a Paperclip team member, by the task it was woken for."""
+    issue = (re.search(r'"issueId":"([0-9a-f-]{36})"', wake) or re.search(r"issueId[\":\s]+([0-9a-f-]{36})", wake))
+    issue = issue.group(1) if issue else "unknown"
+    n = len(tools)
+    title = (re.search(r"- issue: \S+ (.*)", wake) or re.search(r"(TEAMTEST\S*)", wake)).group(1)
+    if title.startswith("TEAMTEST-RESEARCH"):  # the researcher
+        if n == 0:
+            return ("tool", "write", {"path": "research.md", "content": "# Competitors\n\n- Alpha\n- Beta\n- Gamma\n"})
+        if n == 1:
+            return ("tool", "team", {"action": "update", "task": issue, "status": "done",
+                                     "text": "Found three competitors: Alpha, Beta, Gamma. Details in research.md. @Lead"})
+        return ("text", "RESEARCHER: done, " + text_of(tools[-1])[:80])
+    if "issue_children_completed" in wake or "issue_blockers_resolved" in wake:  # the lead, after the researcher finished
+        if n == 0:
+            return ("tool", "team", {"action": "read", "task": issue})
+        if n == 1:
+            return ("tool", "write", {"path": "plan.md", "content": "# Launch plan\n\nCompetitors (from research.md): Alpha, Beta, Gamma.\n"})
+        if n == 2:
+            return ("tool", "team", {"action": "update", "task": issue, "status": "done", "text": "Plan written to plan.md, using the research."})
+        return ("text", "LEAD: plan done")
+    if n == 0:  # the lead, first time: hand the research to the researcher
+        return ("tool", "team", {"action": "create", "title": "TEAMTEST-RESEARCH: find three competitors",
+                                 "assignee": "Researcher", "parent": issue, "wait": True,
+                                 "text": "List three competitors in research.md."})
+    if n == 1:
+        return ("tool", "team", {"action": "comment", "task": issue, "text": "Asked @Researcher for the competitors first."})
+    return ("text", "LEAD: delegated, " + text_of(tools[0])[:80])
+
+
 def decide_agent(msgs):
     system = text_of(msgs[0]) if msgs else ""
     system += " ".join(text_of(m) for m in msgs if m.get("role") in ("system", "developer"))
     last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"], default=0)
     tools = [m for m in msgs[last_user:] if m.get("role") == "tool"]  # this request's tool results
     first = text_of(msgs[last_user]) if msgs else ""  # the latest user message picks the scenario
+    wakes = [i for i, m in enumerate(msgs) if m.get("role") == "user"
+             and ("Paperclip Wake Payload" in text_of(m) or "Paperclip Resume Delta" in text_of(m))]
+    if wakes and "TEAMTEST" in text_of(msgs[wakes[-1]]):  # a Paperclip team: a lead hands work to a researcher
+        return decide_team(text_of(msgs[wakes[-1]]), [m for m in msgs[wakes[-1] + 1:] if m.get("role") == "tool"])
     users = [text_of(m) for m in msgs if m.get("role") == "user"]
     if any("STEERTEST" in u for u in users) and "<ferry_subagent>" not in system:  # talking to the agent while it works
         notes = [u for u in users if "interrupted you" in u]
