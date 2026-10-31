@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<title>Ferry</title>
+<style>
+:root { --bg: #f5f3ee; --card: #fffdf8; --ink: #22201c; --muted: #6f6a60; --line: #e2ddd2; --river: #2f6f8f; --lamp: #b0701a;
+  --good: #3b7d3f; --bad: #b2412f; --soft: #edeae2; }
+@media (prefers-color-scheme: dark) { :root { --bg: #171614; --card: #201e1b; --ink: #ece8df; --muted: #a39d91; --line: #34312c;
+  --river: #74b3d1; --lamp: #e0a24a; --good: #7fbf7f; --bad: #e57f6c; --soft: #2a2824; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  padding: max(14px, env(safe-area-inset-top)) 14px max(24px, env(safe-area-inset-bottom)); }
+header { display: flex; align-items: center; gap: 10px; margin: 0 auto 12px; max-width: 640px; }
+header h1 { font-size: 20px; margin: 0; flex: 1; letter-spacing: .02em; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
+.dot.off { background: var(--muted); }
+main { max-width: 640px; margin: 0 auto; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+.head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dev { font-weight: 600; }
+.proj { color: var(--muted); font-size: 14px; }
+.badge { margin-left: auto; font-size: 13px; padding: 2px 9px; border-radius: 999px; background: var(--soft); color: var(--muted); white-space: nowrap; }
+.badge.working { color: var(--river); }
+.badge.asking { color: var(--lamp); background: color-mix(in srgb, var(--lamp) 14%, transparent); }
+.badge.offline { opacity: .7; }
+.title { margin: 8px 0 2px; font-size: 15px; }
+.line { color: var(--muted); font-size: 14px; margin: 4px 0 0; overflow-wrap: anywhere; }
+.line b { color: var(--ink); font-weight: 500; }
+.ask { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.ask .what { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: var(--soft);
+  border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; white-space: pre-wrap; margin: 6px 0 10px; }
+.warn { color: var(--bad); font-size: 14px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px;
+  padding: 10px 16px; min-height: 44px; cursor: pointer; }
+button.primary { background: var(--river); border-color: var(--river); color: #fff; }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--river); outline-offset: 2px; }
+.empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+form { max-width: 360px; margin: 18vh auto 0; }
+form h1 { font-size: 22px; margin: 0 0 4px; }
+form p { color: var(--muted); margin: 0 0 16px; }
+input { width: 100%; font: inherit; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+.msg { min-height: 1.5em; font-size: 14px; color: var(--bad); margin: 8px 0 0; }
+.foot { text-align: center; color: var(--muted); font-size: 13px; margin-top: 18px; }
+.foot button { min-height: 0; padding: 4px 10px; font-size: 13px; }
+.toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink);
+  color: var(--bg); padding: 8px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+</head>
+<body>
+<form id="login" hidden>
+  <h1>Ferry</h1>
+  <p>手机控制台：看看各台电脑在做什么。</p>
+  <label for="pw" style="display:block;font-size:14px;margin-bottom:6px">密码</label>
+  <input id="pw" type="password" autocomplete="current-password" required>
+  <div class="row"><button class="primary" type="submit" style="flex:1">登录</button></div>
+  <p class="msg" id="loginMsg" role="alert"></p>
+</form>
+
+<div id="app" hidden>
+  <header><h1>Ferry</h1><span class="dot" id="live" title="连接状态"></span></header>
+  <main id="list" aria-live="polite"></main>
+  <div class="foot"><span id="upd"></span> · <button id="logout" type="button">退出登录</button></div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const H = { "Content-Type": "application/json", "X-Ferry-M": "1" };
+let timer = null, busy = false;
+
+function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("show"), 2200); }
+function ago(s) { return s < 60 ? `${s} 秒前` : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : `${Math.floor(s / 3600)} 小时前`; }
+function dur(since) { if (!since) return ""; const s = Math.max(0, Math.floor(Date.now() / 1000 - since)); return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分钟`; }
+
+function signin() { $("app").hidden = true; $("login").hidden = false; clearTimeout(timer); $("pw").focus(); }
+
+$("login").onsubmit = async (e) => {
+  e.preventDefault();
+  $("loginMsg").textContent = "";
+  const r = await fetch("/m/login", { method: "POST", headers: H, body: JSON.stringify({ password: $("pw").value }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { $("loginMsg").textContent = d.error || ("HTTP " + r.status); return; }
+  $("pw").value = ""; $("login").hidden = true; load();
+};
+$("logout").onclick = async () => { await fetch("/m/logout", { method: "POST", headers: H }); signin(); };
+
+function card(c) {
+  const state = !c.online ? ["offline", `离线（${ago(c.ago)}）`] : c.state === "asking" ? ["asking", "等你确认"]
+    : c.state === "working" ? ["working", `工作中${c.since ? " · " + dur(c.since) : ""}`] : ["idle", "空闲"];
+  let html = `<div class="card"><div class="head"><span class="dev">${esc(c.device)}</span><span class="proj">${esc(c.project)}</span>
+    <span class="badge ${state[0]}">${state[1]}</span></div>`;
+  if (c.title) html += `<div class="title">${esc(c.title)}</div>`;
+  if (c.goal) html += `<p class="line">目标：<b>${esc(c.goal)}</b></p>`;
+  if (c.online && c.state !== "idle" && c.tool) html += `<p class="line">正在：<b>${esc(c.tool)}</b> ${esc(c.detail)}</p>`;
+  if (c.text) html += `<p class="line">最近说：${esc(c.text)}</p>`;
+  const p = c.pending;
+  if (c.online && p && p.id) {
+    html += `<div class="ask"><div>它想执行 <b>${esc(p.tool)}</b>：</div><div class="what">${esc(p.detail)}</div>`;
+    if (p.danger) html += `<p class="warn">危险操作（${esc(p.danger)}）：只能在电脑上批准。</p>`;
+    else if (!c.remote_approve) html += `<p class="line">这台电脑没有允许在手机上批准。要允许，在电脑上运行 <b>ferry config set remoteApprove true</b>。</p>`;
+    html += `<div class="row">${!p.danger && c.remote_approve ? `<button class="primary" data-act="approve" data-id="${c.id}" data-ap="${esc(p.id)}">允许一次</button>` : ""}
+      <button data-act="deny" data-id="${c.id}" data-ap="${esc(p.id)}">拒绝</button></div></div>`;
+  }
+  if (c.online && c.state !== "idle") html += `<div class="row"><button class="danger" data-act="stop" data-id="${c.id}">停止</button></div>`;
+  if (c.queued) html += `<p class="line">已发出，等电脑收到…</p>`;
+  return html + "</div>";
+}
+
+async function load() {
+  clearTimeout(timer);
+  try {
+    const r = await fetch("/m/api/state", { cache: "no-store" });
+    if (r.status === 401) return signin();
+    const d = await r.json();
+    $("app").hidden = false; $("live").className = "dot";
+    if (!busy) {
+      $("list").innerHTML = d.clients.length ? d.clients.map(card).join("")
+        : `<div class="card empty">现在没有电脑在用 ferry。<br>ferry 运行时会出现在这里。</div>`;
+    }
+    $("upd").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
+  } catch { $("live").className = "dot off"; }
+  timer = setTimeout(load, document.hidden ? 15000 : 3000);
+}
+
+$("list").onclick = async (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const act = b.dataset.act;
+  if (act === "stop" && !confirm("停止这台电脑上正在做的事？")) return;
+  if (act === "approve" && !confirm("允许它执行这个操作一次？")) return;
+  busy = true; b.disabled = true;
+  try {
+    const r = await fetch("/m/api/act", { method: "POST", headers: H, body: JSON.stringify({ id: b.dataset.id, action: act, approval: b.dataset.ap || "" }) });
+    if (r.status === 401) return signin();
+    const d = await r.json();
+    toast(d.ok ? "已发出" : d.error);
+  } catch { toast("没发出去，网络有问题"); }
+  busy = false; load();
+};
+addEventListener("visibilitychange", () => { if (!document.hidden && $("login").hidden) load(); });
+load();
+</script>
+</body>
+</html>

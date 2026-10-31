@@ -1,4 +1,7 @@
-"""Notifications to the user's phone through Bark (iPhone): a goal finished, a long request is done, approval needed."""
+"""Notifications to the user's phone through Bark (iPhone): a goal finished, a long request is done, approval needed.
+
+With the phone console on (and the public address set), tapping a notification opens it.
+"""
 from __future__ import annotations
 
 import httpx
@@ -14,6 +17,8 @@ async def send(cfg: Config, title: str, body: str, kind: str = "") -> tuple[bool
     payload = {"title": title[:80], "body": body[:500], "group": "Ferry"}
     if kind == "approval":
         payload["level"] = "timeSensitive"  # shows even in a focus mode
+    if cfg.console and cfg.console_password and cfg.public_url:
+        payload["url"] = f"{cfg.public_url.rstrip('/')}/m"  # tapping the notification opens the phone console
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(url, json=payload)

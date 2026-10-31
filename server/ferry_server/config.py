@@ -91,6 +91,9 @@ class Config:
     max_concurrent: int = 6      # model calls one user may have running at once; more wait their turn
     bark_url: str = ""           # Bark push address (https://api.day.app/<key>): notifications to an iPhone
     judge_model: str = ""        # model that judges uncertain actions in the client's auto mode ("" = the summary/default model)
+    shared_memory: bool = False  # global memory on the server, shared by all of a user's computers
+    console: bool = False        # the phone page at /m: see what each computer is doing, approve or stop
+    console_password: str = ""   # its password, hashed (scrypt$salt$hash); set on the admin page
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
@@ -144,6 +147,9 @@ def load(path: str | os.PathLike) -> Config:
         max_concurrent=int(s.get("max_concurrent", 6)),
         bark_url=os.environ.get("FERRY_BARK_URL") or s.get("bark_url", ""),
         judge_model=s.get("judge_model", ""),
+        shared_memory=bool(s.get("shared_memory", False)),
+        console=bool(s.get("console", False)),
+        console_password=s.get("console_password", ""),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -497,6 +503,9 @@ def load_default() -> Config:
         max_concurrent=int(saved.get("max_concurrent", 6)),
         bark_url=env("FERRY_BARK_URL") or saved.get("bark_url", ""),
         judge_model=saved.get("judge_model", ""),
+        shared_memory=bool(saved.get("shared_memory", False)),
+        console=bool(saved.get("console", False)),
+        console_password=saved.get("console_password", ""),
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
@@ -535,4 +544,7 @@ def save_settings(cfg: Config) -> None:
         f"web_proxy = {json.dumps(cfg.web_proxy)}\n"
         f"max_concurrent = {int(cfg.max_concurrent)}\n"
         f"bark_url = {json.dumps(cfg.bark_url)}\n"
-        f"judge_model = {json.dumps(cfg.judge_model)}\n", encoding="utf-8")
+        f"judge_model = {json.dumps(cfg.judge_model)}\n"
+        f"shared_memory = {'true' if cfg.shared_memory else 'false'}\n"
+        f"console = {'true' if cfg.console else 'false'}\n"
+        f"console_password = {json.dumps(cfg.console_password)}\n", encoding="utf-8")

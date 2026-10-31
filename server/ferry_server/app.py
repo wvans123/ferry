@@ -31,6 +31,9 @@ from starlette.background import BackgroundTask
 
 from . import PROTOCOL, __version__
 from .config import Config, refresh_models
+from .devices import Devices
+from . import globalmem
+from .console import mount_console
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
@@ -74,6 +77,7 @@ def create_app(cfg: Config) -> FastAPI:
         live.red = Redactor(cfg.dictionary if cfg.redact else None, cfg.secret, live.store)
 
     rebuild()
+    live.devices = Devices((cfg.home or cfg.data_dir) / "devices.json")
     client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=15))
     access_log = cfg.data_dir / "access.jsonl"
     audit_log = cfg.data_dir / "audit.jsonl"
@@ -83,15 +87,20 @@ def create_app(cfg: Config) -> FastAPI:
     gate_header = os.environ.get("FERRY_TEST_REQUIRE_HEADER", "").lower()
     counter = {"commits": 0, "chats": 0}
 
-    def find_user(auth: str) -> str | None:
+    def identify(auth: str):
+        """(user, device) for a token: a main token gives (user, None), a device token (its user, the device)."""
         if not auth.startswith("Bearer "):
-            return None
-        given = auth[7:].encode("utf-8")
+            return None, None
+        raw = auth[7:]
+        given = raw.encode("utf-8")
         found = None
         for token, name in cfg.users.items():  # compare every token in constant time
             if hmac.compare_digest(given, token.encode("utf-8")):
                 found = name
-        return found
+        if found is not None:
+            return found, None
+        dev = live.devices.find(raw)
+        return (dev.user, dev) if dev else (None, None)
 
     def key(request: Request, ident: str) -> str:
         """Sessions and uploads live in each user's own namespace."""
@@ -111,6 +120,8 @@ def create_app(cfg: Config) -> FastAPI:
             return Response(status_code=302, headers={"location": "http://127.0.0.1:9100/proxycontrolwarn?url=ferry"})
         if request.url.path == "/health" or request.url.path.startswith("/admin"):
             return await call_next(request)  # the admin page has its own, local-only sign-in
+        if request.url.path == "/m" or request.url.path.startswith("/m/"):
+            return await call_next(request)  # the phone console has its own password sign-in
         if request.method == "GET" and request.url.path in ("/", "/favicon.ico", "/robots.txt"):
             # a browser lands here, e.g. after the company gateway's confirmation page: not an error, not logged
             if request.url.path != "/":
@@ -119,7 +130,9 @@ def create_app(cfg: Config) -> FastAPI:
                                 "<p style='font:16px system-ui;margin:40px'>Ferry 服务端在运行。可以关掉这个页面，回到 ferry 继续。</p>")
         body = await request.body()
         # Bearer for the OpenAI-style calls; x-api-key for the Anthropic-style ones (the Anthropic SDK sends that)
-        user = find_user(request.headers.get("authorization", "")) or find_user(f"Bearer {request.headers.get('x-api-key', '')}")
+        user, device = identify(request.headers.get("authorization", ""))
+        if user is None:
+            user, device = identify(f"Bearer {request.headers.get('x-api-key', '')}")
         proto = request.headers.get("x-ferry-protocol")
         status = 200
         if proto and proto.split(".")[0] != PROTOCOL:
@@ -135,9 +148,15 @@ def create_app(cfg: Config) -> FastAPI:
             resp = JSONResponse({"error": {"message": "invalid or missing Ferry token"}}, status_code=401)
         else:
             request.state.user = user
+            request.state.device = device
+            request.state.device_id = device.id if device else "main"
+            request.state.device_name = device.name if device else "主令牌"
+            live.devices.touch(device, user, request.headers.get("cf-connecting-ip")
+                               or (request.client.host if request.client else ""))
             resp = await call_next(request)
             status = resp.status_code
-        write(access_log, user=user, path=request.url.path, bytes=len(body), status=status)
+        write(access_log, user=user, **({"device": device.name} if device else {}), path=request.url.path,
+              bytes=len(body), status=status)
         return resp
 
     @app.get("/health")
@@ -346,6 +365,49 @@ def create_app(cfg: Config) -> FastAPI:
         reason = text.split(":", 1)[1].strip()[:200] if ":" in text else ("no answer from the judge" if not text else text[:200])
         write(audit_log, event="judge", user=request.state.user, model=m.id, tool=str(b.get("tool"))[:40], verdict=verdict)
         return {"verdict": verdict, "reason": reason, "model": m.id}
+
+    # ---------- global memory, shared by all of a user's computers (off unless switched on) ----------
+
+    def memory_off():
+        return JSONResponse({"error": {"message": "global memory is off on this Ferry server (admin page: 设备和手机)"}},
+                            status_code=403)
+
+    @app.get("/v1/ferry/memory")
+    async def memory_index(request: Request):
+        if not cfg.shared_memory:
+            return {"enabled": False, "index": ""}
+        return {"enabled": True, "index": globalmem.index(cfg.data_dir, request.state.user or "")}
+
+    @app.get("/v1/ferry/memory/{name}")
+    async def memory_read(name: str, request: Request):
+        if not cfg.shared_memory:
+            return memory_off()
+        text = globalmem.read(cfg.data_dir, request.state.user or "", name)
+        if text is None:
+            return JSONResponse({"error": {"message": f'no global memory named "{name}"'}}, status_code=404)
+        return {"name": globalmem.slug(name), "content": text}
+
+    @app.put("/v1/ferry/memory/{name}")
+    async def memory_save(name: str, request: Request):
+        if not cfg.shared_memory:
+            return memory_off()
+        b = json.loads(await request.body() or b"{}")
+        try:
+            n = globalmem.save(cfg.data_dir, request.state.user or "", name, str(b.get("description") or ""),
+                               str(b.get("content") or ""))
+        except ValueError as e:
+            return JSONResponse({"error": {"message": str(e)}}, status_code=400)
+        write(audit_log, event="memory_save", user=request.state.user, device=request.state.device_name, name=n)
+        return {"ok": True, "name": n}
+
+    @app.delete("/v1/ferry/memory/{name}")
+    async def memory_delete(name: str, request: Request):
+        if not cfg.shared_memory:
+            return memory_off()
+        had = globalmem.delete(cfg.data_dir, request.state.user or "", name)
+        write(audit_log, event="memory_delete", user=request.state.user, device=request.state.device_name,
+              name=globalmem.slug(name))
+        return {"ok": True, "existed": had}
 
     @app.post("/v1/ferry/have")
     async def have(request: Request):
@@ -646,5 +708,6 @@ def create_app(cfg: Config) -> FastAPI:
         return Response(last_err[1], status_code=last_err[0], media_type=last_err[2])
 
     from .admin import mount_admin
+    mount_console(app, cfg, live, audit_log)
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
     return app

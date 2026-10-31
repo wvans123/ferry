@@ -16,4 +16,4 @@ ferry-server = "ferry_server.__main__:main"
 include = ["ferry_server*"]
 
 [tool.setuptools.package-data]
-ferry_server = ["admin.html"]
+ferry_server = ["admin.html", "console.html"]

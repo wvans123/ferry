@@ -29,6 +29,8 @@ import httpx
 from . import PROTOCOL, __version__
 from . import presets as presets_mod
 from .config import (Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
+from . import globalmem
+from .console import set_console
 from .redact import Redactor
 from .store import Store
 
@@ -150,6 +152,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "token": next(iter(cfg.users)) if cfg.home else "", "zero_config": bool(cfg.home),
             "session_store": cfg.session_store, "redact": cfg.redact, "max_upstream_bytes": cfg.max_upstream_bytes,
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
+            "shared_memory": cfg.shared_memory, "console": cfg.console, "console_password": bool(cfg.console_password),
+            "console_url": f"{cfg.public_url}/m" if cfg.public_url else "",
             "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "judge_model": cfg.judge_model,
             "web": {"enabled": cfg.web_enabled, "allow": cfg.web_allow, "engine": cfg.web_engine, "proxy": cfg.web_proxy},
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
@@ -311,6 +315,79 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
 
     FILES = {"rules": lambda: (cfg.rules_dir / "_global.md") if cfg.rules_dir else None,
              "dictionary": lambda: cfg.dictionary}
+
+    # ---------- devices: one token per computer ----------
+
+    def login_url() -> str:
+        return cfg.public_url or f"http://127.0.0.1:{cfg.port}"
+
+    @app.get("/admin/api/devices")
+    async def list_devices(request: Request):
+        if not allowed(request):
+            return denied()
+        users = sorted(set(cfg.users.values()))
+        return {"devices": live.devices.listing(users), "users": users, "url": login_url()}
+
+    @app.post("/admin/api/devices")
+    async def add_device(request: Request):
+        if not allowed(request, True):
+            return denied()
+        b = json.loads(await request.body() or b"{}")
+        users = sorted(set(cfg.users.values()))
+        user = str(b.get("user") or users[0])
+        if user not in users:
+            return JSONResponse({"error": f"no user {user!r}"}, 400)
+        dev, token = live.devices.add(str(b.get("name") or ""), user)
+        with open(audit_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": round(time.time(), 3), "event": "device_add", "device": dev.name, "id": dev.id,
+                                "user": user}, ensure_ascii=False) + "\n")
+        return {"id": dev.id, "name": dev.name, "user": user, "token": token,
+                "login": f"ferry login {login_url()} {token}"}
+
+    @app.delete("/admin/api/devices/{dev_id}")
+    async def remove_device(dev_id: str, request: Request):
+        if not allowed(request, True):
+            return denied()
+        if not live.devices.remove(dev_id):
+            return JSONResponse({"error": "no such device (the main token is changed under 设置 → 令牌)"}, 404)
+        with open(audit_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": round(time.time(), 3), "event": "device_remove", "id": dev_id}) + "\n")
+        return {"ok": True}
+
+    # ---------- global memory and the phone console ----------
+
+    @app.put("/admin/api/remote")
+    async def put_remote(request: Request):
+        if not allowed(request, True):
+            return denied()
+        b = json.loads(await request.body() or b"{}")
+        if "shared_memory" in b:
+            cfg.shared_memory = bool(b["shared_memory"])
+        err = set_console(cfg, bool(b["console"]) if "console" in b else None,
+                          str(b["password"]) if b.get("password") else None)
+        if err:
+            return JSONResponse({"error": err}, 400)
+        save_settings(cfg)
+        return status()
+
+    @app.get("/admin/api/memory")
+    async def get_memory(request: Request):
+        if not allowed(request):
+            return denied()
+        return {"enabled": cfg.shared_memory, "items": globalmem.listing(cfg.data_dir)}
+
+    @app.delete("/admin/api/memory/{user}/{name}")
+    async def del_memory(user: str, name: str, request: Request):
+        if not allowed(request, True):
+            return denied()
+        return {"ok": globalmem.delete(cfg.data_dir, user, name)}
+
+    @app.get("/admin/api/clients")
+    async def get_clients(request: Request):
+        if not allowed(request):
+            return denied()
+        con = getattr(live, "console", None)
+        return {"clients": con.state() if con else []}
 
     @app.get("/admin/api/file/{name}")
     async def get_file(name: str, request: Request):
