@@ -73,6 +73,16 @@ test("always-allow answers persist per project", () => {
 	assert.equal(d("bash", { command: "npm test" }, "default", P.loadRules(cwd)), "ask");
 });
 
+test("web_render is asked like web_fetch, and one site rule covers both", () => {
+	assert.equal(d("web_render", { url: "https://app.example.com" }), "ask");
+	const rules = { allow: ["web_fetch(example.com)"], ask: [], deny: ["web_fetch(mail.example.com)"] };
+	assert.equal(d("web_render", { url: "https://app.example.com/x" }, "default", rules), "allow");
+	assert.equal(d("web_render", { url: "https://mail.example.com" }, "bypass", rules), "deny");
+	// the tools' readOnlyHint does not make them skip the per-site question
+	assert.equal(P.decide({ tool: "web_fetch", input: { url: "https://x.example" }, mode: "default", cwd: process.cwd(),
+		rules: { allow: [], ask: [], deny: [] }, readOnlyTool: () => true }).action, "ask");
+});
+
 test("web_fetch asks per site, rules cover subdomains", () => {
 	assert.equal(d("web_fetch", { url: "https://github.com/x" }), "ask");
 	assert.equal(d("web_fetch", { url: "https://github.com/x" }, "plan"), "ask"); // not refused in plan mode

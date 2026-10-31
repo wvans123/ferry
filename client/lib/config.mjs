@@ -34,6 +34,10 @@ export const DEFAULTS = {
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
+	render: true, // web_render: read JavaScript-built pages in a hidden browser (needs Electron: ferry install-electron)
+	electronPath: "", // Electron to use for web_render; empty = look in the usual places
+	renderWaitMs: 12000, // longest wait for a page in web_render to finish loading
+	blockedSites: [], // sites never opened by web_fetch / web_render (and their subdomains), e.g. ["mail.corp.com"]
 	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
@@ -56,6 +60,8 @@ export const SETTINGS = {
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
 	web: ["string", "where web_fetch and web_search run",
 		["client  this computer (the company proxy and gateway rules apply)", "server  the Ferry server, if its admin page allows it", "off"]],
+	render: ["boolean", "web_render: read pages built by JavaScript in a hidden browser (needs Electron: ferry install-electron)"],
+	blockedSites: ["list", "sites the agent may never open with web_fetch / web_render, subdomains included (e.g. your mail, chat and cloud drive)"],
 	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
@@ -71,6 +77,8 @@ export const ADVANCED_SETTINGS = {
 	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
 	notifyAfterSeconds: ["number", "how long a request must take before the notification"],
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
+	electronPath: ["string", "Electron for web_render (full path to electron.exe); empty = look in the usual places"],
+	renderWaitMs: ["number", "longest wait, in milliseconds, for a page in web_render to finish loading"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window"],
 	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],

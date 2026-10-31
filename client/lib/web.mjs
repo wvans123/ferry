@@ -9,6 +9,7 @@ import { basename } from "node:path";
 import { Type } from "typebox";
 import { PROTOCOL, serverHeaders } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
+import { blockedSite, electronFor, renderPage } from "./render.mjs";
 
 export { gatewayPage };
 
@@ -112,8 +113,33 @@ export async function fetchPage(url, offset = 0, signal) {
 	const isHtml = /html/i.test(ctype) || /^\s*<(!doctype html|html)/i.test(r.text.slice(0, 200));
 	const { title, text } = isHtml ? htmlToText(r.text, r.url) : { title: "", text: r.text };
 	const part = text.slice(offset, offset + PAGE_CHARS);
+	// a page whose content is built by JavaScript reads as (almost) nothing here; web_render can show it
+	const sparse = isHtml && text.replace(/\s+/g, " ").length < 300 && /<script\b/i.test(r.text);
 	return { url: r.url, status: r.res.status, title, chars: text.length, text: part,
-		next_offset: text.length > offset + PAGE_CHARS ? offset + PAGE_CHARS : null };
+		next_offset: text.length > offset + PAGE_CHARS ? offset + PAGE_CHARS : null, sparse };
+}
+
+// ---------- in a hidden browser (render.mjs) ----------
+
+const rendered = new Map(); // url -> text, so a long rendered page can be read on with offset without opening it again
+
+/** Like fetchPage, but the page's scripts run first (Electron, hidden). */
+export async function renderToText(cfg, url, offset = 0, signal) {
+	let full = offset > 0 ? rendered.get(url) : undefined;
+	if (!full) {
+		const r = await renderPage(cfg, url, { signal });
+		if (gatewayPage(r.url, r.html.length < 30000 ? r.html : "")) throw new GatewayError(r.url, url);
+		const fromHtml = htmlToText(r.html, r.url);
+		const inner = String(r.text ?? "").trim();
+		// htmlToText keeps links and headings; innerText wins when the markup hides most of the text (e.g. shadow DOM)
+		const text = fromHtml.text.length >= inner.length * 0.6 ? fromHtml.text : inner;
+		full = { url: r.url, title: r.title || fromHtml.title, text, ms: r.ms };
+		rendered.set(url, full);
+		if (rendered.size > 20) rendered.delete(rendered.keys().next().value);
+	}
+	const part = full.text.slice(offset, offset + PAGE_CHARS);
+	return { url: full.url, status: 200, title: full.title, chars: full.text.length, text: part, rendered: true,
+		next_offset: full.text.length > offset + PAGE_CHARS ? offset + PAGE_CHARS : null };
 }
 
 function bingTarget(u) {
@@ -170,6 +196,10 @@ const FetchParams = Type.Object({
 	url: Type.String({ description: "The full address, e.g. https://github.com/owner/repo" }),
 	offset: Type.Optional(Type.Number({ description: "Continue a long page from this character (next_offset of the previous call)" })),
 });
+const RenderParams = Type.Object({
+	url: Type.String({ description: "The full address, e.g. https://example.com/dashboard" }),
+	offset: Type.Optional(Type.Number({ description: "Continue a long page from this character (next_offset of the previous call)" })),
+});
 const SearchParams = Type.Object({
 	query: Type.String({ description: "What to search for" }),
 	count: Type.Optional(Type.Number({ description: "How many results, default 8" })),
@@ -188,6 +218,19 @@ export function createWeb(cfg) {
 		if (!mode) return;
 		const where = mode === "client" ? "Runs on this computer through its normal network (company proxy and gateway rules apply)."
 			: "Runs on the Ferry server.";
+		const canRender = mode === "client" && Boolean(electronFor(cfg));
+		const notBlocked = (url) => {
+			const hit = blockedSite(url, cfg.blockedSites);
+			if (hit) throw new Error(`${hit} is on the user's blocked sites list: do not open it, by any tool. Tell the user if the task needs it.`);
+		};
+		const show = (r) => {
+			const more = r.next_offset != null
+				? `\n\n[Page continues: ${r.chars - r.next_offset} more characters. Call ${r.rendered ? "web_render" : "web_fetch"} with offset ${r.next_offset}.]` : "";
+			return {
+				content: [{ type: "text", text: `${r.title ? `# ${r.title}\n` : ""}${r.url}${r.rendered ? " (rendered in a hidden browser)" : ""}\n\n${r.text}${more}` }],
+				details: { url: r.url, status: r.status, chars: r.chars, rendered: Boolean(r.rendered) },
+			};
+		};
 		pi.registerTool({
 			name: "web_fetch",
 			label: "Web page",
@@ -196,16 +239,36 @@ export function createWeb(cfg) {
 			parameters: FetchParams,
 			annotations: { readOnlyHint: true, openWorldHint: true },
 			async execute(_id, params, signal) {
-				const r = mode === "client" ? await fetchPage(params.url, params.offset ?? 0, signal)
+				notBlocked(params.url);
+				let r = mode === "client" ? await fetchPage(params.url, params.offset ?? 0, signal)
 					: await viaServer(cfg, "/v1/ferry/web/fetch", { url: params.url, offset: params.offset ?? 0 }, signal);
-				const more = r.next_offset != null
-					? `\n\n[Page continues: ${r.chars - r.next_offset} more characters. Call web_fetch with offset ${r.next_offset}.]` : "";
-				return {
-					content: [{ type: "text", text: `${r.title ? `# ${r.title}\n` : ""}${r.url}\n\n${r.text}${more}` }],
-					details: { url: r.url, status: r.status, chars: r.chars },
-				};
+				if (r.sparse && canRender && !params.offset) {
+					// built by JavaScript: open it in the hidden browser instead; if that fails, keep what we have
+					r = await renderToText(cfg, r.url, 0, signal).catch((e) => ({ ...r, text: `${r.text}\n\n[web_render failed: ${e.message}]` }));
+				} else if (r.sparse && mode === "client") {
+					r = { ...r, text: `${r.text}\n\n[This page is probably built by JavaScript, so it reads almost empty here. ` +
+						"web_render could show it, but Electron is not installed: the user can run `ferry install-electron`.]" };
+				}
+				return show(r);
 			},
 		});
+		if (canRender) {
+			pi.registerTool({
+				name: "web_render",
+				label: "Web page (browser)",
+				description: "Read a web page whose content is built by JavaScript: it is opened in a hidden browser on this " +
+					"computer, its scripts run, then its text is read. Slower than web_fetch; web_fetch already switches to this " +
+					"by itself when a page reads empty. Read only: nothing is clicked or typed, no logins or cookies are used. " +
+					"Long pages come in parts: call again with offset.",
+				promptSnippet: "Read a JavaScript-built web page through a hidden browser",
+				parameters: RenderParams,
+				annotations: { readOnlyHint: true, openWorldHint: true },
+				async execute(_id, params, signal) {
+					notBlocked(params.url);
+					return show(await renderToText(cfg, params.url, params.offset ?? 0, signal));
+				},
+			});
+		}
 		pi.registerTool({
 			name: "web_search",
 			label: "Web search",

@@ -5,6 +5,7 @@
 //   ferry login <server-url> <token> [--header "Name: value"]...   use a Ferry server on another machine
 //   ferry logout                       go back to the Ferry server on this computer
 //   ferry config [set <key> <value>]   show or change the client settings (memory, subagents, approvals...)
+//   ferry install-electron             put Electron into <FERRY_HOME>/electron, for web_render
 //
 //   ferry update [file.zip]            install the latest release from GitHub
 //   ferry install                      install from an unpacked Ferry folder (release zip or git checkout)
@@ -248,6 +249,13 @@ async function doctor() {
 		const webSetting = cfg.web ?? "client";
 		info(webSetting === "server" ? (r.body.web ? "web tools: on the server" : "web tools: set to run on the server, but the server has web access off")
 			: webSetting === "off" ? "web tools: off" : "web tools: on this computer, through its normal network (ferry config set web server|off to change)");
+		if (webSetting === "client" || webSetting === true || cfg.web === undefined) {
+			const { electronFor } = await import("../lib/render.mjs");
+			const el = cfg.render === false ? "" : electronFor(cfg);
+			info(cfg.render === false ? "web_render: off" : el ? `web_render: on (Electron at ${el})`
+				: "web_render: off, Electron not found (ferry install-electron, or ferry config set electronPath <electron.exe>)");
+			if (cfg.blockedSites?.length) info(`blocked sites: ${cfg.blockedSites.join(", ")}`);
+		}
 		for (const m of r.body.models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);
 		}
@@ -354,6 +362,7 @@ async function run(args) {
 	const { createJobs } = await import("../lib/jobs.mjs");
 	const { createProjectMcp } = await import("../lib/mcp.mjs");
 	const { webMode } = await import("../lib/web.mjs");
+	const { electronFor } = await import("../lib/render.mjs");
 	const status = async () => {
 		const t = Date.now();
 		const h = await getJson({ server: cfg.server, headers: cfg.headers }, "/health", 5000).catch((e) => ({ error: e }));
@@ -363,7 +372,7 @@ async function run(args) {
 			`Server: ${cfg.mode === "local" ? "on this computer" : cfg.server}  ${h.json ? `reachable in ${Date.now() - t} ms, version ${h.body.version}`
 				: `NOT reachable (${h.error?.cause?.code ?? h.error?.message ?? `HTTP ${h.status}`})`}`,
 			`Model: chosen by the server${m.routesTo ? `: ${m.routesTo} (${m.model})` : ""}`,
-			`Web tools: ${webMode(cfg) || "off"}   Browser: ${cfg.browser ? "on" : "off"}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
+			`Web tools: ${webMode(cfg) || "off"}   web_render: ${webMode(cfg) === "client" && electronFor(cfg) ? "on" : "off"}   Browser: ${cfg.browser ? "on" : "off"}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
 		];
 	};
 	const { createWeb } = await import("../lib/web.mjs");
@@ -564,6 +573,11 @@ else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | 
 else if (cmd === "mcp") await mcp(rest);
 else if (cmd === "team") await (await import("../lib/teamcli.mjs")).teamCli(rest, { ferry: fileURLToPath(import.meta.url) }).then(exit);
 else if (cmd === "doctor") await doctor().then(exit);
+else if (cmd === "install-electron") {
+	await applyProxy(loadConfig());
+	const ok = (await import("../lib/render.mjs")).installElectron(rest[0] || "latest");
+	process.exit(ok ? 0 : 1);
+}
 else if (cmd === "install") {
 	await applyProxy(loadConfig());
 	await install(VERSION, rest.includes("--client-only") || undefined);
@@ -591,6 +605,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry logout                      go back to a Ferry server on this computer
   ferry config                      show the client settings (memory, subagents, approvals, blocked paths...)
   ferry config set <key> <value>    change one, e.g. ferry config set memory false
+  ferry install-electron            Electron for web_render (reading pages built by JavaScript), about 100 MB
   ferry mcp list | import | add     MCP servers: see them, copy them from Claude Desktop / Cursor / Claude Code
   ferry team add <name> ...         add a Ferry agent to a Paperclip team (ferry team for details)
   ferry pkg install npm:<package>   add a pi package (extensions, skills, commands); ferry pkg list | remove

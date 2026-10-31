@@ -26,9 +26,9 @@ async function ask(ui, verdict, event, cwd, who) {
 	const isShell = tool === "bash" || tool === "powershell";
 	const isEdit = ["edit", "write", "office_edit", "office_create"].includes(tool);
 	const rules = isShell ? [...new Set((verdict.pending ?? verdict.segments ?? [input.command ?? ""]).map((s) => prefixRule(tool, s)))]
-		: tool === "web_fetch" ? [`web_fetch(${hostOf(input.url)})`] // one site
+		: tool === "web_fetch" || tool === "web_render" ? [`web_fetch(${hostOf(input.url)})`] // one site (covers both)
 		: [tool.startsWith("mcp__") ? `${tool.split("__").slice(0, 2).join("__")}__*` : tool]; // a whole MCP server
-	const scope = tool === "web_fetch" ? "user" : "project"; // a site you trust, you trust everywhere
+	const scope = tool === "web_fetch" || tool === "web_render" ? "user" : "project"; // a site you trust, you trust everywhere
 	const options = ["Allow once"];
 	if (!verdict.danger && !verdict.outside) {
 		if (isEdit) options.push("Allow all file changes from now on (auto-edit mode)");
