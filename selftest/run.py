@@ -688,11 +688,13 @@ def check_steer(root: Path, work: Path) -> None:
             os.waitpid(pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
-        ok = started and hinted and waiting and first and not_run and talking and second and back
+        raw = seen.decode("utf-8", "replace")
+        titled = "\x1b]0;⏳ STEERTEST: run the slow command · work · Ferry" in raw and "\x1b]0;STEERTEST" in raw
+        ok = started and hinted and waiting and first and not_run and talking and second and back and titled
         check("F53 工作中插话", ok, "agent 干活时按 Enter 排队、提示可立即插话；空行再按 Enter：正在跑的命令跑完、后面的工具调用不再执行，"
-              "agent 收到你的话和\"被打断\"说明；正在写长回答时立刻停下改方向；等待中按 Esc，话回到输入框不发出" if ok
+              "agent 收到你的话和\"被打断\"说明；正在写长回答时立刻停下改方向；等待中按 Esc，话回到输入框不发出；标签页标题显示对话内容、项目和 ⏳ 工作中" if ok
               else f"started={started} hinted={hinted} waiting={waiting} first={first} not_run={not_run} talking={talking} "
-                   f"second={second} back={back}: {plain(seen)[-600:]!r}")
+                   f"second={second} back={back} titled={titled}: {re.findall(r'\x1b]0;[^\x07]*', raw)[-5:]!r} {plain(seen)[-400:]!r}")
     finally:
         s.close()
         (work / "steer-wrong.txt").unlink(missing_ok=True)

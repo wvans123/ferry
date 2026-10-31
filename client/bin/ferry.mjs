@@ -324,6 +324,8 @@ async function run(args) {
 	await (await import("../lib/trim.mjs")).trimPi(); // a shorter "/" list
 	const { createSteer, installSteerKeys } = await import("../lib/steer.mjs");
 	await installSteerKeys(); // Enter on an empty line while the agent works: interrupt now
+	const { createTitle, installTitle } = await import("../lib/title.mjs");
+	await installTitle(); // the tab title: conversation · project · Ferry
 	const { createSyncProvider } = await import("../lib/sync.mjs");
 	const { createGuard, createModes, _state: permState } = await import("../lib/guard.mjs");
 	const { createBrand } = await import("../lib/brand.mjs");
@@ -403,6 +405,7 @@ async function run(args) {
 			{ name: "ferry-subagents", factory: createSubagents(cfg, {
 				makeSync: () => createSyncProvider(cfg, models, { purpose: "subagent" }) }), hidden: true },
 			{ name: "ferry-brand", factory: createBrand(cfg, VERSION, newerRelease(cfg)), hidden: true },
+			{ name: "ferry-title", factory: createTitle(permState), hidden: true },
 		],
 	});
 }

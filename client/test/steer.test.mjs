@@ -17,3 +17,11 @@ test("the note tells the agent it was interrupted, what it was doing, and to re-
 test("the input box of this pi version can be patched", async () => {
 	assert.equal(await installSteerKeys(), true);
 });
+
+test("the tab title names the conversation and the project, and shows when the agent works or waits", async () => {
+	const { ferryTitle, installTitle } = await import("../lib/title.mjs");
+	assert.equal(ferryTitle({ first: "fix the login bug", cwd: "/x/my-project", state: "working" }), "⏳ fix the login bug · my-project · Ferry");
+	assert.equal(ferryTitle({ name: "release", first: "fix", cwd: "/x/p", state: "asking" }), "❓ release · p · Ferry");
+	assert.equal(ferryTitle({ cwd: "/x/p", state: "idle" }), "new conversation · p · Ferry");
+	assert.equal(await installTitle(), true);
+});
