@@ -273,6 +273,10 @@ def decide_agent(msgs):
             return ("tool", "bash", {"command": "for i in $(seq 1 3000); do echo \"output line $i\"; done"})
         t = text_of(tools[-1])
         return ("text", f"BIG: saved={'Full text saved to' in t} size={len(t)} last={'output line 3000' in t}")
+    if "IMAGETEST" in first:  # the agent draws a picture with image_create
+        if not tools:
+            return ("tool", "image_create", {"prompt": "a small ferry on a river at dawn", "path": "images/ferry.png"})
+        return ("text", "IMAGE: " + text_of(tools[-1])[:120])
     if "TODOTEST" in first:
         if not tools:
             return ("tool", "todo", {"todos": [{"content": "step one", "status": "completed"},
@@ -421,6 +425,11 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(raw)
         with open(LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(body, ensure_ascii=False) + "\n")
+        if self.path.endswith("/images/generations"):  # an image model: a tiny real PNG
+            import base64
+            png = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                                                 "1f15c4890000000d49444154789c6360000002000154a24f5f0000000049454e44ae426082")).decode()
+            return self.send_json(200, {"data": [{"b64_json": png, "revised_prompt": body.get("prompt", "")}]})
         if self.path.endswith("/bark"):  # a phone notification (Bark)
             return self.send_json(200, {"code": 200, "message": "success"})
         if self.path.endswith("/v1/messages"):

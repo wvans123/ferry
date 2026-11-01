@@ -1,4 +1,5 @@
 // Ferry client configuration: <FERRY_HOME>/config.json (default ~/.ferry, or %USERPROFILE%\.ferry on Windows)
+import tls from "node:tls";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +50,8 @@ export const DEFAULTS = {
 	phoneConsole: true, // report this window's status to the server's phone console (only when the server has it on)
 	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
+	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
+	caFile: "", // a PEM file with more certificates to trust, e.g. the company proxy's, if the computer's own are not enough
 };
 
 /** The settings worth changing, shown by /config and `ferry config`: key -> [type, explanation, choices?]. */
@@ -89,6 +92,8 @@ export const ADVANCED_SETTINGS = {
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
 	phoneConsole: ["boolean", "show this computer's ferry on the phone console when the server has it on (status only, never files or the conversation)"],
+	systemCerts: ["boolean", "also trust the HTTPS certificates this computer trusts (needed when a company proxy checks HTTPS)"],
+	caFile: ["string", "a PEM file with more certificates to trust (full path), e.g. the company proxy's; empty = none"],
 };
 
 /** "400k", "1m", "1.5M", "200000" -> tokens; 0 when it is not a size. */
@@ -105,7 +110,32 @@ export function serverHeaders(cfg, extra = {}) {
 }
 
 /** Route every request (ours and pi's) through the proxy, if one is configured. Call before any fetch. */
+/**
+ * Trust what this computer trusts. Node ships its own list of certificate authorities and ignores the system's,
+ * so behind a company proxy that inspects HTTPS (with its own certificate, which the company installs on its
+ * computers) every request fails with "self-signed certificate in certificate chain" or "unable to get local issuer
+ * certificate", while the browser works. This adds the system's certificates (and caFile, if set) to Node's list;
+ * the proxy still sees and checks everything, as it does for the browser.
+ */
+export function trustCertificates(cfg) {
+	try {
+		const extra = [];
+		if (cfg.systemCerts !== false && typeof tls.getCACertificates === "function") extra.push(...tls.getCACertificates("system"));
+		if (cfg.caFile) {
+			const pem = readFileSync(cfg.caFile, "utf8");
+			extra.push(...(pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? []));
+		}
+		if (!extra.length || typeof tls.setDefaultCACertificates !== "function") return 0;
+		const all = new Set([...tls.getCACertificates("default"), ...extra]);
+		tls.setDefaultCACertificates([...all]);
+		return extra.length;
+	} catch {
+		return 0; // an unreadable caFile or an older Node: Node's own list stays
+	}
+}
+
 export async function applyProxy(cfg) {
+	trustCertificates(cfg);
 	if (cfg.proxy) {
 		// An explicit setting wins over whatever the machine has, in both spellings (pi reads them too)
 		for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) process.env[k] = cfg.proxy;

@@ -44,5 +44,24 @@ export async function trimPi() {
 	} catch {
 		// laid out differently: pi's own behaviour stays
 	}
+	try {
+		// Only the Ferry server's models: pi also lists every built-in provider it finds a key for on this computer
+		// (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...), which Ferry never uses. /model, Ctrl+L and --list-models show
+		// what the server offers, nothing else.
+		const { ModelRuntime } = await import(new URL("./core/model-runtime.js", index).href);
+		const P = ModelRuntime.prototype;
+		const onlyFerry = (list) => (Array.isArray(list) ? list.filter((m) => m?.provider === "ferry") : list);
+		const snap = P.getAvailableSnapshot;
+		P.getAvailableSnapshot = function getAvailableSnapshot(...a) {
+			return onlyFerry(snap.apply(this, a));
+		};
+		const avail = P.getAvailable;
+		P.getAvailable = async function getAvailable(...a) {
+			return onlyFerry(await avail.apply(this, a));
+		};
+		result.onlyFerry = true;
+	} catch {
+		// laid out differently: pi's list stays
+	}
 	return result;
 }

@@ -158,7 +158,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "web": {"enabled": cfg.web_enabled, "allow": cfg.web_allow, "engine": cfg.web_engine, "proxy": cfg.web_proxy},
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
-            "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "expose": cfg.expose_models},
+            "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "expose": cfg.expose_models},
             "models": [{"id": m.id, "model": m.model, "base_url": m.base_url, "key_env": m.api_key_env,
                         "provider": m.provider, "ready": m.ready} for m in cfg.models.values()],
             "models_file": str(cfg.models_file or ""), "platform": sys.platform,
@@ -179,7 +179,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         width = 60 if minutes <= 180 else 600
         buckets: dict[int, dict] = defaultdict(lambda: {"in": 0, "up": 0, "requests": 0, "chats": 0})
         totals = {"in": 0, "up": 0, "requests": 0, "chats": 0, "errors": 0, "tokens_in": 0, "tokens_out": 0,
-                  "masked": 0, "trimmed": 0}
+                  "masked": 0, "trimmed": 0, "kinds": {"model": 0, "upload": 0, "status": 0, "other": 0}}
         for a in _tail_jsonl(access_log):
             ts = a.get("ts", 0)
             if ts < start:
@@ -189,6 +189,11 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             b["requests"] += 1
             totals["in"] += a.get("bytes", 0)
             totals["requests"] += 1
+            path = str(a.get("path", ""))
+            kind = ("model" if path.startswith(("/v1/chat/", "/anthropic/")) else
+                    "upload" if path.startswith(("/v1/ferry/commit", "/v1/ferry/upload", "/v1/ferry/have")) else
+                    "status" if path.startswith("/v1/ferry/status") else "other")
+            totals["kinds"][kind] += 1
             # errors of Ferry's own API; a browser asking for /favicon.ico is not one
             if a.get("status", 200) >= 400 and a.get("status") != 409 and str(a.get("path", "")).startswith(("/v1/", "/anthropic/")):
                 totals["errors"] += 1
@@ -462,6 +467,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         for p in cfg.providers.values():
             key = p.api_key
             views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url, "api": p.api,
+                           "max_concurrent": p.max_concurrent,
                            "api_key_env": p.api_key_env, "no_key": p.no_key,
                            "key_tail": key[-4:] if key else "", "key_source": (
                                "env" if p.api_key_env and os.environ.get(p.api_key_env) else
@@ -496,7 +502,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         from .pool import groups
         return {"providers": provider_views(), "editable": bool(cfg.models_file), "groups": groups(cfg),
                 "pool": live.pool.state(),
-                "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "expose": cfg.expose_models}}
+                "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "expose": cfg.expose_models}}
 
     @app.post("/admin/api/providers/models")
     async def list_remote_models(request: Request):
@@ -553,7 +559,10 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                      "api_key_env": (p.get("api_key_env") or "").strip(),
                      "drop_params": pre.get("drop_params", ["store"]),
                      # a relay of your own may speak Claude's Messages API too: then caching and thinking work natively
-                     "api": p.get("api") if pre.get("custom") and p.get("api") in ("openai", "anthropic") else pre.get("api", "openai"),
+                     # an OpenAI-style service may be asked through its Responses API instead (openai-responses)
+                     "api": p.get("api") if (pre.get("custom") and p.get("api") in ("openai", "anthropic", "openai-responses")) or
+                            (pre.get("api", "openai") == "openai" and p.get("api") in ("openai", "openai-responses")) else pre.get("api", "openai"),
+                     "max_concurrent": max(0, int(p.get("max_concurrent") or 0)),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:
                 return JSONResponse({"error": f"{entry['name']}：接口地址不能为空"}, 400)
@@ -585,6 +594,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         ids = [m["id"] for m in models]
         routing = {"default": r.get("default") if r.get("default") in ids else ids[0],
                    "summary": r.get("summary") if r.get("summary") in ids else "",
+                   "image": r.get("image") if r.get("image") in ids else "",
                    "expose": bool(r.get("expose", True))}
         for gone in set(keys) - {p["id"] for p in providers}:
             keys.pop(gone)

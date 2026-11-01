@@ -223,6 +223,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         <div class="grid3">
           <div><label class="f" for="rDefault">默认模型</label><select id="rDefault"></select></div>
           <div><label class="f" for="rSummary">写上下文摘要用</label><select id="rSummary"></select></div>
+          <div><label class="f" for="rImage">生成图片用</label><select id="rImage"></select></div>
           <div><label class="f">&nbsp;</label><label class="switch"><input type="checkbox" id="rExpose"> 工作电脑可以用 /model 自己挑</label></div>
         </div>
         <div class="row" style="margin-top:14px"><button class="btn primary" id="saveRouting">保存</button><span class="msg" id="routingMsg"></span></div>
@@ -465,8 +466,13 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       <p class="muted" style="font-size:13px;margin:6px 0 0">接口地址填到 /v1 这一级即可，会自动接上 /chat/completions；以 /chat/completions 结尾的地址按原样使用。</p>
       <div id="apiWrap" style="margin-top:12px" hidden>
         <label class="f" for="fApi">接口格式</label>
-        <select id="fApi"><option value="openai">OpenAI 兼容（/chat/completions）</option><option value="anthropic">Anthropic（Claude 原生 /v1/messages）</option></select>
-        <p class="muted" style="font-size:13px;margin:6px 0 0">中转的是 Claude、并且也支持 /v1/messages 时选 Anthropic：提示词缓存和思考都走原生方式，花费少很多。不确定就保存后点"测试"，它会告诉你。</p>
+        <select id="fApi"><option value="openai">OpenAI 兼容（/chat/completions）</option><option value="anthropic">Anthropic（Claude 原生 /v1/messages）</option><option value="openai-responses">OpenAI Responses（/v1/responses）</option></select>
+        <p class="muted" style="font-size:13px;margin:6px 0 0">中转的是 Claude、并且也支持 /v1/messages 时选 Anthropic：提示词缓存和思考都走原生方式，花费少很多。只支持 /v1/responses 的模型（或想用 OpenAI 新接口）选 OpenAI Responses。不确定就保存后点"测试"，它会告诉你。</p>
+      </div>
+      <div style="margin-top:12px">
+        <label class="f" for="fConc">同时请求上限</label>
+        <input type="number" id="fConc" min="0" step="1" style="width:110px" placeholder="不限">
+        <p class="muted" style="font-size:13px;margin:6px 0 0">这个账号同时最多处理几个请求，多出来的在服务端排队。中转（比如 kiro）一忙就报 429/502 时设成 1～2；空着或 0 表示不限。另外服务端遇到 429/502/503 会自己等一会儿再试（最多约 45 秒），不再直接把错误甩给电脑。</p>
       </div>
       <div style="margin-top:14px" id="keyWrap">
         <label class="f" for="fKey">API Key <span id="keyNeed" style="color:var(--bad)">（必填）</span></label>
@@ -556,7 +562,9 @@ async function loadOverview() {
   $("ovLead").innerHTML = `已运行 ${up}，默认模型 <b>${esc(S.routing.default)}</b>` + (notReady.length ? `；<span style="color:var(--bad)">${notReady.length} 个模型缺少 Key，到"服务商和模型"里补上</span>` : "。");
   const t = await api("traffic?minutes=" + minutes);
   const k = t.totals, span = { 60: "近 1 小时", 360: "近 6 小时", 1440: "近 24 小时" }[minutes];
-  $("ovSummary").innerHTML = k.requests ? `${span}：<b>${k.requests}</b> 个请求，<b>${k.chats}</b> 次模型调用，收到 <b>${bytes(k.in)}</b>，发给模型 <b>${bytes(k.up)}</b>` + (k.errors ? `，<span style="color:var(--bad)">${k.errors} 次出错</span>` : "")
+  const kd = k.kinds || {};
+  const parts = kd.model !== undefined ? `（其中模型调用 ${kd.model}、上传对话 ${kd.upload}、手机控制台状态上报 ${kd.status}、其他 ${kd.other}）` : "";
+  $("ovSummary").innerHTML = k.requests ? `${span}：<b>${k.requests}</b> 个请求${parts}，<b>${k.chats}</b> 次模型调用，收到 <b>${bytes(k.in)}</b>，发给模型 <b>${bytes(k.up)}</b>` + (k.errors ? `，<span style="color:var(--bad)">${k.errors} 次出错</span>` : "")
     : `${span}没有请求。工作电脑连上并开始对话后，这里会有变化。`;
   drawChart(t);
   $("ovRecent").innerHTML = t.recent.slice(0, 6).map((a) => `<tr><td class="num">${hhmm(a.ts)}</td><td>${esc(a.project || "–")}</td><td>${esc(a.model)}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${secs(a.ms)}</td><td>${result(a)}</td></tr>`).join("")
@@ -588,7 +596,8 @@ async function loadProviders() {
   P = await api("providers");
   const all = P.providers.flatMap((p) => p.models.map((m) => ({ id: m.id, label: `${m.model}（${p.name}）` })));
   const opts = (sel, extra) => (extra ? `<option value="">${extra}</option>` : "") + all.map((o) => `<option value="${esc(o.id)}" ${o.id === sel ? "selected" : ""}>${esc(o.label)}</option>`).join("");
-  $("rDefault").innerHTML = opts(P.routing.default); $("rSummary").innerHTML = opts(P.routing.summary, "和默认模型一样");
+  $("rDefault").innerHTML = opts(P.routing.default); $("rSummary").innerHTML = opts(P.routing.summary, "和对话用的模型一样（推荐）");
+  $("rImage").innerHTML = opts(P.routing.image, "不用（agent 不能生成图片）");
   $("rExpose").checked = P.routing.expose;
   $("provList").innerHTML = P.providers.map((p, i) => {
     const key = p.no_key ? '<span class="tag good">不需要 Key</span>'
@@ -610,9 +619,9 @@ async function loadProviders() {
   for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => removeProvider(+b.dataset.del);
 }
 function payload(list, routing) {
-  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api,
+  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api, max_concurrent: p.max_concurrent || 0,
     models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, ...(m.price ? { price: m.price } : {}) })) })),
-    routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, expose: $("rExpose").checked } };
+    routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, image: $("rImage").value, expose: $("rExpose").checked } };
 }
 async function saveAll(list, routing) { P = await api("providers", "PUT", payload(list, routing)); }
 $("saveRouting").onclick = async () => { try { await saveAll(P.providers); say("routingMsg", "已保存，下一次请求生效"); loadProviders(); } catch (e) { say("routingMsg", e.message, false); } };
@@ -652,7 +661,9 @@ function fillForm(pre, prov) {
   $("pickStep").hidden = true; $("formStep").hidden = false; $("dlgFoot").hidden = false; $("dlgBack").hidden = !!prov;
   $("fName").value = prov?.name || pre.name; $("fBase").value = prov?.base_url || pre.base_url;
   $("fBase").readOnly = !pre.custom && !prov; $("fKey").value = ""; $("fKey").type = "password";
-  $("apiWrap").hidden = !pre.custom; $("fApi").value = prov?.api || pre.api || "openai";
+  $("apiWrap").hidden = !pre.custom && (pre.api || "openai") !== "openai"; $("fApi").value = prov?.api || pre.api || "openai";
+  $("fApi").querySelector('option[value="anthropic"]').hidden = !pre.custom;
+  $("fConc").value = prov?.max_concurrent ? prov.max_concurrent : "";
   $("keyWrap").hidden = !!pre.no_key;
   const needKey = !pre.no_key && !(prov && (prov.key_tail || prov.key_source));
   $("keyNeed").hidden = !needKey;
@@ -707,7 +718,7 @@ $("dlgSave").onclick = async () => {
   const models = ED.models.filter((m) => m.on);
   if (!models.length) return say("dlgMsg", "至少勾选一个模型", false);
   const entry = { id: ED.id, name: $("fName").value.trim() || pre.name, preset: pre.id, base_url: base, api_key_env: ED.api_key_env, key,
-    ...(pre.custom ? { api: $("fApi").value } : {}),
+    ...(!$("apiWrap").hidden ? { api: $("fApi").value } : {}), max_concurrent: Math.max(0, Math.floor(+$("fConc").value || 0)),
     models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192,
       ...(m.price ? { price: m.price } : {}) })) };
   const list = P.providers.slice();

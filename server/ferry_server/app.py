@@ -37,7 +37,9 @@ from .console import mount_console
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
-from .pool import RETRY_STATUSES, Pool, groups
+from .fit import anthropic_answer, openai_answer, summarize_in_parts, summary_prompt
+from .responses import chat_lines, from_responses, responses_url, to_responses
+from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
                      restore_cache_marks, wants_cache_marks)
 from .redact import Redactor
@@ -68,7 +70,25 @@ def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
     # session store and redactor can be swapped at run time from the admin page (settings, word list)
     live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20), pool=Pool(),
-                           no_marks=set())  # models whose relay refused cache markers
+                           no_marks=set(),  # models whose relay refused cache markers
+                           fits={},         # model id -> biggest request (estimated tokens) it has answered
+                           limits={})       # model id -> size it refused although configured for more (see fit.py)
+
+    def limit_of(m) -> int:
+        """The context size to work with: the configured one, or less when the provider refused smaller requests."""
+        return min(m.context_window, live.limits.get(m.id) or m.context_window)
+
+    def too_big(m, status: int, tokens: int) -> bool:
+        """A failure that most likely means "too big": bigger than anything this model has answered (it has answered
+        before), and an answer a relay gives for that (kiro: a bare 502)."""
+        ok = live.fits.get(m.id, 0)
+        return status in (400, 413, 422, 500, 502, 504) and ok > 0 and tokens > max(ok * 1.02, m.context_window * 0.3)
+
+    def learn_limit(m, tokens: int) -> None:
+        new = int(tokens * 0.97)
+        if new < limit_of(m):
+            live.limits[m.id] = new
+            write(audit_log, event="limit_learned", model=m.id, tokens=new, configured=m.context_window)
 
     def rebuild(store_too: bool = True) -> None:
         if store_too or live.store is None:
@@ -164,7 +184,7 @@ def create_app(cfg: Config) -> FastAPI:
         return {"ok": True, "version": __version__, "protocol": PROTOCOL}
 
     def describe(m, mid=None) -> dict:
-        return {"id": mid or m.id, "contextWindow": m.context_window, "maxTokens": m.max_tokens,
+        return {"id": mid or m.id, "contextWindow": limit_of(m), "maxTokens": m.max_tokens,
                 "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision,
                 "price": m.price}
 
@@ -181,25 +201,49 @@ def create_app(cfg: Config) -> FastAPI:
         d = cfg.models[cfg.default_model]
         auto = {**describe(d, "auto"), "routesTo": d.id}
         if cfg.summary_model:  # a summary request carries the whole history, so it must fit the smaller window
-            auto["contextWindow"] = min(d.context_window, cfg.models[cfg.summary_model].context_window)
+            auto["contextWindow"] = min(limit_of(d), limit_of(cfg.models[cfg.summary_model]))
             auto["summaryTo"] = cfg.summary_model
         # a model several providers offer is listed once; the server spreads conversations over the providers
         shared = groups(cfg)
         listed = [auto]
         for m in cfg.models.values() if cfg.expose_models else []:
+            if m.id == cfg.image_model and m.id != d.id:
+                continue  # draws pictures (image_create), does not chat
             ids = shared.get(m.id)
             if ids and any(x["id"] in ids for x in listed[1:]):
                 continue  # another provider's copy of this model is listed already
             row = describe(m)
             if ids:
-                row["contextWindow"] = min(cfg.models[i].context_window for i in ids)
+                row["contextWindow"] = min(limit_of(cfg.models[i]) for i in ids)
                 row["providers"] = len(ids)
             listed.append(row)
         if shared.get(d.id):
             auto["providers"] = len(shared[d.id])
-            auto["contextWindow"] = min(auto["contextWindow"], *(cfg.models[i].context_window for i in shared[d.id]))
+            auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
         return {"models": listed, "sessionStore": cfg.session_store, "web": cfg.web_enabled,
-                "features": ["refs"] if cfg.session_store != "none" else []}
+                "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])}
+
+    @app.post("/v1/ferry/image")
+    async def image(request: Request):
+        """The agent's image_create tool: a picture from a description, by the model routing.image names."""
+        from .images import create_image
+        if not cfg.image_model:
+            return JSONResponse({"error": "no image model: choose one on the admin page (生成图片用)"}, status_code=400)
+        b = json.loads(await request.body() or b"{}")
+        m = cfg.models[cfg.image_model]
+        t = time.time()
+        try:
+            out = await create_image(client, m, str(b.get("prompt") or ""), str(b.get("size") or "auto"),
+                                     [str(x) for x in (b.get("images") or [])][:4])
+        except httpx.HTTPStatusError as e:
+            write(audit_log, event="image", user=request.state.user, model=m.id, status=e.response.status_code)
+            return JSONResponse({"error": f"{m.id}: HTTP {e.response.status_code} {e.response.text[:300]}"}, status_code=502)
+        except (httpx.HTTPError, ValueError) as e:
+            write(audit_log, event="image", user=request.state.user, model=m.id, status=502)
+            return JSONResponse({"error": f"{m.id}: {type(e).__name__}: {e}"[:400]}, status_code=502)
+        write(audit_log, event="image", user=request.state.user, model=m.id, status=200, ms=int((time.time() - t) * 1000),
+              images=len(out["images"]))
+        return out
 
     async def web_call(request: Request, kind: str):
         from . import web
@@ -292,6 +336,8 @@ def create_app(cfg: Config) -> FastAPI:
                 body = adapt_params({"model": m.id, "max_completion_tokens": 32,
                                      "messages": [{"role": "user", "content": "Reply with OK"}]}, m)
                 url, headers = chat_url(m.base_url), {"Content-Type": "application/json"}
+                if m.api == "openai-responses":
+                    body, url = to_responses(body), responses_url(m.base_url)
                 if m.api_key:
                     headers["Authorization"] = f"Bearer {m.api_key}"
             try:
@@ -495,9 +541,27 @@ def create_app(cfg: Config) -> FastAPI:
             return JSONResponse({"error": {"message": f"the Ferry server has no API key for model {model.id}: {how}"}},
                                 status_code=503)
         tokens_est = estimate_tokens(payload)
-        if tokens_est > model.context_window * 1.15:  # the client thinks the model holds more than it does
+        limit = limit_of(model)
+        if purpose == "summary" and tokens_est > limit * 0.9 and summary_prompt(payload.get("messages") or []):
+            # the history to summarise does not fit the model in one request: the same model summarises it in parts
+            sys_text, user_text = summary_prompt(payload["messages"])
+            ticket = await take_turn(user or "")
+            try:
+                text, n = await summarize_in_parts(client, model, sys_text, user_text, limit)
+            except httpx.HTTPError as e:
+                write(audit_log, event="chat", user=user, project=project, model=model.id, purpose=purpose, status=502,
+                      error=f"summary in parts: {type(e).__name__}"[:200])
+                return JSONResponse({"error": {"message": f"summarising in parts failed: {type(e).__name__}"}}, status_code=502)
+            finally:
+                ticket.release()
+            write(audit_log, event="chat", user=user, project=project, model=model.id, purpose=purpose, status=200,
+                  parts=n, tokens_in=tokens_est, ms=int((time.time() - started) * 1000))
+            body, kind = openai_answer(live.red.unmask(text, user), model.model, bool(payload.get("stream")))
+            return Response(body, media_type=kind)
+        if tokens_est > min(model.context_window * 1.15, live.limits.get(model.id) or 10**12):
+            # the client thinks the model holds more than it does (or the provider refused this size before)
             write(audit_log, event="chat", user=user, project=project, model=model.id, status=400, overflow=tokens_est)
-            return JSONResponse({"error": {"message": overflow_message(tokens_est, model.context_window, model.id),
+            return JSONResponse({"error": {"message": overflow_message(tokens_est, limit, model.id),
                                            "type": "invalid_request_error", "code": "context_length_exceeded"}},
                                 status_code=400)
         call_id = secrets.token_hex(4)
@@ -511,6 +575,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         last_err: tuple[int, bytes, str] = (502, b'{"error":{"message":"no provider answered"}}', "application/json")
         refused_marks = False
+        waited, again = 0.0, 0  # time spent waiting for a busy provider, and how many times we asked it again
         attempts = []
         for model in tries:  # with cache markers first where they help; the same without if the relay refuses them
             if wants_cache_marks(model) and model.id not in live.no_marks:
@@ -521,6 +586,8 @@ def create_app(cfg: Config) -> FastAPI:
             if not marks and n and tries[n - 1][0] is model and tries[n - 1][1] and not refused_marks:
                 continue  # the marked request got an answer that was not about the markers
             sent = adapt_params(add_cache_marks(payload) if marks else payload, model)
+            if model.api == "openai-responses":  # the provider speaks the Responses API: translate (responses.py)
+                sent = to_responses(sent)
             body = json.dumps(sent, ensure_ascii=False).encode("utf-8")
             if cfg.record_details and n == 0:
                 live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
@@ -530,10 +597,11 @@ def create_app(cfg: Config) -> FastAPI:
             headers = {"Content-Type": "application/json"}
             if model.api_key:
                 headers["Authorization"] = f"Bearer {model.api_key}"
-            url = chat_url(model.base_url)
-            more = n + 1 < len(tries)
+            url = responses_url(model.base_url) if model.api == "openai-responses" else chat_url(model.base_url)
+            # another provider to try next (the same model without cache markers is only tried when they were refused)
+            more = any(t[0] is not model for t in tries[n + 1:])
             refused_marks = False
-            live.pool.start(model.id)
+            await live.pool.enter(cfg, model)
             try:
                 if not payload.get("stream"):
                     r = await client.post(url, content=body, headers=headers)
@@ -545,6 +613,12 @@ def create_app(cfg: Config) -> FastAPI:
                 write(audit_log, **audit, status=502, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
                 last_err = (502, json.dumps({"error": {"message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
                 if more:
+                    continue
+                if waited < RETRY_WAIT_S:  # the only provider: once more after a short wait
+                    d = retry_delay(None, again)
+                    await asyncio.sleep(d)
+                    waited, again = waited + d, again + 1
+                    tries.append((model, marks))
                     continue
                 break
             if r.status_code != 200:
@@ -561,20 +635,40 @@ def create_app(cfg: Config) -> FastAPI:
                 if more and r.status_code in RETRY_STATUSES:
                     live.pool.failed(model.id, r.status_code)
                     continue
+                big = too_big(model, r.status_code, tokens_est)
+                if not more and r.status_code in TRANSIENT_STATUSES and waited < RETRY_WAIT_S and not (big and again):
+                    # the only (or last) provider is busy: wait as it asks (Retry-After) or a little, then once more,
+                    # instead of handing the error to the client, which would ask again at once
+                    d = retry_delay(r.headers, again)
+                    write(audit_log, event="upstream_wait", model=model.id, status=r.status_code, seconds=d)
+                    await asyncio.sleep(d)
+                    waited, again = waited + d, again + 1
+                    tries.append((model, marks))
+                    continue
+                if not more and big:  # refused because it is too big: the client summarises its history and goes on
+                    learn_limit(model, tokens_est)
+                    done()
+                    return JSONResponse({"error": {"message": overflow_message(tokens_est, limit_of(model), model.id),
+                                                   "type": "invalid_request_error", "code": "context_length_exceeded"}},
+                                        status_code=400)
                 break
             live.pool.served(conv, model.id)
+            live.fits[model.id] = max(live.fits.get(model.id, 0), tokens_est)
             if not payload.get("stream"):
                 live.pool.end(model.id)
-                tokens = normalize(r.json().get("usage") or {})
+                answer = from_responses(r.json(), model.model) if model.api == "openai-responses" else r.json()
+                tokens = normalize(answer.get("usage") or {})
                 write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000),
                       tokens=tokens, cost=usage_cost(tokens, model.price))
                 done()
-                return JSONResponse(restore_message(r.json(), live.red, user))
+                return JSONResponse(restore_message(answer, live.red, user))
             usage: dict = {}
 
             async def relay(upstream=r, model=model, audit=audit):
                 try:
-                    async for b in restore_sse(upstream.aiter_lines(), live.red, usage, user):
+                    lines = (chat_lines(upstream.aiter_lines(), model.model) if model.api == "openai-responses"
+                             else upstream.aiter_lines())
+                    async for b in restore_sse(lines, live.red, usage, user):
                         yield b
                 finally:
                     live.pool.end(model.id)
@@ -632,7 +726,24 @@ def create_app(cfg: Config) -> FastAPI:
                 system = [{"type": "text", "text": system}]
             payload["system"] = [*system, {"type": "text", "text": f"<server-rules>\n{rules}\n</server-rules>"}]
         tokens_est = estimate_tokens(payload)
-        if tokens_est > model.context_window * 1.15:
+        limit = limit_of(model)
+        if purpose == "summary" and tokens_est > limit * 0.9:
+            sys_blocks = payload.get("system") or ""
+            sys_text = sys_blocks if isinstance(sys_blocks, str) else "".join(b.get("text", "") for b in sys_blocks if isinstance(b, dict))
+            sp = summary_prompt([{"role": "system", "content": sys_text}, *(payload.get("messages") or [])])
+            if sp:
+                ticket = await take_turn(request.state.user or "")
+                try:
+                    text, n = await summarize_in_parts(client, model, sp[0], sp[1], limit)
+                except httpx.HTTPError as e:
+                    return JSONResponse({"type": "error", "error": {"type": "api_error",
+                                         "message": f"summarising in parts failed: {type(e).__name__}"}}, status_code=502)
+                finally:
+                    ticket.release()
+                write(audit_log, event="chat", user=request.state.user, project=project, model=model.id, purpose=purpose,
+                      status=200, parts=n, tokens_in=tokens_est, ms=int((time.time() - started) * 1000))
+                return Response(anthropic_answer(text, model.model), media_type="text/event-stream")
+        if tokens_est > min(model.context_window * 1.15, live.limits.get(model.id) or 10**12):
             write(audit_log, event="chat", user=request.state.user, project=project, model=model.id, status=400, overflow=tokens_est)
             return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
                                  "message": f"prompt is too long: {tokens_est} tokens > {model.context_window} maximum "
@@ -648,6 +759,8 @@ def create_app(cfg: Config) -> FastAPI:
 
         last_err: tuple[int, bytes, str] = (502, b'{"type":"error","error":{"type":"api_error","message":"no provider answered"}}',
                                             "application/json")
+        tries = list(tries)
+        waited, again = 0.0, 0
         for n, model in enumerate(tries):
             one = dict(payload)
             one["model"] = model.model
@@ -665,7 +778,7 @@ def create_app(cfg: Config) -> FastAPI:
             if request.headers.get("anthropic-beta"):
                 headers["anthropic-beta"] = request.headers["anthropic-beta"]
             more = n + 1 < len(tries)
-            live.pool.start(model.id)
+            await live.pool.enter(cfg, model)
             try:
                 upstream = await client.send(client.build_request("POST", anthropic_url(model.base_url), content=body,
                                                                   headers=headers), stream=True)
@@ -677,6 +790,12 @@ def create_app(cfg: Config) -> FastAPI:
                             "message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
                 if more:
                     continue
+                if waited < RETRY_WAIT_S:
+                    d = retry_delay(None, again)
+                    await asyncio.sleep(d)
+                    waited, again = waited + d, again + 1
+                    tries.append(model)
+                    continue
                 break
             if upstream.status_code != 200:
                 err = await upstream.aread()
@@ -687,8 +806,23 @@ def create_app(cfg: Config) -> FastAPI:
                 if more and upstream.status_code in RETRY_STATUSES:
                     live.pool.failed(model.id, upstream.status_code)
                     continue
+                big = too_big(model, upstream.status_code, tokens_est)
+                if not more and upstream.status_code in TRANSIENT_STATUSES and waited < RETRY_WAIT_S and not (big and again):
+                    d = retry_delay(upstream.headers, again)
+                    write(audit_log, event="upstream_wait", model=model.id, status=upstream.status_code, seconds=d)
+                    await asyncio.sleep(d)
+                    waited, again = waited + d, again + 1
+                    tries.append(model)
+                    continue
+                if not more and big:
+                    learn_limit(model, tokens_est)
+                    done()
+                    return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
+                                         "message": f"prompt is too long: {tokens_est} tokens > {limit_of(model)} maximum "
+                                                    "(the history will be summarised)"}}, status_code=400)
                 break
             live.pool.served(conv, model.id)
+            live.fits[model.id] = max(live.fits.get(model.id, 0), tokens_est)
             seen = AnthropicSSEUsage()
 
             async def relay(upstream=upstream, model=model, audit=audit, seen=seen):

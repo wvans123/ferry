@@ -1,7 +1,9 @@
 // `ferry team`: set up Ferry members in a Paperclip team from the command line.
 // Everything here can also be done in Paperclip's web page; this only saves the clicking and gets the settings right
 // (the pi adapter, the legacy runner so the command is honoured, ferry as the command, a Ferry model).
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
 import { readModelsCache } from "./config.mjs";
 
@@ -39,9 +41,41 @@ export function teamCli(args, { ferry } = {}) {
 	});
 }
 
+export const PAPERCLIP_VERSION = "2026.1023.0"; // the version Ferry was tested with; --version latest for the newest
+// Paperclip's statistics and announcements fetched from the internet: off, this is a work computer
+export const QUIET_ENV = { PAPERCLIP_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1", PAPERCLIP_ANNOUNCEMENTS_ENABLED: "false" };
+
+/** Node.js new enough for Paperclip (24.11 or later)? */
+export function nodeOk(version = process.version) {
+	const [maj, min] = version.replace(/^v/, "").split(".").map(Number);
+	return maj > 24 || (maj === 24 && min >= 11);
+}
+
+/** `ferry team start`: Paperclip on this computer, set up the first time, in this window (Ctrl+C stops it). */
+function start(opts) {
+	if (!nodeOk()) {
+		console.error(`Paperclip needs Node.js 24.11 or newer; this is ${process.version}. Install the current Node.js LTS ` +
+			"(https://nodejs.org, or your company's software center), then run ferry team start again. Ferry works on it too.");
+		process.exitCode = 1;
+		return;
+	}
+	const version = String(opts.version ?? PAPERCLIP_VERSION);
+	const configured = existsSync(join(homedir(), ".paperclip", "instances", "default", "config.json"));
+	const args = ["-y", `paperclipai@${version}`, ...(configured ? ["run"] : ["onboard", "--yes"])];
+	console.log(configured ? "Starting Paperclip (the team board) at http://127.0.0.1:3100 . Keep this window open; Ctrl+C stops it."
+		: "Setting up Paperclip the first time (downloads it from npm, about a minute), then starting it at http://127.0.0.1:3100 .");
+	const child = spawn(process.platform === "win32" ? "npx.cmd" : "npx", args, {
+		stdio: "inherit", env: { ...process.env, ...QUIET_ENV }, shell: process.platform === "win32" });
+	return new Promise((done) => child.on("exit", (code) => {
+		process.exitCode = code ?? 0;
+		done();
+	}));
+}
+
 async function run(args) {
 	const [sub = "", ...more] = args;
 	const { opts, pos } = parse(more);
+	if (sub === "start") return start(opts);
 	const base = String(opts.url ?? process.env.PAPERCLIP_URL ?? "http://127.0.0.1:3100").replace(/\/+$/, "");
 	const api = async (method, path, body) => {
 		let res;
@@ -144,6 +178,7 @@ Paperclip checks the new member once (a short "hello" through your Ferry server)
 }
 
 const usage = (base) => `Ferry in a Paperclip team (Paperclip: ${base}; docs/TEAM.md)
+  ferry team start                        start Paperclip (the team board) on this computer; the first time it sets it up
   ferry team status                       the members and their open tasks
   ferry team add <name> [options]         add a member that runs Ferry
       --title "Researcher"  --about "what this member does"  --role researcher|pm|...|general (first one: ceo)

@@ -295,7 +295,7 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 想要"负责人派活、调研/分析/写 PPT 各管一摊、互相留言"的团队，用 [Paperclip](https://github.com/paperclipai/paperclip) 当看板（组织架构、任务、评论、仪表盘，在工作电脑本机打开），每个成员都跑 Ferry，模型调用照样走你的 Ferry 服务端：
 
 ```powershell
-npx paperclipai onboard --yes          # 第一次；以后 npx paperclipai run（需要 Node 24.11+）
+ferry team start                       # 启动看板（第一次会自动装好；需要 Node 24.11+），另开一个终端继续：
 ferry team add Lead --title "负责人" --about "拆解目标、派活、检查、汇总"
 ferry team add Researcher --title "调研" --about "查资料，结果写成 research/*.md"
 ferry team task "调研三种方案并写汇报 PPT" --to Lead
@@ -339,6 +339,8 @@ ferry team task "调研三种方案并写汇报 PPT" --to Lead
 | `blockedSites` | 空 | 永远不打开的网站（含子域名），比如邮箱、通讯、网盘 |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
+| `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理会检查 HTTPS（用公司自己的证书），浏览器能上而 ferry 报证书错误时靠它 |
+| `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
 很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`electronPath`（Electron 在哪，空 = 自己找）、`renderWaitMs`（web_render 最多等页面多久，默认 12 秒）、`phoneConsole`（在手机控制台上显示这台电脑，默认开；服务端没开控制台时什么也不报）。上下文长度用 `/context` 改，存在同一个文件里。
 

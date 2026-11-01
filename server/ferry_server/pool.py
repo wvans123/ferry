@@ -7,6 +7,7 @@ and the Anthropic request format).
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import Counter, OrderedDict
 
@@ -16,6 +17,10 @@ from .presets import norm
 # HTTP answers after which another provider is tried: limits, overload, outages, and this provider's own key or
 # model problems. A bad request (400, 413, 422) would fail the same way everywhere, so it is not retried.
 RETRY_STATUSES = {401, 402, 403, 404, 408, 409, 429, 500, 502, 503, 504, 520, 521, 522, 524, 529}
+# A limit or a hiccup (not a key or model problem): worth asking the same provider again after a short wait when no
+# other provider has the model. Relays such as kiro answer 502 within milliseconds when they are busy.
+TRANSIENT_STATUSES = {408, 429, 500, 502, 503, 504, 520, 521, 522, 524, 529}
+RETRY_WAIT_S = 45     # the most a request waits in total before the error goes back to the client
 SHORT_PAUSE = 60      # seconds a provider is skipped after a limit / overload / outage
 LONG_PAUSE = 300      # ... after a key or model problem (401, 402, 403, 404)
 
@@ -42,6 +47,27 @@ class Pool:
         self.busy: Counter = Counter()                        # model id -> requests in flight
         self.paused: dict[str, float] = {}                    # model id -> skipped until this time
         self.keep = keep
+        self.gates: dict[str, tuple[int, asyncio.Semaphore]] = {}  # provider -> (limit, its semaphore)
+        self.held: dict[str, list[asyncio.Semaphore]] = {}         # model id -> gates its running calls hold
+        self.waiting: Counter = Counter()                          # provider -> requests waiting for a free slot
+
+    async def enter(self, cfg: Config, m: ModelConfig) -> None:
+        """Before a call to the provider: wait while it already has as many calls running as it may (the
+        provider's max_concurrent; 0 = no limit). Every enter() is followed by one end()."""
+        prov = cfg.providers.get(m.provider) if m.provider else None
+        limit = int(getattr(prov, "max_concurrent", 0) or 0)
+        if limit > 0:
+            key = m.provider
+            g = self.gates.get(key)
+            if not g or g[0] != limit:
+                g = self.gates[key] = (limit, asyncio.Semaphore(limit))
+            self.waiting[key] += 1
+            try:
+                await g[1].acquire()
+            finally:
+                self.waiting[key] -= 1
+            self.held.setdefault(m.id, []).append(g[1])
+        self.start(m.id)
 
     def order(self, cfg: Config, m: ModelConfig, conv: str = "") -> list[ModelConfig]:
         """Models to try, best first."""
@@ -64,6 +90,8 @@ class Pool:
 
     def end(self, mid: str) -> None:
         self.busy[mid] = max(0, self.busy[mid] - 1)
+        if self.held.get(mid):
+            self.held[mid].pop().release()
 
     def served(self, conv: str, mid: str) -> None:
         if not conv:
@@ -79,4 +107,17 @@ class Pool:
     def state(self) -> dict:
         now = time.time()
         return {"busy": {k: v for k, v in self.busy.items() if v},
-                "paused": {k: int(t - now) for k, t in self.paused.items() if t > now}}
+                "paused": {k: int(t - now) for k, t in self.paused.items() if t > now},
+                "waiting": {k: v for k, v in self.waiting.items() if v}}
+
+
+def retry_delay(headers, attempt: int) -> float:
+    """How long to wait before asking the same provider again: its Retry-After when it says (at most 30 s),
+    otherwise 2, 4, 8, 16 s."""
+    try:
+        ra = float((headers or {}).get("retry-after", ""))
+        if ra >= 0:
+            return min(ra, 30.0)
+    except (TypeError, ValueError):
+        pass
+    return float(min(2 ** (attempt + 1), 16))

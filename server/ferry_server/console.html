@@ -56,6 +56,9 @@ input { width: 100%; font: inherit; padding: 12px; border-radius: 10px; border: 
 </style>
 </head>
 <body>
+<p class="empty" id="boot">正在打开……</p>
+<noscript><p class="empty">这个页面需要 JavaScript。请在手机浏览器的设置里打开 JavaScript 后刷新。</p></noscript>
+<div class="card" id="problem" hidden style="max-width:640px;margin:18vh auto 0"></div>
 <form id="login" hidden>
   <h1>Ferry</h1>
   <p>手机控制台：看看各台电脑在做什么。</p>
@@ -72,8 +75,9 @@ input { width: 100%; font: inherit; padding: 12px; border-radius: 10px; border: 
 </div>
 <div class="toast" id="toast" role="status"></div>
 
-<script>
+<script data-cfasync="false">
 const $ = (id) => document.getElementById(id);
+$("boot").hidden = true;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const H = { "Content-Type": "application/json", "X-Ferry-M": "1" };
 let timer = null, busy = false;
@@ -82,13 +86,30 @@ function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("sh
 function ago(s) { return s < 60 ? `${s} 秒前` : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : `${Math.floor(s / 3600)} 小时前`; }
 function dur(since) { if (!since) return ""; const s = Math.max(0, Math.floor(Date.now() / 1000 - since)); return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分钟`; }
 
-function signin() { $("app").hidden = true; $("login").hidden = false; clearTimeout(timer); $("pw").focus(); }
+function signin() { $("app").hidden = true; $("problem").hidden = true; $("login").hidden = false; clearTimeout(timer); $("pw").focus(); }
+
+// Something other than the Ferry server answered (a Cloudflare check, a login page, a proxy): say so instead of a blank page
+function problem(status, page) {
+  const cf = /cloudflare|cf-chl|challenge|just a moment/i.test(page || "");
+  $("problem").innerHTML = `<b>没拿到服务端的回答</b><p class="line">${status ? "HTTP " + status + "。" : "网络不通。"}` +
+    (cf ? "看起来是 Cloudflare 的安全检查拦住了页面的请求。在 Cloudflare 里给这个网址的 /m 路径加一条跳过规则（安全性 → WAF → 自定义规则 → 跳过），或关掉 Bot Fight Mode，然后刷新。"
+        : "可能是网络或中间的代理拦住了。稍后刷新试试；一直这样就在电脑上打开管理页看看服务端是否在运行。") + "</p>" +
+    `<div class="row"><button type="button" onclick="location.reload()">刷新</button></div>`;
+  $("problem").hidden = false; $("app").hidden = true; $("login").hidden = true;
+}
+async function json(r) {
+  const t = await r.text();
+  try { return JSON.parse(t); } catch { problem(r.status, t); throw new Error("not json"); }
+}
 
 $("login").onsubmit = async (e) => {
   e.preventDefault();
   $("loginMsg").textContent = "";
-  const r = await fetch("/m/login", { method: "POST", headers: H, body: JSON.stringify({ password: $("pw").value }) });
-  const d = await r.json().catch(() => ({}));
+  let r, d;
+  try {
+    r = await fetch("/m/login", { method: "POST", headers: H, body: JSON.stringify({ password: $("pw").value }) });
+    d = await json(r);
+  } catch { if ($("problem").hidden) $("loginMsg").textContent = "网络不通，稍后再试"; return; }
   if (!r.ok) { $("loginMsg").textContent = d.error || ("HTTP " + r.status); return; }
   $("pw").value = ""; $("login").hidden = true; load();
 };
@@ -119,16 +140,19 @@ function card(c) {
 async function load() {
   clearTimeout(timer);
   try {
-    const r = await fetch("/m/api/state", { cache: "no-store" });
+    const r = await fetch("/m/api/state", { cache: "no-store", credentials: "same-origin" });
     if (r.status === 401) return signin();
-    const d = await r.json();
-    $("app").hidden = false; $("live").className = "dot";
+    const d = await json(r);
+    $("app").hidden = false; $("problem").hidden = true; $("live").className = "dot";
     if (!busy) {
       $("list").innerHTML = d.clients.length ? d.clients.map(card).join("")
         : `<div class="card empty">现在没有电脑在用 ferry。<br>ferry 运行时会出现在这里。</div>`;
     }
     $("upd").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
-  } catch { $("live").className = "dot off"; }
+  } catch {
+    $("live").className = "dot off";
+    if ($("app").hidden && $("login").hidden && $("problem").hidden) problem(0, "");  // never blank
+  }
   timer = setTimeout(load, document.hidden ? 15000 : 3000);
 }
 

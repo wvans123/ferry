@@ -2,6 +2,8 @@
 // up answers given on the phone (stop, approve, deny) in the server's reply.
 //
 // - Only when the server has its phone console on; otherwise one tiny request every five minutes asks whether it is.
+// - Often (every few seconds, and at each step) only while a phone has the page open; otherwise a heartbeat every
+//   minute while working and every five minutes while idle, plus a report when work starts, ends or waits for you.
 // - The report is small: project folder name, conversation title, working / waiting / idle, the current tool and a
 //   short detail, the /goal, the start of the last reply, and a waiting approval. Never files or the conversation.
 // - Stop works like Esc at the computer. Approve needs `ferry config set remoteApprove true` on this computer, and
@@ -58,6 +60,7 @@ export function createRemote(cfg, permState, { version = "" } = {}) {
 	let sending = false;
 	let again = false;
 	let every = 30;
+	let watching = true; // a phone has the page open (older servers do not say: assume so)
 
 	const on = () => Boolean(cfg.server) && cfg.phoneConsole !== false && !process.env.PAPERCLIP_RUN_ID;
 
@@ -105,6 +108,7 @@ export function createRemote(cfg, permState, { version = "" } = {}) {
 			else if (r) {
 				for (const id of sent) done.delete(id); // the server has them now
 				every = Math.max(2, Math.min(Number(r.every) || 30, 3600));
+				watching = r.watching !== false;
 				for (const c of r.commands ?? []) carryOut(c);
 			} else every = 60;
 		} catch {
@@ -149,7 +153,7 @@ export function createRemote(cfg, permState, { version = "" } = {}) {
 			keep(c);
 			s.tool = e.toolName;
 			s.detail = describeCall(e.toolName, e.args);
-			changed();
+			if (watching) changed(); // each step only while a phone looks; otherwise the next heartbeat carries it
 		});
 		pi.on("message_end", (e, c) => {
 			keep(c);

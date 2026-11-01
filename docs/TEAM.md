@@ -22,22 +22,17 @@ Ferry 服务端（家里电脑）── 每次上传不超过 1 MB，key 只在�
 - 成员在任务下留言，`@名字` 提到别人；完成时写明结果放在哪。
 - 你在任何任务下留言，相当于插话；网页版 ChatGPT、Claude 的活，可以把任务派给你自己（"人"也是任务的负责人），做完把结果贴回评论。
 
-## 在工作电脑上装
+## 在电脑上装（工作电脑或 Mac 都一样）
 
-1. **Node.js 24.11 或更新版本**。Paperclip 需要它，Ferry 在 Node 24 上也能用。在 PowerShell 里用 `node --version` 看版本。
-2. **第一次**，在一个普通文件夹里运行：
-   ```powershell
-   $env:PAPERCLIP_TELEMETRY_DISABLED = "1"; $env:DO_NOT_TRACK = "1"; $env:PAPERCLIP_ANNOUNCEMENTS_ENABLED = "false"
-   npx paperclipai onboard --yes
+1. **Node.js 24.11 或更新版本**。Paperclip 需要它，Ferry 在 Node 24 上也能用。用 `node --version` 看版本，不够就装 nodejs.org 上的 LTS 版本（公司电脑可以走软件中心）。
+2. 运行：
    ```
-   它会把数据放在 `%USERPROFILE%\.paperclip`（自带数据库，不用另装），然后启动并打开 http://127.0.0.1:3100 。前面三个变量用来关掉统计上报和公告拉取，工作电脑上建议设。
-3. **以后**每次用之前运行（同样先设那三个变量）：
-   ```powershell
-   npx paperclipai run
+   ferry team start
    ```
-   这个窗口开着，团队就在；关掉窗口，团队就停。
+   第一次它会从 npm 下载 Paperclip 并完成设置（一分钟左右，数据放在 `~/.paperclip`，自带数据库，不用另装），以后每次就是启动。看板在 http://127.0.0.1:3100 ，只在本机打开、不用登录。这个窗口开着团队就在，Ctrl+C 停止。
+   它会自动关掉 Paperclip 的统计上报和公告拉取。用的是 Ferry 测过的 Paperclip 版本；想用最新版：`ferry team start --version latest`。
 
-Paperclip 默认只在本机（127.0.0.1）打开，不需要登录。它自己不调用模型；所有模型调用都由 ferry 发给你的 Ferry 服务端。
+Paperclip 自己不调用模型；所有模型调用都由 ferry 发给你的 Ferry 服务端。
 
 ## 建团队
 
@@ -100,6 +95,7 @@ ferry team task "调研 6G 数据开放的三种方案，写一份对比和汇�
 ## 出问题时
 
 - 成员一直 paused / verifying：加成员时的 hello 检查没通过。先在同一台电脑运行 `ferry -p "Respond with hello"` 看能不能答。
+- `ferry team start` 说 Node 版本不够：装 Node.js 24.11+ 后重开终端。
 - 任务卡在 blocked：打开任务看最后的评论，成员会写原因；你回复评论就会叫醒它。
 - 看某次运行到底做了什么：成员页面 → Runs。
 

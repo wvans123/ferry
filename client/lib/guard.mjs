@@ -25,7 +25,7 @@ async function ask(ui, verdict, event, cwd, who) {
 	const head = verdict.danger ? `Careful: this ${verdict.danger}.\n\n` : verdict.outside ? "This is outside the project folder.\n\n"
 		: verdict.judged ? `Auto mode is not sure: ${verdict.judged}\n\n` : "";
 	const isShell = tool === "bash" || tool === "powershell";
-	const isEdit = ["edit", "write", "office_edit", "office_create"].includes(tool);
+	const isEdit = ["edit", "write", "office_edit", "office_create", "image_create"].includes(tool);
 	const rules = isShell ? [...new Set((verdict.pending ?? verdict.segments ?? [input.command ?? ""]).map((s) => prefixRule(tool, s)))]
 		: tool === "web_fetch" || tool === "web_render" ? [`web_fetch(${hostOf(input.url)})`] // one site (covers both)
 		: [tool.startsWith("mcp__") ? `${tool.split("__").slice(0, 2).join("__")}__*` : tool]; // a whole MCP server

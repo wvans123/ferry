@@ -778,6 +778,30 @@ def check_team(root: Path, work: Path) -> None:
         board.shutdown()
 
 
+def check_v019(root: Path, work: Path) -> None:
+    """Pictures with image_create; only the server's models in the model list."""
+    pics = ('\n[models.pics]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nmodel = "gpt-image-2"\n'
+            '\n[routing]\ndefault = "main"\nimage = "pics"\n')
+    s = Stack(root, work, "agent", extra_toml=pics)
+    try:
+        made = work / "images" / "ferry.png"
+        made.unlink(missing_ok=True)
+        code, out = s.ferry("-p", "IMAGETEST: draw the cover")
+        png = made.exists() and made.read_bytes().startswith(b"\x89PNG")
+        sent = [u for u in jsonl(s.upstream) if u.get("model") == "gpt-image-2"]
+        ok = code == 0 and png and "IMAGE: Saved" in out and sent and sent[0]["prompt"].startswith("a small ferry")
+        check("F59 生成图片", ok, "agent 用 image_create 描述一张图，服务端交给\"生成图片用\"的模型画，PNG 存进项目文件夹"
+              if ok else f"code={code} png={png} sent={len(sent)} out={out[-300:]!r}")
+        code2, listed = s.ferry("--list-models", "claude", env_extra={"ANTHROPIC_API_KEY": "x", "OPENAI_API_KEY": "y"})
+        code3, mine = s.ferry("--list-models", env_extra={"ANTHROPIC_API_KEY": "x"})
+        ok2 = "No models matching" in listed and "ferry" in mine and "anthropic" not in mine and "pics" not in mine
+        check("F60 只列服务端的模型", ok2, "电脑上有 ANTHROPIC_API_KEY 等也不会列出 pi 自带的服务商；生图模型不出现在对话模型里"
+              if ok2 else f"{listed[-200:]!r} | {mine[-300:]!r}")
+    finally:
+        s.close()
+        (work / "images" / "ferry.png").unlink(missing_ok=True)
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1303,6 +1327,7 @@ def main() -> int:
     check_tui(base / "tui", work)
     check_steer(base / "steer", work)
     check_team(base / "team", work)
+    check_v019(base / "v019", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)
     check_v018(base / "v018", work)

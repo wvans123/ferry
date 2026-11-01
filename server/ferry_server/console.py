@@ -34,7 +34,9 @@ COOKIE = "ferry_m"
 SESSION_DAYS = 30
 ONLINE_S = 90          # no report for this long: shown as offline
 FORGET_S = 3600        # ... and after this long, not shown at all
-BUSY_EVERY, IDLE_EVERY, OFF_EVERY = 3, 30, 300  # how often a client reports, by state (seconds)
+BUSY_EVERY, IDLE_EVERY, OFF_EVERY = 3, 30, 300  # how often a client reports, by state (seconds), while a phone looks
+QUIET_BUSY, QUIET_IDLE = 60, 300                  # ... while no phone has the page open: a heartbeat only
+WATCH_S = 120                                     # the page was open this recently: report often
 
 
 def hash_password(pw: str) -> str:
@@ -60,6 +62,7 @@ class Console:
         self.clients: dict[str, dict] = {}     # "<user>\x1f<instance>" -> last report
         self.commands: dict[str, list] = {}    # same key -> answers waiting to be picked up
         self.fails: dict[str, list[float]] = {}
+        self.viewed = 0.0                      # when a phone last asked for the state
 
     # ---------- sign-in ----------
 
@@ -113,17 +116,22 @@ class Console:
             "remote_approve": bool(b.get("remote_approve")), "version": str(b.get("version") or "")[:20],
             "seen": time.time(),
         }
-        return {"console": True, "every": BUSY_EVERY if state != "idle" else IDLE_EVERY, "commands": waiting}
+        # nobody looking: no need for a report every few seconds (they were most of the server's requests)
+        watching = time.time() - self.viewed < WATCH_S or bool(waiting)
+        every = (BUSY_EVERY if state != "idle" else IDLE_EVERY) if watching else (QUIET_BUSY if state != "idle" else QUIET_IDLE)
+        self.clients[key]["every"] = every
+        return {"console": True, "every": every, "watching": watching, "commands": waiting}
 
     def state(self) -> list[dict]:
         now = time.time()
+        self.viewed = now
         for k in [k for k, c in self.clients.items() if now - c["seen"] > FORGET_S]:
             self.clients.pop(k, None)
             self.commands.pop(k, None)
         out = []
         for c in sorted(self.clients.values(), key=lambda c: (c["device"], c["project"])):
             out.append({**{k: v for k, v in c.items() if k != "key"}, "id": hashlib.sha256(c["key"].encode()).hexdigest()[:16],
-                        "online": now - c["seen"] < ONLINE_S, "ago": int(now - c["seen"]),
+                        "online": now - c["seen"] < max(ONLINE_S, c.get("every", 0) * 1.5 + 15), "ago": int(now - c["seen"]),
                         "queued": len(self.commands.get(c["key"], []))})
         return out
 
@@ -131,7 +139,7 @@ class Console:
         c = next((c for c in self.clients.values() if hashlib.sha256(c["key"].encode()).hexdigest()[:16] == cid), None)
         if not c:
             return False, "这台电脑上的 ferry 已经不在了"
-        if time.time() - c["seen"] > ONLINE_S:
+        if time.time() - c["seen"] > max(ONLINE_S, c.get("every", 0) * 1.5 + 15):
             return False, "这台电脑离线了，命令发不过去"
         if action in ("approve", "deny"):
             p = c.get("pending")
@@ -176,7 +184,7 @@ def mount_console(app: FastAPI, cfg: Config, live, audit_log: Path) -> Console:
         return HTMLResponse(PAGE.read_text(encoding="utf-8"),
                             headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY",
                                      "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; "
-                                                                "script-src 'unsafe-inline'; frame-ancestors 'none'",
+                                                                "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
                                      "Referrer-Policy": "no-referrer"})
 
     @app.post("/m/login")

@@ -71,6 +71,7 @@ class Provider:
     no_key: bool = False
     key: str = field(default="", repr=False)
     api: str = "openai"
+    max_concurrent: int = 0  # calls running at the same time on this account; more wait their turn (0 = no limit)
 
     @property
     def api_key(self) -> str:
@@ -101,6 +102,7 @@ class Config:
     # the server picks the model: clients ask for "auto"; summaries can go to a cheaper model
     default_model: str = ""
     summary_model: str = ""
+    image_model: str = ""          # the model behind the agent's image_create tool (an image model or a Responses one)
     expose_models: bool = False  # true: clients may also pick a model by name
     home: Path | None = None     # set in zero-config mode
     models_file: Path | None = None  # zero-config: models.toml, re-read whenever it changes
@@ -169,6 +171,7 @@ def load(path: str | os.PathLike) -> Config:
         raise SystemExit("no [models.*] configured")
     r = raw.get("routing", {})
     cfg.default_model, cfg.summary_model = r.get("default", ""), r.get("summary", "")
+    cfg.image_model = r.get("image", "")
     cfg.expose_models = bool(r.get("expose", False))
     finish(cfg)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
@@ -180,7 +183,7 @@ def finish(cfg: Config) -> None:
     if cfg.session_store not in ("disk", "memory", "none"):
         raise SystemExit(f'session_store must be "disk", "memory" or "none", not {cfg.session_store!r}')
     cfg.default_model = cfg.default_model or next(iter(cfg.models))
-    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model)):
+    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model), ("image", cfg.image_model)):
         if mid and mid not in cfg.models:
             raise SystemExit(f"routing {what} = {mid!r} is not one of the models: {', '.join(cfg.models)}")
     if "auto" in cfg.models:
@@ -355,7 +358,7 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             api_key_env=p.get("api_key_env", ""), drop_params=list(p.get("drop_params", pre.get("drop_params", []))),
             rename_params=dict(p.get("rename_params", pre.get("rename_params", {}))),
             no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
-            api=p.get("api") or pre.get("api", "openai"))
+            api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0))
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
         m = dict(m)
@@ -410,13 +413,14 @@ def apply_models_file(cfg: Config, path: Path) -> None:
     r = raw.get("routing", {})
     trial = Config(models=models, default_model=os.environ.get("FERRY_MODEL") or r.get("default", ""),
                    summary_model=os.environ.get("FERRY_SUMMARY_MODEL") or r.get("summary", ""),
+                   image_model=r.get("image", ""),
                    expose_models=bool(r.get("expose", False)) or os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true"),
                    session_store=cfg.session_store)
     if trial.default_model not in models:
         trial.default_model = ""
     finish(trial)
     cfg.models, cfg.providers, cfg.default_model = trial.models, providers, trial.default_model
-    cfg.summary_model, cfg.expose_models = trial.summary_model, trial.expose_models
+    cfg.summary_model, cfg.expose_models, cfg.image_model = trial.summary_model, trial.expose_models, trial.image_model
 
 
 def render_models_toml(providers: list[dict], models: list[dict], routing: dict) -> str:
@@ -425,10 +429,12 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
            "# 服务商的 Key 保存在同一文件夹的 secrets.toml 里（或环境变量 api_key_env）。", "", "[routing]"]
     out.append(f"default = {_toml_value(routing.get('default', ''))}")
     out.append(f"summary = {_toml_value(routing.get('summary', ''))}")
+    if routing.get("image"):
+        out.append(f"image = {_toml_value(routing['image'])}")
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]
-        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key"):
+        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
     for m in models:

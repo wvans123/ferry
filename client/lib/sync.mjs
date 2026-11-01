@@ -84,11 +84,23 @@ export function modelDef(m, cfg) {
 }
 
 /** opts.purpose: "agent" (default) or "subagent"; tells the server what the requests are for. */
+// Shared by every conversation of this ferry window (the main one and its subagents): tool lists and messages the
+// server already keeps are not uploaded again. A subagent's first request carries the same tool list as the main
+// conversation, often the biggest part of it; without this every subagent uploaded it again.
+const knownTools = new Set();
+const haveBlobs = new Set(); // messages (sha256 of their JSON) the server keeps: sent as {ref} instead of in full
+// One upload at a time from this window: several subagents starting together send their first, biggest requests
+// one after another instead of in a burst (a company proxy may stop bursts; the server is spared too).
+let uploading = Promise.resolve();
+const oneAtATime = (fn) => {
+	const run = uploading.then(fn, fn);
+	uploading = run.catch(() => {});
+	return run;
+};
+
 export function createSyncProvider(cfg, models, opts = {}) {
 	const known = new Map(); // conv -> { count, hash } the server has acknowledged
 	const byId = new Map(models.map((m) => [m.id, m]));
-	const knownTools = new Set();
-	const haveBlobs = new Set(); // messages (sha256 of their JSON) the server keeps: sent as {ref} instead of in full
 	const asked = new Set(); // conversations we asked the server about (after a restart or /resume)
 	const project = process.env.FERRY_PROJECT ?? basename(process.cwd());
 	const refs = () => (cfg.features ?? []).includes("refs") && cfg.sessionStore !== "none";
@@ -133,7 +145,11 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		});
 	}
 
-	async function commit(conv, base, baseHash, blob, signal, chunk = cfg.chunkBytes) {
+	function commit(...a) {
+		return oneAtATime(() => commitNow(...a));
+	}
+
+	async function commitNow(conv, base, baseHash, blob, signal, chunk = cfg.chunkBytes) {
 		const bytes = Buffer.from(blob, "utf8");
 		const q = new URLSearchParams({ conv, base: String(base), base_hash: baseHash });
 		if (bytes.length <= chunk) return post(`/v1/ferry/commit?${q}`, bytes, signal);

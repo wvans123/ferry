@@ -78,7 +78,8 @@ def test_phone_console(tmp_path, monkeypatch):
 
             # a ferry reports: working, then waiting for approval
             rep = {"instance": "w1", "project": "demo", "title": "fix bug", "state": "working", "tool": "bash", "detail": "npm test"}
-            assert (await c.post("/v1/ferry/status", json=rep, headers=tok)).json() == {"console": True, "every": 3, "commands": []}
+            # the phone has the page open: report every few seconds
+            assert (await c.post("/v1/ferry/status", json=rep, headers=tok)).json() == {"console": True, "every": 3, "watching": True, "commands": []}
             s = (await phone.get("/m/api/state")).json()["clients"]
             assert len(s) == 1 and s[0]["device"] == "主令牌" and s[0]["online"] and s[0]["tool"] == "bash"
             cid = s[0]["id"]
@@ -111,3 +112,14 @@ def test_phone_console(tmp_path, monkeypatch):
             assert (await phone.post("/m/login", json={"password": "another one!"}, headers=M)).status_code == 429
 
     asyncio.run(go())
+
+
+def test_without_a_phone_looking_ferry_reports_rarely(tmp_path, monkeypatch):
+    from ferry_server.console import Console
+    from ferry_server.config import Config
+    con = Console(Config(console=True, console_password="x", secret="s"))
+    r = con.report("u", "d", "pc", {"instance": "w1", "state": "working"})
+    assert r["every"] == 60 and r["watching"] is False
+    con.state()  # a phone opens the page
+    r = con.report("u", "d", "pc", {"instance": "w1", "state": "working"})
+    assert r["every"] == 3 and r["watching"] is True

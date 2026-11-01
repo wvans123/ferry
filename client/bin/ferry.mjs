@@ -233,7 +233,11 @@ async function doctor() {
 		if (r.body.protocol && r.body.protocol !== PROTOCOL) return bad(`server protocol ${r.body.protocol}, client ${PROTOCOL}: update the older side`);
 		ok(`server reachable in ${Date.now() - t} ms (server ${r.body.version}, protocol ${r.body.protocol})`);
 	} catch (e) {
-		return bad(`cannot reach the server: ${e.cause?.code ?? e.message}`);
+		const code = e.cause?.code ?? e.message;
+		const cert = /CERT|SELF_SIGNED|ISSUER/i.test(String(code));
+		return bad(`cannot reach the server: ${code}` + (cert ? "\n      A proxy that checks HTTPS answered with its own certificate. Ferry already trusts this computer's " +
+			"certificates (systemCerts); if this still appears, ask IT for the proxy's certificate (a .pem/.cer file) and run: " +
+			"ferry config set caFile <that file>" : ""));
 	}
 	try {
 		const r = await getJson(cfg, "/v1/ferry/models");
@@ -421,6 +425,7 @@ async function run(args) {
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },
 			{ name: "ferry-past", factory: createPastConversations(), hidden: true },
 			{ name: "ferry-trim", factory: createTrimOldOutputs(cfg), hidden: true },
+			{ name: "ferry-image", factory: (await import("../lib/image.mjs")).createImage(cfg), hidden: true },
 			{ name: "ferry-office", factory: (await import("../lib/office.mjs")).createOffice(), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },
 			{ name: "ferry-browser", factory: createBrowser(cfg), hidden: true },

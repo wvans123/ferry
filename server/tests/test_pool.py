@@ -252,3 +252,35 @@ def test_judge_and_notify(tmp_path, monkeypatch):
     a, b, n0, n1 = asyncio.run(go())
     assert a["verdict"] == "allow" and b["verdict"] == "ask"
     assert n0["ok"] is False and n1["ok"] is True and sent[0]["body"] == "goal done"
+
+
+def test_a_busy_only_provider_is_asked_again_and_limited_to_its_slots(tmp_path, monkeypatch):
+    state = {"calls": 0, "now": 0, "max": 0}
+
+    async def handler(req: httpx.Request):
+        state["calls"] += 1
+        if req.url.host == "b.example.com" and state["calls"] <= 2:  # kiro-like: busy, answers 502 at once
+            return httpx.Response(502, json={"error": {"message": "busy"}})
+        state["now"] += 1
+        state["max"] = max(state["max"], state["now"])
+        await asyncio.sleep(0.05)
+        state["now"] -= 1
+        return answer()
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0.01)
+    token = (tmp_path / "token").read_text().strip()
+
+    async def one(i):
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return (await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                 json={"model": "other", "messages": [{"role": "user", "content": f"hi {i}"}]})).status_code
+
+    assert asyncio.run(one(0)) == 200 and state["calls"] == 3  # 502, 502, then the answer: the client never saw the 502s
+    cfg.providers["b"].max_concurrent = 1
+    state.update(calls=10, max=0)
+
+    async def many():
+        return await asyncio.gather(*[one(i) for i in range(4)])
+
+    assert asyncio.run(many()) == [200] * 4 and state["max"] == 1

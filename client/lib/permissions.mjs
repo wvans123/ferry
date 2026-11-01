@@ -27,8 +27,8 @@ export const MODE_LABEL = {
 	bypass: "full access: nothing asks",
 };
 const SHELL = new Set(["bash", "powershell"]);
-const EDIT = new Set(["edit", "write", "office_edit", "office_create"]);
-const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "office_read", "office_edit", "office_create"]);
+const EDIT = new Set(["edit", "write", "office_edit", "office_create", "image_create"]);
+const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "office_read", "office_edit", "office_create", "image_create"]);
 // tools that only look, or that are fenced in by themselves (memory: its own folder; task: the subagent's
 // tools are checked one by one; web_*: the server's own allow list)
 const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "task_batch",
