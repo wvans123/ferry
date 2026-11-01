@@ -47,9 +47,10 @@ export const DEFAULTS = {
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
-	phoneConsole: true, // report this window's status to the server's phone console (only when the server has it on)
+	phoneConsole: false, // report this window's status to the server's phone console (off: no requests for it at all)
 	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
+	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
 	caFile: "", // a PEM file with more certificates to trust, e.g. the company proxy's, if the computer's own are not enough
 };
@@ -91,7 +92,8 @@ export const ADVANCED_SETTINGS = {
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
-	phoneConsole: ["boolean", "show this computer's ferry on the phone console when the server has it on (status only, never files or the conversation)"],
+	phoneConsole: ["boolean", "show this computer's ferry on the server's phone console (status only); off by default: it costs a request every few seconds while a phone looks"],
+	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],
 	systemCerts: ["boolean", "also trust the HTTPS certificates this computer trusts (needed when a company proxy checks HTTPS)"],
 	caFile: ["string", "a PEM file with more certificates to trust (full path), e.g. the company proxy's; empty = none"],
 };

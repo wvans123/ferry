@@ -174,3 +174,15 @@ def test_image_create_goes_to_the_image_model(tmp_path, monkeypatch):
             return (await c.get("/v1/ferry/models", headers=hdr)).json()
     d = asyncio.run(listed())
     assert "image" in d["features"] and "pics" not in [m["id"] for m in d["models"]]
+
+
+def test_pictures_and_thinking_signatures_do_not_count_as_text():
+    from ferry_server.prompt import estimate_tokens
+    img = base64.b64encode(b"x" * 1_000_000).decode()  # a 1 MB screenshot in Claude's format
+    p = {"system": "be brief", "messages": [
+        {"role": "user", "content": [{"type": "text", "text": "what is on this screen?"},
+                                     {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img}}]},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "hmm", "signature": "S" * 60_000},
+                                          {"type": "text", "text": "a terminal"}]},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64," + img}}]}]}
+    assert estimate_tokens(p) < 5_000  # two pictures, not 700k tokens of base64

@@ -4,6 +4,7 @@
 // server has not seen yet (split into parts when they exceed chunkBytes), then sends a tiny request that
 // refers to the server-side copy. The server rebuilds the full request, adds its rules, redacts it and
 // calls the model. If the server has lost its copy, the client re-uploads everything automatically.
+import { fitPictures } from "./pictures.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -170,12 +171,14 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			known.clear();
 			knownTools.clear();
 		}
-		let list = payload.messages;
+		let list = structuredClone(payload.messages);
 		let marks = [];
 		if (api === "anthropic") { // the system prompt is a separate field there: sync it as the first item
-			list = structuredClone([...(payload.system !== undefined ? [{ role: "__system__", content: payload.system }] : []), ...payload.messages]);
+			list = [...(payload.system !== undefined ? [{ role: "__system__", content: structuredClone(payload.system) }] : []), ...list];
 			marks = takeCacheMarks(list);
 		}
+		// pictures: smaller, and only the latest few (pictures.mjs)
+		await fitPictures(list, Number(cfg.keepImages ?? 4));
 		const msgs = list.map((m) => JSON.stringify(m));
 		// the session id keeps the server's copy usable after a restart or /resume (a random salt before ferry 0.15.1)
 		const conv = sha((sessionId || SALT) + (msgs[0] ?? "") + (msgs[1] ?? ""));

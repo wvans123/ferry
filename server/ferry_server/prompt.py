@@ -64,12 +64,48 @@ def body_size(payload: dict) -> int:
     return len(_IMAGE_DATA.sub("data:image", json.dumps(payload, ensure_ascii=False)).encode("utf-8"))
 
 
+IMAGE_TOKENS = 1600  # what one picture costs a model, roughly (it is not its base64 text)
+_SKIP_KEYS = {"signature", "encrypted_content", "cache_control"}  # thinking signatures and markers: not context text
+
+
 def estimate_tokens(payload: dict) -> int:
-    """A rough token count of what goes to the model (pictures left out): about 4 ASCII characters per token, about
-    one token per Chinese character. Only used to notice a conversation that cannot fit the model any more."""
-    text = _IMAGE_DATA.sub("", json.dumps({k: payload.get(k) for k in ("system", "messages", "tools")}, ensure_ascii=False))
-    other = sum(1 for ch in text if ord(ch) > 127)
-    return int((len(text) - other) / 4 + other)
+    """A rough token count of what goes to the model: about 4 ASCII characters per token, about one token per Chinese
+    character, a fixed amount per picture. Only used to notice a conversation that cannot fit the model any more.
+
+    Pictures and thinking signatures are not counted as text: a screenshot is ~1.3 MB of base64 in Claude's format
+    ("source": {"data": ...}), which counted as text came to ~350k "tokens" and made a small conversation look too
+    long to fit, again after every summary (ferry 0.19 and earlier)."""
+    ascii_n = other = images = 0
+    stack = [payload.get(k) for k in ("system", "messages", "tools")]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, str):
+            if v.startswith("data:") and ";base64," in v[:80]:
+                images += 1
+                continue
+            n = sum(1 for ch in v if ord(ch) > 127)
+            other += n
+            ascii_n += len(v) - n
+        elif isinstance(v, dict):
+            kind = v.get("type")
+            if kind in ("image", "input_image") or (kind == "image_url" and "image_url" in v):
+                images += 1
+                continue
+            if kind == "redacted_thinking":
+                continue
+            for k, x in v.items():
+                if k in _SKIP_KEYS:
+                    continue
+                if k == "data" and isinstance(x, str) and len(x) > 1000 and " " not in x[:1000]:
+                    ascii_n += len(x) // 50  # an attached document in base64: count it lightly
+                    continue
+                ascii_n += len(k) + 4
+                stack.append(x)
+        elif isinstance(v, list):
+            stack.extend(v)
+        elif v is not None:
+            ascii_n += len(str(v))
+    return int(ascii_n / 4 + other + images * IMAGE_TOKENS)
 
 
 def overflow_message(tokens: int, window: int, model_id: str) -> str:

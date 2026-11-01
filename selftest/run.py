@@ -949,7 +949,7 @@ def check_console(s: "Stack", work: Path, admin: dict) -> None:
 
     s.http("PUT", "/admin/api/remote", {"console": True, "password": "phone-pass-123"}, headers=admin)
     s.home.mkdir(parents=True, exist_ok=True)
-    (s.home / "config.json").write_text(json.dumps({"remoteApprove": True}), encoding="utf-8")
+    (s.home / "config.json").write_text(json.dumps({"remoteApprove": True, "phoneConsole": True}), encoding="utf-8")
     (work / "perm-ok.txt").unlink(missing_ok=True)
     env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40",
            "FERRY_AUTO_APPROVE": "0"}
