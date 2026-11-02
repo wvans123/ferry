@@ -186,3 +186,29 @@ def test_pictures_and_thinking_signatures_do_not_count_as_text():
                                           {"type": "text", "text": "a terminal"}]},
         {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64," + img}}]}]}
     assert estimate_tokens(p) < 5_000  # two pictures, not 700k tokens of base64
+
+
+def test_a_refused_summary_is_asked_again_with_a_note_on_the_task(tmp_path, monkeypatch):
+    systems = []
+
+    def handler(req: httpx.Request):
+        b = json.loads(req.content)
+        systems.append(b["messages"][0]["content"])
+        if len(systems) == 1:  # the first time the model declines
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "content_filter"}]})
+        return chat_answer("THE SUMMARY")
+
+    cfg, app, hdr = make(tmp_path, monkeypatch, handler)
+    text = "<conversation>\n[User]: hello\n\n[Assistant]: hi\n</conversation>\n\nSummarize."
+
+    async def summary():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            body = json.dumps({"append": [json.dumps({"role": "system", "content": "You are a context summarization assistant."}),
+                                          json.dumps({"role": "user", "content": text})], "tools": None})
+            ack = (await c.post("/v1/ferry/commit", params={"conv": "s2", "base": 0, "base_hash": ""}, content=body, headers=hdr)).json()
+            return await c.post("/v1/chat/completions", headers=hdr, json={"model": "kiro", "stream": True, "messages": [],
+                                "ferry": {"conv": "s2", "count": ack["count"], "hash": ack["hash"], "purpose": "summary"}})
+
+    r = asyncio.run(summary())
+    out = "".join(json.loads(l[6:])["choices"][0]["delta"].get("content") or "" for l in r.text.splitlines() if l.startswith("data: {"))
+    assert out == "THE SUMMARY" and len(systems) == 2 and "expected task" in systems[1]

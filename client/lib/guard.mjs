@@ -10,8 +10,9 @@ const state = { mode: "default", queue: Promise.resolve(), extraDirs: [] }; // e
 export function initialMode(cfg) {
 	if (process.env.FERRY_AUTO_APPROVE === "1") return "bypass";
 	if (MODES.includes(process.env.FERRY_PERMISSION_MODE)) return process.env.FERRY_PERMISSION_MODE;
-	// run by Paperclip, nobody at a terminal to ask: a model judges what the rules cannot decide, the rest is refused
-	if (process.env.PAPERCLIP_RUN_ID && !["acceptEdits", "auto", "bypass"].includes(cfg.permissionMode)) return "auto";
+	// run by Paperclip, nobody at a terminal to ask: file changes in the project go ahead; what would need asking is
+	// refused with a reason (the member says so in its task)
+	if (process.env.PAPERCLIP_RUN_ID && !["acceptEdits", "bypass"].includes(cfg.permissionMode)) return "acceptEdits";
 	return MODES.includes(cfg.permissionMode) ? cfg.permissionMode : "default";
 }
 
@@ -23,7 +24,7 @@ async function ask(ui, verdict, event, cwd, who) {
 	const input = event.input ?? {};
 	const detail = short(String(input.command ?? input.path ?? input.url ?? JSON.stringify(input)));
 	const head = verdict.danger ? `Careful: this ${verdict.danger}.\n\n` : verdict.outside ? "This is outside the project folder.\n\n"
-		: verdict.judged ? `Auto mode is not sure: ${verdict.judged}\n\n` : "";
+		: "";
 	const isShell = tool === "bash" || tool === "powershell";
 	const isEdit = ["edit", "write", "office_edit", "office_create", "image_create"].includes(tool);
 	const rules = isShell ? [...new Set((verdict.pending ?? verdict.segments ?? [input.command ?? ""]).map((s) => prefixRule(tool, s)))]
@@ -101,15 +102,6 @@ export function createGuard(cfg, opts = {}) {
 				if (verdict.action === "deny") {
 					if (verdict.blocked && ui) ui.notify(`Ferry blocked ${event.toolName} on a protected path (${verdict.blocked})`, "warning");
 					return { block: true, reason: verdict.reason };
-				}
-				// auto mode: what the rules could not decide goes to a model on the server; anything but a clear yes asks
-				if (state.mode === "auto" && !verdict.danger && !verdict.outside && cfg.judge) {
-					const j = await cfg.judge({ tool, input: event.input, cwd }).catch(() => null);
-					if (j?.verdict === "allow") {
-						ui?.setStatus?.("ferry-auto", `auto: allowed ${tool} (${String(j.reason ?? "").slice(0, 60)})`);
-						return undefined;
-					}
-					verdict.judged = j?.reason || "the judge did not answer";
 				}
 				if (!ui) return { block: true, reason: "This needs the user's approval and no terminal is available. " +
 					"Run ferry interactively, or allow it with a rule (ferry config) or mode." };

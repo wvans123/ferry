@@ -31,7 +31,7 @@ Information    /context [size]  how full the context is; with a size (400k, 1m, 
                /cost  tokens and money       /status  server, model, settings, and a quick check
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
 
-Keys           Shift+Tab   permission mode: ask first > auto-edit > auto (a model decides; asks when unsure) > plan > allow all
+Keys           Shift+Tab   permission mode: ask first > auto-edit > plan > allow all
                Esc  stop the agent        Ctrl+C  clear the input (twice: quit)       Ctrl+D  quit      ?  this help
                Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
                Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
@@ -127,6 +127,23 @@ export function createCommands(cfg, deps) {
 			// a long piece of work: also to the phone (you have probably walked away)
 			if (ctx?.hasUI && started && secs >= (cfg.phoneAfterSeconds ?? 300)) cfg.phone?.("Done", `after ${Math.round(secs / 60)} min`, "done");
 			started = 0;
+		});
+
+		// compactAt: summarise once the context is this full, at the end of a request (not in the middle of work)
+		pi.on("agent_settled", (e, ctx) => {
+			const pct = Number(String(cfg.compactAt ?? "90%").replace("%", ""));
+			if (e?.aborted || !(pct > 0 && pct < 100)) return;
+			const u = ctx.getContextUsage?.();
+			if (!u?.tokens || !u.contextWindow || (u.tokens / u.contextWindow) * 100 < pct) return;
+			if (ctx.hasUI) ctx.ui.setStatus("ferry-compact", `context ${Math.round((u.tokens / u.contextWindow) * 100)}% full: summarising (compactAt ${pct}%)`);
+			ctx.compact({
+				onComplete: () => ctx.hasUI && ctx.ui.setStatus("ferry-compact", undefined),
+				onError: (err) => {
+					if (!ctx.hasUI) return;
+					ctx.ui.setStatus("ferry-compact", undefined);
+					ctx.ui.notify(`Summarising the conversation failed: ${err.message}`, "warning");
+				},
+			});
 		});
 
 		// "?" on its own shows the help, like Claude Code

@@ -419,9 +419,9 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         </div>
         <div class="card">
           <h2>同时调用上限和 auto 模式</h2>
-          <p class="hint">一个用户同时最多几个模型请求，超过的排队等（批量派活时保护服务端和服务商）。auto 模式下，规则判断不了的操作交给下面这个模型判断，只发操作本身（命令或文件名），它说不准就照常问你。</p>
+          <p class="hint">一个用户同时最多几个模型请求，超过的排队等（批量派活时保护服务端和服务商）。</p>
           <div class="row"><span>同时最多</span><input type="number" id="setConc" min="1" max="50" style="width:90px"><span>个请求</span>
-            <span style="margin-left:16px">判断用</span><select id="setJudge"></select><button class="btn primary" id="saveConc">保存</button></div>
+            <select id="setJudge" hidden></select><button class="btn primary" id="saveConc">保存</button></div>
         </div>
         <div class="card">
           <h2>详细记录</h2>

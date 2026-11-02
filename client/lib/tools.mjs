@@ -55,17 +55,36 @@ export function createTodo() {
 		};
 		pi.on("session_start", restore);
 		pi.on("session_tree", restore);
+		// Models often finish the work and forget to tick the list off. When the agent is about to stop with items
+		// still open on a list it used in this request, it is asked once to bring the list up to date.
+		let used = false;
+		let reminded = false;
+		pi.on("agent_before_settle", (event) => {
+			const open = todos.filter((t) => t.status !== "completed");
+			if (!used || reminded || event.continue || event.outcome !== "completed" || !open.length) return undefined;
+			reminded = true;
+			return { continue: true, entries: [{ type: "custom_message", customType: "ferry-todo-check", display: false,
+				content: `Before you stop: the to-do list still shows ${open.length} unfinished item(s): ` +
+					`${open.map((t) => `"${t.content}" (${t.status})`).join(", ")}. Update it with the todo tool now: mark ` +
+					"what is done as completed. If something is really not done, leave it open and say in one line why. " +
+					"Do not start new work." }] };
+		});
+		pi.on("agent_settled", () => {
+			used = false;
+			reminded = false;
+		});
 		pi.registerTool({
 			name: "todo",
 			label: "Tasks",
 			description: "Keep a task list for work with several steps. Send the whole list every time. Mark an item " +
 				"in_progress before starting it and completed as soon as it is done; keep exactly one in_progress while working. " +
-				"Skip it for one-step requests.",
+				"Before your final answer, send the list once more with every finished item completed. Skip it for one-step requests.",
 			promptSnippet: "Plan and track multi-step work as a task list the user can see",
 			parameters: TodoParams,
 			annotations: { readOnlyHint: true, openWorldHint: false },
 			async execute(_id, params, _signal, _onUpdate, ctx) {
 				todos = (params.todos ?? []).map((t) => ({ content: String(t.content), status: t.status }));
+				used = true;
 				show(ctx);
 				return { content: [{ type: "text", text: todos.length ? render(todos) : "(task list cleared)" }], details: { todos } };
 			},

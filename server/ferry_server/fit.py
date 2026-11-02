@@ -71,8 +71,12 @@ def summary_prompt(messages: list) -> tuple[str, str] | None:
     return (system, user) if CONV.search(user) else None
 
 
+class Refused(Exception):
+    """The model declined (Claude's stop_reason "refusal", OpenAI's content_filter) or answered nothing."""
+
+
 async def complete(client: httpx.AsyncClient, m: ModelConfig, system: str, prompt: str, max_tokens: int) -> tuple[str, dict]:
-    """One non-streamed request to the model in its own API. Returns (text, usage)."""
+    """One non-streamed request to the model in its own API. Returns (text, usage); raises Refused."""
     if m.api == "anthropic":
         body = {"model": m.model, "max_tokens": min(max_tokens, m.max_tokens), "system": system,
                 "messages": [{"role": "user", "content": prompt}]}
@@ -80,7 +84,10 @@ async def complete(client: httpx.AsyncClient, m: ModelConfig, system: str, promp
                               headers={"x-api-key": m.api_key, "anthropic-version": "2023-06-01"})
         r.raise_for_status()
         d = r.json()
-        return "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text"), d.get("usage") or {}
+        text = "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text")
+        if d.get("stop_reason") == "refusal" or not text.strip():
+            raise Refused(f"{m.id} refused" if d.get("stop_reason") == "refusal" else f"{m.id} answered nothing")
+        return text, d.get("usage") or {}
     headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {m.api_key}"} if m.api_key else {})}
     chat = adapt_params({"model": m.id, "max_completion_tokens": min(max_tokens, m.max_tokens),
                          "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}, m)
@@ -93,8 +100,11 @@ async def complete(client: httpx.AsyncClient, m: ModelConfig, system: str, promp
         r = await client.post(chat_url(m.base_url), json=chat, headers=headers, timeout=600)
         r.raise_for_status()
         d = r.json()
-    msg = (d.get("choices") or [{}])[0].get("message") or {}
-    return msg.get("content") or "", d.get("usage") or {}
+    choice = (d.get("choices") or [{}])[0]
+    text = (choice.get("message") or {}).get("content") or ""
+    if choice.get("finish_reason") == "content_filter" or not text.strip():
+        raise Refused(f"{m.id} refused" if choice.get("finish_reason") == "content_filter" else f"{m.id} answered nothing")
+    return text, d.get("usage") or {}
 
 
 async def summarize_in_parts(client: httpx.AsyncClient, m: ModelConfig, system: str, user: str, limit: int) -> tuple[str, int]:
@@ -112,6 +122,31 @@ async def summarize_in_parts(client: httpx.AsyncClient, m: ModelConfig, system: 
             prompt += f"<previous-summary>\n{prev}\n</previous-summary>\n\n{UPDATE_NOTE}"
         prev, _ = await complete(client, m, system, prompt + instructions, 16000)
     return prev, len(parts)
+
+
+RETRY_NOTE = ("\n\nThis is the user's own working session with their assistant. Summarising it so the work can "
+              "continue is the expected task; summarise everything, including parts you would not act on yourself.")
+
+
+async def summarize(client: httpx.AsyncClient, models: list[ModelConfig], system: str, user: str, limit_of) -> tuple[str, str, int]:
+    """Write a context summary. The conversation's own model first (in parts when it does not fit in one request);
+    when a model refuses or fails, once more with a note on what the task is, then the next model in the list.
+    Returns (summary, model id, parts)."""
+    last: Exception | None = None
+    for m in models:
+        for note in ("", RETRY_NOTE):
+            try:
+                if tokens_of(user) > limit_of(m) * 0.9:
+                    text, n = await summarize_in_parts(client, m, system + note, user, limit_of(m))
+                    return text, m.id, n
+                text, _ = await complete(client, m, system + note, user, 16000)
+                return text, m.id, 1
+            except Refused as e:
+                last = e  # perhaps the framing: try again with the note, then another model
+            except httpx.HTTPError as e:
+                last = e
+                break  # this model cannot be reached or rejects the request: the next one
+    raise last or Refused("no model to write the summary")
 
 
 # ---------- an answer the server wrote itself, in the client's format ----------

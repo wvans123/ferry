@@ -50,6 +50,8 @@ export const DEFAULTS = {
 	phoneConsole: false, // report this window's status to the server's phone console (off: no requests for it at all)
 	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
+	compactAt: "90%", // summarise the conversation once the context is this full (at the end of a request); "off" = only when it must
+	compactKeep: "20k", // how much of the latest conversation a summary keeps word for word
 	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
 	caFile: "", // a PEM file with more certificates to trust, e.g. the company proxy's, if the computer's own are not enough
@@ -59,8 +61,9 @@ export const DEFAULTS = {
 export const SETTINGS = {
 	permissionMode: ["string", "how much the agent may do without asking, when ferry starts (Shift+Tab switches while it runs)",
 		["default  ask before changing files and running commands", "acceptEdits  file changes in the project go ahead; commands still ask",
-			"auto  like acceptEdits; commands the rules cannot decide are judged by a model on the server, and asked only when unsure",
 			"plan  read and search only", "bypass  nothing asks (protected paths stay blocked)"]],
+	compactAt: ["string", "summarise the conversation (compaction) once the context is this full; lower = cheaper requests, earlier summaries",
+		["50%", "60%", "70%", "80%", "90%  (default)", "off  only when the model's limit is reached"]],
 	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
 		["low", "medium  (default)", "high", "xhigh"]],
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
@@ -93,6 +96,7 @@ export const ADVANCED_SETTINGS = {
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
 	phoneConsole: ["boolean", "show this computer's ferry on the server's phone console (status only); off by default: it costs a request every few seconds while a phone looks"],
+	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],
 	systemCerts: ["boolean", "also trust the HTTPS certificates this computer trusts (needed when a company proxy checks HTTPS)"],
 	caFile: ["string", "a PEM file with more certificates to trust (full path), e.g. the company proxy's; empty = none"],
@@ -222,7 +226,7 @@ export function findBash() {
 }
 
 /** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept). */
-export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking = "medium") {
+export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking = "medium", compactKeep = "") {
 	scaffoldHome();
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
 	const file = join(AGENT_DIR, "settings.json");
@@ -242,6 +246,9 @@ export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking
 	next.defaultThinkingLevel = ["low", "medium", "high", "xhigh"].includes(thinking) ? thinking : "medium";
 	// pressing Esc twice on an empty input opened pi's session tree, which looked like being thrown out; /rewind does that job
 	if (!("doubleEscapeAction" in cur)) next.doubleEscapeAction = "none";
+	// how much of the latest conversation a summary keeps word for word (compactKeep)
+	const keep = parseTokens(compactKeep);
+	if (keep) next.compaction = { ...(cur.compaction ?? {}), keepRecentTokens: keep };
 	writeFileSync(file, JSON.stringify(next, null, 2), "utf8");
 	// Shift+Tab switches the permission mode (like Claude Code); pi uses it for thinking levels, which the
 	// server-chosen model does not expose

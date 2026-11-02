@@ -66,7 +66,8 @@ export function createGoal(cfg) {
 
 		const status = (ctx) => {
 			if (!ui) return;
-			if (!goal) return ui.setStatus("ferry-goal", undefined);
+			// a goal that has ended is shown until you send your next message, then the line goes away (/goal still tells)
+			if (!goal || (goal.status !== "pursuing" && goal.status !== "paused" && goal.quiet)) return ui.setStatus("ferry-goal", undefined);
 			const used = tokensSince(ctx.sessionManager.getBranch(), goal.startedAt);
 			const icon = { pursuing: "◎", paused: "‖", achieved: "✓", unmet: "!", budget: "$" }[goal.status] ?? "◎";
 			ui.setStatus("ferry-goal", `${icon} goal ${goal.status} · ${mins((goal.status === "pursuing" ? Date.now() : goal.endedAt ?? Date.now()) - goal.startedAt)} · ` +
@@ -88,6 +89,7 @@ export function createGoal(cfg) {
 				if (e.type === "custom" && e.customType === ENTRY) goal = e.data ?? null;
 			}
 			if (goal?.status === "pursuing") goal.status = "paused"; // a resumed conversation does not run off by itself
+			if (goal && goal.status !== "paused") goal.quiet = true; // an old, finished goal: no status line
 			status(ctx);
 		});
 
@@ -154,6 +156,13 @@ export function createGoal(cfg) {
 		});
 
 		pi.on("agent_settled", (_e, ctx) => status(ctx));
+		pi.on("input", (event, ctx) => {
+			if (goal && goal.status !== "pursuing" && goal.status !== "paused" && !goal.quiet && !String(event.text ?? "").startsWith("/goal")) {
+				goal.quiet = true;
+				status(ctx);
+			}
+			return { action: "continue" };
+		});
 
 		pi.registerCommand("goal", {
 			description: "Work on an objective until it is done: /goal <objective> | pause | resume | clear | budget <tokens>",

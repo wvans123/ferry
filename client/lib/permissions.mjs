@@ -18,11 +18,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FERRY_HOME } from "./config.mjs";
 
-export const MODES = ["default", "acceptEdits", "auto", "plan", "bypass"];
+export const MODES = ["default", "acceptEdits", "plan", "bypass"];
 export const MODE_LABEL = {
 	default: "ask before edits and commands",
 	acceptEdits: "auto-edit: file changes go ahead",
-	auto: "auto: a model decides, asks only when unsure",
 	plan: "plan: read-only",
 	bypass: "full access: nothing asks",
 };
@@ -311,7 +310,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	if (EDIT.has(tool)) {
 		if (![cwd, ...extraDirs].some((d) => insideProject(d, resolve(cwd, String(input.path ?? ""))))) return { action: "ask", outside: true };
-		if (mode === "acceptEdits" || mode === "auto" || any(rules.allow)) return { action: "allow" };
+		if (mode === "acceptEdits" || any(rules.allow)) return { action: "allow" };
 		return { action: "ask" };
 	}
 	if (shell) {

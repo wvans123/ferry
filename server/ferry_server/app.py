@@ -37,7 +37,7 @@ from .console import mount_console
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
-from .fit import anthropic_answer, openai_answer, summarize_in_parts, summary_prompt
+from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
 from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
@@ -83,6 +83,60 @@ def create_app(cfg: Config) -> FastAPI:
         before), and an answer a relay gives for that (kiro: a bare 502)."""
         ok = live.fits.get(m.id, 0)
         return status in (400, 413, 422, 500, 502, 504) and ok > 0 and tokens > max(ok * 1.02, m.context_window * 0.3)
+
+    def summary_models(model) -> list:
+        """Who writes a summary: the conversation's model, then the summary model and the default one if set apart."""
+        out = [model]
+        for mid in (cfg.summary_model, cfg.default_model):
+            m = cfg.models.get(mid)
+            if m and m.ready and m.id != cfg.image_model and all(x.id != m.id for x in out):
+                out.append(m)
+        return out
+
+    async def summary_reply(kind: str, model, sys_text: str, user_text: str, stream: bool, user, project: str,
+                            tokens_est: int, started: float):
+        async def run():
+            ticket = await take_turn(user or "")
+            try:
+                return await summarize(client, summary_models(model), sys_text, user_text, limit_of)
+            finally:
+                ticket.release()
+
+        def logged(status: int, **extra) -> None:
+            write(audit_log, event="chat", user=user, project=project, purpose="summary", status=status,
+                  tokens_in=tokens_est, ms=int((time.time() - started) * 1000), **extra)
+
+        if not stream:
+            try:
+                text, mid, n = await run()
+            except Exception as e:  # noqa: BLE001 - reported to the client
+                logged(502, model=model.id, error=str(e)[:200])
+                return JSONResponse({"error": {"message": f"writing the summary failed: {e}"}}, status_code=502)
+            logged(200, model=mid, parts=n)
+            body, kind_ = openai_answer(live.red.unmask(text, user), model.model, False)
+            return Response(body, media_type=kind_)
+
+        async def gen():
+            task = asyncio.create_task(run())
+            while True:  # a long summary: keep the connection alive so nothing on the way closes it
+                done, _ = await asyncio.wait({task}, timeout=10)
+                if done:
+                    break
+                yield b": ferry is writing the summary\n\n"
+            try:
+                text, mid, n = task.result()
+            except Exception as e:  # noqa: BLE001 - reported to the client
+                logged(502, model=model.id, error=str(e)[:200])
+                msg = f"writing the summary failed: {e}"
+                if kind == "anthropic":
+                    yield ("event: error\ndata: " + json.dumps({"type": "error", "error": {"type": "api_error", "message": msg}}) + "\n\n").encode()
+                else:
+                    yield ("data: " + json.dumps({"error": {"message": msg}}) + "\n\n").encode()
+                return
+            logged(200, model=mid, parts=n)
+            yield anthropic_answer(text, model.model) if kind == "anthropic" else openai_answer(live.red.unmask(text, user), model.model, True)[0]
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
 
     def learn_limit(m, tokens: int) -> None:
         new = int(tokens * 0.97)
@@ -542,22 +596,12 @@ def create_app(cfg: Config) -> FastAPI:
                                 status_code=503)
         tokens_est = estimate_tokens(payload)
         limit = limit_of(model)
-        if purpose == "summary" and tokens_est > limit * 0.9 and summary_prompt(payload.get("messages") or []):
-            # the history to summarise does not fit the model in one request: the same model summarises it in parts
+        if purpose == "summary" and summary_prompt(payload.get("messages") or []):
+            # summaries are written here, never streamed through: in parts when too big, again (or by the next model)
+            # when the model refuses (fit.py)
             sys_text, user_text = summary_prompt(payload["messages"])
-            ticket = await take_turn(user or "")
-            try:
-                text, n = await summarize_in_parts(client, model, sys_text, user_text, limit)
-            except httpx.HTTPError as e:
-                write(audit_log, event="chat", user=user, project=project, model=model.id, purpose=purpose, status=502,
-                      error=f"summary in parts: {type(e).__name__}"[:200])
-                return JSONResponse({"error": {"message": f"summarising in parts failed: {type(e).__name__}"}}, status_code=502)
-            finally:
-                ticket.release()
-            write(audit_log, event="chat", user=user, project=project, model=model.id, purpose=purpose, status=200,
-                  parts=n, tokens_in=tokens_est, ms=int((time.time() - started) * 1000))
-            body, kind = openai_answer(live.red.unmask(text, user), model.model, bool(payload.get("stream")))
-            return Response(body, media_type=kind)
+            return await summary_reply("openai", model, sys_text, user_text, bool(payload.get("stream")), user, project,
+                                       tokens_est, started)
         if tokens_est > min(model.context_window * 1.15, live.limits.get(model.id) or 10**12):
             # the client thinks the model holds more than it does (or the provider refused this size before)
             write(audit_log, event="chat", user=user, project=project, model=model.id, status=400, overflow=tokens_est)
@@ -727,22 +771,12 @@ def create_app(cfg: Config) -> FastAPI:
             payload["system"] = [*system, {"type": "text", "text": f"<server-rules>\n{rules}\n</server-rules>"}]
         tokens_est = estimate_tokens(payload)
         limit = limit_of(model)
-        if purpose == "summary" and tokens_est > limit * 0.9:
+        if purpose == "summary":
             sys_blocks = payload.get("system") or ""
             sys_text = sys_blocks if isinstance(sys_blocks, str) else "".join(b.get("text", "") for b in sys_blocks if isinstance(b, dict))
             sp = summary_prompt([{"role": "system", "content": sys_text}, *(payload.get("messages") or [])])
             if sp:
-                ticket = await take_turn(request.state.user or "")
-                try:
-                    text, n = await summarize_in_parts(client, model, sp[0], sp[1], limit)
-                except httpx.HTTPError as e:
-                    return JSONResponse({"type": "error", "error": {"type": "api_error",
-                                         "message": f"summarising in parts failed: {type(e).__name__}"}}, status_code=502)
-                finally:
-                    ticket.release()
-                write(audit_log, event="chat", user=request.state.user, project=project, model=model.id, purpose=purpose,
-                      status=200, parts=n, tokens_in=tokens_est, ms=int((time.time() - started) * 1000))
-                return Response(anthropic_answer(text, model.model), media_type="text/event-stream")
+                return await summary_reply("anthropic", model, sp[0], sp[1], True, request.state.user, project, tokens_est, started)
         if tokens_est > min(model.context_window * 1.15, live.limits.get(model.id) or 10**12):
             write(audit_log, event="chat", user=request.state.user, project=project, model=model.id, status=400, overflow=tokens_est)
             return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",

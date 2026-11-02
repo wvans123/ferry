@@ -41,6 +41,15 @@ export function teamCli(args, { ferry } = {}) {
 	});
 }
 
+// ferry team init: the lead splits the goal and hands parts to the others; everyone writes into the project folder
+const DEFAULT_TEAM = [
+	["Lead", { role: "ceo", title: "负责人", about: "把目标拆成几步，用 team 工具把调研、分析、写作派给 Researcher、Analyst、Writer（create 时 wait: true），" +
+		"等他们做完再检查结果、补漏，最后汇总成交付物，写明放在哪。自己不做大段调研。" }],
+	["Researcher", { role: "researcher", title: "调研", about: "查资料、找数据和来源，结果写成 research/ 下的 Markdown，每条写明出处；做完把任务标为 done，留言说明文件在哪。" }],
+	["Analyst", { role: "general", title: "方案分析", about: "根据 research/ 里的资料比较方案的利弊、风险和成本，写 analysis.md；有缺的资料就给 Researcher 建任务。" }],
+	["Writer", { role: "general", title: "汇报撰写", about: "根据 research/ 和 analysis.md 写汇报：Word 或 PPT（用 office 工具），放在 deliverables/ 下；写完标为 done。" }],
+];
+
 export const PAPERCLIP_VERSION = "2026.1023.0"; // the version Ferry was tested with; --version latest for the newest
 // Paperclip's statistics and announcements fetched from the internet: off, this is a work computer
 export const QUIET_ENV = { PAPERCLIP_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1", PAPERCLIP_ANNOUNCEMENTS_ENABLED: "false" };
@@ -114,8 +123,32 @@ async function run(args) {
 	const agentsOf = async (c) => list(await api("GET", `/companies/${c.id}/agents`));
 	const byName = (agents, n) => agents.find((a) => [a.id, a.name, a.urlKey].some((v) => v && String(v).toLowerCase() === String(n).toLowerCase()));
 
-	if (sub === "add") {
-		const name = pos[0];
+	if (sub === "init") { // a ready-made team: a lead and three members
+		for (const [name, o] of DEFAULT_TEAM) {
+			const c = await company(true);
+			if (byName(await agentsOf(c), name)) {
+				console.log(`${name} is on the team already.`);
+				continue;
+			}
+			await add(name, { ...opts, ...o });
+		}
+		console.log(`\nThe team is ready. Give the lead a goal:\n  ferry team goal "调研三种方案，比较利弊，写一份汇报 PPT"\nthen watch it at ${base}`);
+		return;
+	}
+	if (sub === "goal") { // a task for the lead, who splits it up
+		const title = pos.join(" ").trim();
+		if (!title) throw new Error('usage: ferry team goal "<what should be done>"');
+		const c = await company();
+		const lead = (await agentsOf(c)).find((a) => a.role === "ceo");
+		if (!lead) throw new Error("the team has no lead yet: ferry team init");
+		const t = await api("POST", `/companies/${c.id}/issues`, { title, description: opts.text ? String(opts.text) : "",
+			status: "todo", assigneeAgentId: lead.id });
+		console.log(`${t.identifier ?? t.id}: "${title}" for ${lead.name}. Follow it at ${base}`);
+		return;
+	}
+	if (sub === "add") return add(pos[0], opts);
+
+	async function add(name, opts) {
 		if (!name) throw new Error('usage: ferry team add <name> [--title "..."] [--about "..."] [--boss <name>] ...');
 		const c = await company(true);
 		const agents = await agentsOf(c);
@@ -140,7 +173,6 @@ async function run(args) {
   runs:   ${command} with model ${model}
   folder: ${folder}
 Paperclip checks the new member once (a short "hello" through your Ferry server). See it at ${base}`);
-		return;
 	}
 	if (sub === "task") {
 		const title = pos[0];
@@ -179,6 +211,8 @@ Paperclip checks the new member once (a short "hello" through your Ferry server)
 
 const usage = (base) => `Ferry in a Paperclip team (Paperclip: ${base}; docs/TEAM.md)
   ferry team start                        start Paperclip (the team board) on this computer; the first time it sets it up
+  ferry team init                         a ready-made team here: Lead, Researcher, Analyst, Writer
+  ferry team goal "<what to do>"          give the lead a goal; the lead splits it up and hands parts out
   ferry team status                       the members and their open tasks
   ferry team add <name> [options]         add a member that runs Ferry
       --title "Researcher"  --about "what this member does"  --role researcher|pm|...|general (first one: ceo)

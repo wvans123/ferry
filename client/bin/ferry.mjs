@@ -337,7 +337,7 @@ async function run(args) {
 	if (models[0].ready === false) {
 		console.error(`Ferry: no API key for model ${models[0].routesTo ?? models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
 	}
-	ensureAgentDir(models[0].id, models.map((m) => m.id), cfg.thinking);
+	ensureAgentDir(models[0].id, models.map((m) => m.id), cfg.thinking, cfg.compactKeep);
 	installBundled(APP_ROOT); // fd and rg from the release zip, after an update
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 	process.env.FERRY_TOKEN = cfg.token;
@@ -383,12 +383,6 @@ async function run(args) {
 	const { createBrowser } = await import("../lib/browser.mjs");
 	const sync = createSyncProvider(cfg, models);
 	cfg.phone = (await import("../lib/phone.mjs")).phoneNotifier(cfg);
-	// auto mode: a model on the server judges actions the rules cannot decide
-	cfg.judge = async (action) => {
-		const res = await fetch(`${cfg.server}/v1/ferry/judge`, { method: "POST", body: JSON.stringify(action),
-			headers: serverHeaders(cfg, { "Content-Type": "application/json" }), signal: AbortSignal.timeout(30000) });
-		return res.ok && res.headers.get("content-type")?.includes("json") ? res.json() : null;
-	};
 	// an approval left waiting: tell the phone after a while
 	let waitTimer = null;
 	permState.onAsk = (tool) => {

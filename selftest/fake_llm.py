@@ -119,7 +119,9 @@ def decide_team(wake, tools):
 def decide_agent(msgs):
     system = text_of(msgs[0]) if msgs else ""
     system += " ".join(text_of(m) for m in msgs if m.get("role") in ("system", "developer"))
-    last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"], default=0)
+    # Ferry's own reminders (the to-do check) are not the user's request
+    last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"
+                     and not text_of(m).startswith("Before you stop: the to-do list")], default=0)
     tools = [m for m in msgs[last_user:] if m.get("role") == "tool"]  # this request's tool results
     first = text_of(msgs[last_user]) if msgs else ""  # the latest user message picks the scenario
     wakes = [i for i, m in enumerate(msgs) if m.get("role") == "user"

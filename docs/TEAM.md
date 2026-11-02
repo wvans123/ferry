@@ -34,32 +34,42 @@ Ferry 服务端（家里电脑）── 每次上传不超过 1 MB，key 只在�
 
 Paperclip 自己不调用模型；所有模型调用都由 ferry 发给你的 Ferry 服务端。
 
-## 建团队
+## 三步用起来
 
-在项目文件夹里运行（成员会在这个文件夹里干活）：
+需要两个终端窗口。
 
-```powershell
-ferry team add Lead --title "负责人" --about "拆解目标，派活给成员，检查结果，最后汇总"
-ferry team add Researcher --title "调研" --about "查资料、找竞品和数据，结果写成 research/*.md"
-ferry team add Analyst --title "方案分析" --about "比较方案的利弊和风险，写 analysis.md"
-ferry team add Writer --title "PPT 撰写" --about "根据调研和分析写汇报材料（用 office 工具生成 pptx/docx）"
-ferry team status
+**窗口 1：开看板**（这个窗口一直开着）
+```
+ferry team start
 ```
 
-- 第一个加的是负责人（CEO），后面的默认向它汇报（`--boss` 可以改）。
-- 名字建议用英文（`@Researcher` 好打），中文写在 `--title`、`--about` 里。`--about` 会成为这个成员的说明；想写长一点，用 `--instructions 说明.md`。
-- 加完 Paperclip 会让每个成员先回一句 hello，确认能通过你的 Ferry 服务端调到模型；通过后状态变成 idle。
-- 也可以在网页里加：New agent → 选 Pi → Advanced 里选 Legacy runner，command 填 `ferry.cmd` 的完整路径（`where ferry` 能查到），model 填 `ferry/auto`。
-
-## 下达目标
-
-在网页里 New Task，负责人选 Lead；或者：
-
-```powershell
-ferry team task "调研 6G 数据开放的三种方案，写一份对比和汇报 PPT" --to Lead --text "交付物放在 deliverables/ 下"
+**窗口 2：在项目文件夹里建团队、给目标**
+```
+cd 你的项目文件夹
+ferry team init
+ferry team goal "调研 6G 数据开放的三种方案，比较利弊，写一份汇报 PPT"
 ```
 
-然后在网页上看：仪表盘显示谁在干什么，任务页能看到子任务、评论和每次运行的完整记录（ferry 做了什么、调了哪些工具）。
+**然后在浏览器打开 http://127.0.0.1:3100 看进度。**
+
+`ferry team init` 建一个现成的四人团队，都在这个项目文件夹里干活：
+
+| 成员 | 做什么 | 交付 |
+|---|---|---|
+| Lead（负责人） | 拆目标，把各部分派给下面三个，等他们做完后检查、补漏、汇总 | 最终交付物 |
+| Researcher（调研） | 查资料、找数据，写明出处 | `research/*.md` |
+| Analyst（方案分析） | 比较方案利弊、风险、成本；缺资料就给 Researcher 派任务 | `analysis.md` |
+| Writer（汇报撰写） | 写 Word 或 PPT | `deliverables/` |
+
+你在网页上能做的：
+- 看每个人在干什么（仪表盘），点进任务看子任务、留言、每次运行的完整记录（调了哪些工具、写了什么）；
+- 在任何任务下留言，相当于插话，会叫醒负责这个任务的成员；
+- 改成员的说明（成员页 → Instructions），或者新建任务直接派给某个成员；
+- 需要网页版 ChatGPT/Claude 做的部分：新建任务派给你自己，做完把结果贴在留言里。
+
+想换团队组成：`ferry team add <英文名> --title "中文职位" --about "做什么、交付什么"`（第一个加的是负责人，后面的默认向负责人汇报），也可以在网页里 New agent（选 Pi → Advanced 里选 Legacy runner，command 填 ferry 的完整路径，model 填 `ferry/auto`）。
+
+加完成员，Paperclip 会让每人先回一句 hello，确认能通过你的 Ferry 服务端调到模型；通过后状态变成 idle，才会接活。
 
 ## 成员能做什么
 
@@ -84,7 +94,7 @@ ferry team task "调研 6G 数据开放的三种方案，写一份对比和汇�
 
 ## 权限
 
-成员在后台运行，没人在终端前点确认，所以默认用 auto 模式：项目里改文件、只读命令直接做；拿不准的命令交给服务端的判断模型，它明确说安全才做；危险命令（比如 `rm -rf`）直接拒绝，成员会在任务里说明卡在哪。想换：在成员的设置里加环境变量 `FERRY_PERMISSION_MODE`（`acceptEdits`、`auto`、`bypass`）。
+成员在后台运行，没人在终端前点确认，所以默认"自动改文件"：项目里改文件、只读命令直接做；其他要确认的命令不做，成员会在任务里说明卡在哪，你在留言里回复或者自己处理。想全部放行：在成员的设置里加环境变量 `FERRY_PERMISSION_MODE=bypass`。
 
 ## 花费和并发
 

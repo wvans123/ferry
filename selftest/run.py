@@ -369,15 +369,6 @@ def check_v016(root: Path, work: Path) -> None:
         c3, o3 = s.ferry("-p", "OFFICETEST: make a change request")
         ok = c3 == 0 and "{-every 10 s-}{+every 20 s+}" in o3 and (work / "cr.docx").exists()
         check("F50 Office 文件", ok, "agent 新建 Word、按修订方式改、再读出修订痕迹" if ok else o3[-300:])
-        cfgf.write_text(json.dumps({"permissionMode": "auto"}), encoding="utf-8")
-        no_bypass = {"FERRY_AUTO_APPROVE": "0"}
-        c4, o4 = s.ferry("-p", "AUTOTEST: make a file", env_extra=no_bypass)
-        c5, o5 = s.ferry("-p", "AUTOTEST: clean the build", env_extra=no_bypass)
-        judged = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "judge"]
-        ok = (c4 == 0 and (work / "auto-made.txt").exists() and c5 == 0 and "approval" in o5
-              and [j["verdict"] for j in judged] == ["allow"])
-        check("F51 auto 模式", ok, "规则定不了的命令交给服务端的模型判断：建文件放行；rm -rf 属于危险操作，不经判断直接要确认"
-              if ok else f"{[j.get('verdict') for j in judged]} | {o4[-200:]} | {o5[-200:]}")
         cfgf.write_text(json.dumps({}), encoding="utf-8")
         c6, o6 = s.ferry("-p", "/goal GOALTEST write three notes")
         barks = [u for u in jsonl(s.upstream) if "group" in u and u.get("group") == "Ferry"]

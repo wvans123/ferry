@@ -248,13 +248,12 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 
 ### 权限：该问的才问
 
-**Shift+Tab** 在五种模式之间切换，底栏显示当前模式：
+**Shift+Tab** 在四种模式之间切换，底栏显示当前模式：
 
 | 模式 | 改文件 | 执行命令 |
 |---|---|---|
 | 默认 | 问 | 只读命令（`git status`、`dir`、`rg`……）不问，其他问 |
 | 自动改文件 | 项目文件夹里的不问 | 同上 |
-| auto | 项目文件夹里的不问 | 规则定不了的，交给服务端的一个模型判断（管理页 → 设置里选，比如 DeepSeek），它说"明显安全"才放行，否则照常问你。危险操作不经判断，直接问 |
 | 只读规划 | 不允许 | 只允许只读命令 |
 | 全部放行 | 不问 | 不问 |
 
@@ -295,10 +294,9 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 想要"负责人派活、调研/分析/写 PPT 各管一摊、互相留言"的团队，用 [Paperclip](https://github.com/paperclipai/paperclip) 当看板（组织架构、任务、评论、仪表盘，在工作电脑本机打开），每个成员都跑 Ferry，模型调用照样走你的 Ferry 服务端：
 
 ```powershell
-ferry team start                       # 启动看板（第一次会自动装好；需要 Node 24.11+），另开一个终端继续：
-ferry team add Lead --title "负责人" --about "拆解目标、派活、检查、汇总"
-ferry team add Researcher --title "调研" --about "查资料，结果写成 research/*.md"
-ferry team task "调研三种方案并写汇报 PPT" --to Lead
+ferry team start                       # 窗口 1：启动看板（第一次会自动装好；需要 Node 24.11+）
+ferry team init                        # 窗口 2，在项目文件夹里：建一个负责人 + 调研 + 分析 + 撰写的团队
+ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目标，然后在 http://127.0.0.1:3100 看进度
 ```
 
 成员有 `team` 工具：派子任务、等它完成后被自动叫醒、留言、改状态；项目记忆全队共享，每个成员还有自己的角色记忆。详见 [docs/TEAM.md](docs/TEAM.md)。
@@ -339,6 +337,8 @@ ferry team task "调研三种方案并写汇报 PPT" --to Lead
 | `blockedSites` | 空 | 永远不打开的网站（含子域名），比如邮箱、通讯、网盘 |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
+| `compactAt` | `90%` | 上下文用到多少时自动压缩（一次请求做完后）：`50%`～`90%`，或 `off`（只在快超限时压缩）。越低每次请求越便宜，但更早丢掉细节 |
+| `compactKeep` | `20k` | 压缩时最近多少内容原样保留 |
 | `keepImages` | `4` | 对话里保留最近几张图片；更早的换成一句说明（图片发出前都会缩小到长边 1568 像素、约 300 KB 以内） |
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理会检查 HTTPS（用公司自己的证书），浏览器能上而 ferry 报证书错误时靠它 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
