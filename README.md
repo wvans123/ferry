@@ -343,7 +343,7 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理会检查 HTTPS（用公司自己的证书），浏览器能上而 ferry 报证书错误时靠它 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`electronPath`（Electron 在哪，空 = 自己找）、`renderWaitMs`（web_render 最多等页面多久，默认 12 秒）、`gatewayCheck`（每几分钟看一次公司网关的确认是否过期，默认 10，0 = 不看）、`phoneConsole`（在手机控制台上显示这台电脑，默认关：关着就完全不发状态上报）。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`electronPath`（Electron 在哪，空 = 自己找）、`renderWaitMs`（web_render 最多等页面多久，默认 12 秒）、`rulesFromParents`（项目上层文件夹里的 AGENTS.md / CLAUDE.md 也放进提示，默认关：只放 Ferry 自己的和项目自己的；`/status` 列出用了哪些、略过了哪些）、`gatewayCheck`（每几分钟看一次公司网关的确认是否过期，默认 10，0 = 不看）、`phoneConsole`（在手机控制台上显示这台电脑，默认关：关着就完全不发状态上报）。上下文长度用 `/context` 改，存在同一个文件里。
 
 **服务端**：大多在管理页里改，存在服务端数据目录的 `server.toml`。也可以用环境变量：
 

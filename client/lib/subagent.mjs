@@ -247,7 +247,7 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 		noThemes: true,
 		extensionFactories: [
 			{ name: "ferry-sync", factory: deps.makeSync() },
-			{ name: "ferry-prompt", factory: createPrompt() },
+			{ name: "ferry-prompt", factory: createPrompt(cfg) },
 			{ name: "ferry-guard", factory: createGuard(cfg, { ui: ctx?.hasUI ? ctx.ui : undefined, label }) },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg) },
 			{ name: "ferry-web", factory: createWeb(cfg) },

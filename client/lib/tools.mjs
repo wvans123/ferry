@@ -56,22 +56,29 @@ export function createTodo() {
 		pi.on("session_start", restore);
 		pi.on("session_tree", restore);
 		// Models often finish the work and forget to tick the list off. When the agent is about to stop with items
-		// still open on a list it used in this request, it is asked once to bring the list up to date.
+		// still open on a list it used in this request, it is sent back to finish them (or mark them done), up to three times
+		// and only while the list keeps moving, so a real question to the user still ends the request.
 		let used = false;
-		let reminded = false;
+		let reminders = 0; // per request: at most 3, and again only when the list moved since the last one
+		let lastList = "";
 		pi.on("agent_before_settle", (event) => {
 			const open = todos.filter((t) => t.status !== "completed");
-			if (!used || reminded || event.continue || event.outcome !== "completed" || !open.length) return undefined;
-			reminded = true;
+			if (!used || event.continue || event.outcome !== "completed" || !open.length) return undefined;
+			const list = JSON.stringify(todos);
+			if (reminders >= 3 || (reminders > 0 && list === lastList)) return undefined;
+			reminders++;
+			lastList = list;
 			return { continue: true, entries: [{ type: "custom_message", customType: "ferry-todo-check", display: false,
 				content: `Before you stop: the to-do list still shows ${open.length} unfinished item(s): ` +
-					`${open.map((t) => `"${t.content}" (${t.status})`).join(", ")}. Update it with the todo tool now: mark ` +
-					"what is done as completed. If something is really not done, leave it open and say in one line why. " +
-					"Do not start new work." }] };
+					`${open.map((t) => `"${t.content}" (${t.status})`).join(", ")}. If they are done, mark them completed with ` +
+					"the todo tool. If not, keep working on them now, without asking whether to continue. Stop only if an " +
+					"item needs something only the user can give (a decision, a file, access): then update the list and ask " +
+					"exactly that in one short line." }] };
 		});
 		pi.on("agent_settled", () => {
 			used = false;
-			reminded = false;
+			reminders = 0;
+			lastList = "";
 		});
 		pi.registerTool({
 			name: "todo",

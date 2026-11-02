@@ -813,6 +813,26 @@ def check_v022(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_prompt_rules(root: Path, work: Path) -> None:
+    """The system prompt: whole sentences (no lines cut mid-sentence); only the project's own AGENTS.md, not one in a folder above."""
+    parent = root / "parent"
+    proj = parent / "proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    (parent / "AGENTS.md").write_text("PARENT-RULE: an old Cursor rules backup\n", encoding="utf-8")
+    (proj / "AGENTS.md").write_text("PROJECT-RULE: answer briefly\n", encoding="utf-8")
+    s = Stack(root, work, "agent")
+    try:
+        code, out = s.ferry("-p", "hello", cwd=proj)
+        ups = jsonl(s.upstream)
+        sys0 = system_text(ups[0]) if ups else ""
+        ok = (code == 0 and "PROJECT-RULE" in sys0 and "PARENT-RULE" not in sys0
+              and "The user brings all kinds of work" in sys0 and "Keep going until the whole task is done" in sys0)
+        check("F63 系统提示干净", ok, "提示里句子不再被换行截断；只放项目自己的 AGENTS.md，上层文件夹里的（比如别的工具留下的规则备份）不放进去"
+              if ok else f"code={code} project={'PROJECT-RULE' in sys0} parent={'PARENT-RULE' in sys0} {sys0[:300]!r}")
+    finally:
+        s.close()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1350,6 +1370,7 @@ def main() -> int:
     check_team(base / "team", work)
     check_v019(base / "v019", work)
     check_v022(base / "v022", work)
+    check_prompt_rules(base / "rules", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)
     check_v018(base / "v018", work)

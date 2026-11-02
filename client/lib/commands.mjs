@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, loadConfig, parseTokens, saveConfig } from "./config.mjs";
 import { MODE_LABEL, ruleFiles } from "./permissions.mjs";
+import { ruleFilesInUse } from "./prompt.mjs";
 
 let gatewayWatch; // one watch per ferry window (a /new or /resume starts a session again)
 
@@ -197,6 +198,8 @@ export function createCommands(cfg, deps) {
 					`Permission rules ("always allow" answers; edit to remove): ${f.project}`,
 					`  yours for all projects: ${f.user}   the team's: ${f.team}`,
 					`Hooks: ${join(FERRY_HOME, "hooks.json")} and .ferry/hooks.json`,
+					`Rules in the system prompt (AGENTS.md / CLAUDE.md): ${ruleFilesInUse.used.join(", ") || "none"}`,
+					...(ruleFilesInUse.skipped.length ? [`  left out (in folders above the project; rulesFromParents = true takes them): ${ruleFilesInUse.skipped.join(", ")}`] : []),
 					"",
 					"Checking the setup...",
 				);
