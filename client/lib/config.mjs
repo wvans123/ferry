@@ -161,6 +161,17 @@ export async function applyProxy(cfg) {
 	return httpsProxy;
 }
 
+/** Close the connections fetch keeps open (and the proxy agent), so the process can end by itself. */
+export async function closeNetwork() {
+	try {
+		const { getGlobalDispatcher } = await import("undici");
+		const d = getGlobalDispatcher();
+		await Promise.race([d.close(), new Promise((r) => setTimeout(r, 1000).unref())]);
+	} catch {
+		// nothing open, or an older undici
+	}
+}
+
 export const LOCAL_URL = `http://127.0.0.1:${process.env.FERRY_PORT ?? 8787}`;
 
 /** Written by a zero-config ferry-server on this computer: { url, token }. */

@@ -259,6 +259,24 @@ function updateCheckout(checkout, info, env) {
 	console.log(`\nUpdated to ${v}. Restart any open ferry windows.`);
 }
 
+/** The version current.txt points at (the folder name under versions), or "". */
+function installedVersion(env) {
+	try {
+		const dir = env.FERRY_INSTALL_DIR || installBase().dir;
+		return basename(readFileSync(join(dir, "current.txt"), "utf8").trim());
+	} catch {
+		return "";
+	}
+}
+
+const packageVersion = (root) => {
+	try {
+		return JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version ?? "";
+	} catch {
+		return "";
+	}
+};
+
 export async function update(version, repo, zipArg) {
 	// install the new version where this one is (e.g. D:\ferry\app), not in the default folder
 	const here = installedHere();
@@ -310,6 +328,13 @@ export async function update(version, repo, zipArg) {
 		const root = [out, ...readdirSync(out).map((n) => join(out, n))].find((d) => existsSync(join(d, "client", "bin", "ferry.mjs")));
 		if (!root) throw new Error(`${zip} does not look like a Ferry package`);
 		const r = spawnSync(process.execPath, [join(root, "client", "bin", "ferry.mjs"), "install"], { stdio: "inherit", env });
+		if (r.status !== 0 && installedVersion(env) === packageVersion(root)) {
+			// the install got done, and something failed or crashed at the very end (seen with Node on Windows):
+			// the new version is in place all the same
+			console.log(`\n(The install step ended with exit code ${r.status ?? r.signal}, after the new version was in place; ` +
+				"anything it reported above may need a look.)");
+			r.status = 0;
+		}
 		if (r.status === 0) {
 			console.log(`\nUpdated from ${version}. Restart any open ferry windows.`);
 			const h = await fetch("http://127.0.0.1:8787/health", { signal: AbortSignal.timeout(1500) }).then((x) => x.json()).catch(() => null);

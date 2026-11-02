@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import {
 	AGENT_DIR,
 	applyProxy,
+	closeNetwork,
 	ensureAgentDir,
 	FERRY_HOME,
 	findBash,
@@ -577,7 +578,17 @@ Give a file instead: ferry mcp import <path to mcp.json>`);
 Files: ${m.USER_MCP()} (yours), .ferry/mcp.json or .mcp.json in a project (asked once before use)`);
 }
 
-const exit = () => process.exit(process.exitCode ?? 0); // also stops a server this window started
+// The end of a command. Not process.exit() right away: on Windows, Node can crash with "Assertion failed:
+// !(handle->flags & UV_HANDLE_CLOSING) ... src\win\async.c" when the process is torn down while network or
+// certificate work in the background still reports back. So: close the connections, let the process end by itself
+// (a server this window started is stopped by the exit handler then), and only end it by force if something
+// still holds it after a few seconds.
+const exit = async (code) => {
+	if (typeof code === "number") process.exitCode = code;
+	process.exitCode ??= 0;
+	await closeNetwork();
+	setTimeout(() => process.exit(process.exitCode), 4000).unref();
+};
 if (cmd === "login") await login(rest).then(exit);
 else if (cmd === "logout") logout();
 else if (cmd === "config") config(rest);
@@ -600,7 +611,7 @@ else if (cmd === "check") await check().then(exit);
 else if (cmd === "install-electron") {
 	await applyProxy(loadConfig());
 	const ok = (await import("../lib/render.mjs")).installElectron(rest[0] || "latest");
-	process.exit(ok ? 0 : 1);
+	await exit(ok ? 0 : 1);
 }
 else if (cmd === "install") {
 	await applyProxy(loadConfig());
