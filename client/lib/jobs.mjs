@@ -204,19 +204,24 @@ export function createJobs(deps = { todoText: () => "" }) {
 		pi.registerCommand("tasks", {
 			description: "The to-do list, subagents, and background commands: see their output, stop them",
 			handler: async (_a, ctx) => {
-				const todo = deps.todoText();
-				const all = listJobs().reverse();
-				const head = [todo ? `To-do list:\n${todo.split("\n").map((l) => `  ${l}`).join("\n")}` : "No to-do list in this conversation.",
-					all.length ? "" : "No subagents or background commands yet."].filter(Boolean).join("\n\n");
+				const headOf = (all) => {
+					const todo = deps.todoText();
+					return [todo ? `To-do list:\n${todo.split("\n").map((l) => `  ${l}`).join("\n")}` : "No to-do list in this conversation.",
+						all.length ? "" : "No subagents or background commands yet."].filter(Boolean).join("\n\n");
+				};
+				let all = listJobs().reverse();
 				if (!ctx.hasUI || !all.length) {
-					if (ctx.hasUI) return ctx.ui.notify(head, "info");
-					return process.stdout.write(`${head}\n${all.map(describeJob).join("\n")}\n`);
+					if (ctx.hasUI) return ctx.ui.notify(headOf(all), "info");
+					return process.stdout.write(`${headOf(all)}\n${all.map(describeJob).join("\n")}\n`);
 				}
 				// Esc or "Back" goes one level up; from the list, back to the conversation
 				for (;;) {
-					const pick = await ctx.ui.select(`${head}\n\nSubagents and background commands (pick one; Esc: back to the conversation):`,
-						[...all.map(describeJob), "Back to the conversation"]);
-					const job = all.find((j) => pick === describeJob(j));
+					all = listJobs().reverse(); // jobs started or finished meanwhile, and the to-do list as it is now
+					// the labels carry the running time, so the pick is matched against these very labels, not new ones
+					const labels = all.map(describeJob);
+					const pick = await ctx.ui.select(`${headOf(all)}\n\nSubagents and background commands (pick one; Esc: back to the conversation):`,
+						[...labels, "Back to the conversation"]);
+					const job = all[labels.indexOf(pick)];
 					if (!job) return;
 					for (;;) {
 						const out = job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), 40) || "(no output yet)";

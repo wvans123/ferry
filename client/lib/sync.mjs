@@ -99,6 +99,13 @@ const oneAtATime = (fn) => {
 	return run;
 };
 
+// A model whose account cools down after "too many requests", with a fallback that speaks the other API (Claude's
+// vs OpenAI's): the server cannot pass our stored conversation on to it, so we ask the fallback ourselves, in its
+// format, until the cool-down is over. model id -> { to, until }. Learned from the server's answers (a "reroute"
+// error, the commit answers' "cooling" list); a cool-down has a fixed length, so an entry simply runs out.
+const switched = new Map();
+const REROUTE = /ferry-reroute:([^\s"'\\,}@]+)@(anthropic|openai)(?:.*?\((\d+) s to go\))?/;
+
 export function createSyncProvider(cfg, models, opts = {}) {
 	const known = new Map(); // conv -> { count, hash } the server has acknowledged
 	const byId = new Map(models.map((m) => [m.id, m]));
@@ -245,6 +252,10 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (!res.ok) throw new FerryError(`Ferry sync failed: HTTP ${res.status} ${await res.text()}`);
 		const ack = await res.json();
 		cfg.onRoute?.(ack.cooling ?? null); // an account cooling down after "too many requests": the status line says so
+		const cooling = new Map((ack.cooling ?? []).map((c) => [c.model, c]));
+		for (const c of cooling.values()) {
+			if (c.switch && c.fallback) switchTo(c.model, c.fallback, c.api, c.seconds);
+		}
 		if (ack.count !== msgs.length || ack.hash !== chain[msgs.length]) {
 			known.delete(conv);
 			throw new FerryError("Ferry server state does not match this client; it will resend on the next try");
@@ -280,8 +291,26 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	// request once more, which re-uploads the session in full.
 	const SESSION_LOST = /\b409\b|session not found|tools not found/i;
 
-	function streamFerry(model, context, options) {
+	/** Ask `to` instead of `from` for the next `seconds`. A fallback the server does not list (routing.expose off)
+	 * is known from here on by its API, with the size of the model it stands in for. */
+	function switchTo(from, to, api, seconds) {
+		if (!byId.has(to)) {
+			const was = byId.get(from) ?? {};
+			byId.set(to, { id: to, api: api === "anthropic" ? "anthropic" : "openai", contextWindow: was.contextWindow,
+				maxTokens: was.maxTokens, vision: was.vision });
+		}
+		switched.set(from, { to, until: Date.now() + Number(seconds || 0) * 1000 });
+	}
+
+	/** pi's model object for another of the server's models (same provider; that model's id, size, abilities). */
+	const asModel = (model, id) => ({ ...model, ...modelDef(byId.get(id), cfg) });
+
+	function streamFerry(model, context, options, hop = 0) {
 		if (!cfg.server || !cfg.token) return errorStream(model, "Ferry is not set up. Run: ferry login <server> <token>");
+		const sw = switched.get(model.id);
+		if (hop === 0 && sw && sw.until > Date.now() && byId.has(sw.to)) {
+			return streamFerry(asModel(model, sw.to), context, options, 1); // cooling down: its fallback answers
+		}
 		const userOnPayload = options?.onPayload;
 		// the server says which API its model speaks: Claude through Anthropic's own, everything else OpenAI-style
 		const api = byId.get(model.id)?.api === "anthropic" ? "anthropic" : "openai";
@@ -293,7 +322,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			...options,
 			apiKey: cfg.token,
 			headers: { ...(options?.headers ?? {}), ...(cfg.headers ?? {}), "x-ferry-project": encodeURIComponent(project), // headers must be ASCII; folder names may not be
-				"x-ferry-protocol": PROTOCOL },
+				"x-ferry-protocol": PROTOCOL, "x-ferry-reroute": "1" }, // we can ask a fallback of the other API ourselves
 			onPayload: async (payload, m) => {
 				const replaced = userOnPayload ? await userOnPayload(payload, m) : undefined;
 				return shrink(replaced ?? payload, options?.signal, api, options?.sessionId);
@@ -310,6 +339,14 @@ export function createSyncProvider(cfg, models, opts = {}) {
 						if (ev.type === "start") {
 							held.push(ev);
 							continue;
+						}
+						const re = ev.type === "error" && hop === 0 ? REROUTE.exec(ev.error?.errorMessage ?? "") : null;
+						if (re) { // rate-limited, and the fallback speaks the other API: ask it ourselves, in its format
+							const [, to, toApi, secs] = re;
+							switchTo(model.id, to, toApi, secs ?? 30);
+							for await (const e of streamFerry(asModel(model, to), context, options, 1)) out.push(e);
+							out.end();
+							return;
 						}
 						if (ev.type === "error" && i === 0 && SESSION_LOST.test(ev.error?.errorMessage ?? "")) {
 							known.clear();

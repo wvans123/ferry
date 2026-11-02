@@ -146,7 +146,7 @@ async function load() {
     $("app").hidden = false; $("problem").hidden = true; $("live").className = "dot";
     if (!busy) {
       $("list").innerHTML = d.clients.length ? d.clients.map(card).join("")
-        : `<div class="card empty">现在没有电脑在用 ferry。<br>ferry 运行时会出现在这里。</div>`;
+        : `<div class="card empty">现在没有电脑在报告状态。<br>电脑默认不报告（省请求）。要在这里看到，在电脑上运行<br><b>ferry config set phoneConsole true</b><br>然后重开 ferry。</div>`;
     }
     $("upd").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
   } catch {

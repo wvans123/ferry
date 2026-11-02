@@ -279,6 +279,10 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "image_create", {"prompt": "a small ferry on a river at dawn", "path": "images/ferry.png"})
         return ("text", "IMAGE: " + text_of(tools[-1])[:120])
+    if "LIMITTEST" in first:  # answered by the fallback (an OpenAI-style model) while Claude's account cools down
+        if not tools:
+            return ("tool", "bash", {"command": "echo fallback-step"})
+        return ("text", "LIMIT: answered by the fallback after " + text_of(tools[-1]).strip()[:40])
     if "TODOTEST" in first:
         if not tools:
             return ("tool", "todo", {"todos": [{"content": "step one", "status": "completed"},
@@ -346,6 +350,15 @@ def anthropic_to_openai(body):
 
 class H(BaseHTTPRequestHandler):
     def anthropic(self, body, raw):
+        if "LIMITTEST" in json.dumps(body.get("messages", [])):  # this Claude account is rate-limited
+            data = json.dumps({"type": "error", "error": {"type": "rate_limit_error", "message": "Too many requests"}}).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Retry-After", "30")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         problems = anthropic_problems(body, self.headers)
         if problems:
             return self.send_json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "; ".join(problems)}})

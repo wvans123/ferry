@@ -793,6 +793,26 @@ def check_v019(root: Path, work: Path) -> None:
         (work / "images" / "ferry.png").unlink(missing_ok=True)
 
 
+def check_v022(root: Path, work: Path) -> None:
+    """A rate-limited Claude account whose fallback speaks OpenAI's API: the client asks the fallback itself."""
+    toml = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
+            'fallback = "main"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
+            'context_window = 200000\nmax_tokens = 8000\n\n[routing]\ndefault = "claude"\n')
+    s = Stack(root, work, "agent", extra_toml=toml)
+    try:
+        c1, o1 = s.ferry("-p", "LIMITTEST: say something")
+        c2, o2 = s.ferry("-p", "LIMITTEST: once more")
+        claude_calls = [u for u in jsonl(s.upstream) if u.get("model") == "claude-opus-5-5"]
+        reroutes = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "reroute"]
+        ok = (c1 == 0 and c2 == 0 and "LIMIT: answered by the fallback after fallback-step" in o1 and "LIMIT: answered" in o2
+              and len(claude_calls) == 1 and len(reroutes) == 2)
+        check("F61 限流时改用另一种接口的模型", ok, "Claude 账号 429 冷却，回退模型是 OpenAI 接口：客户端按它的格式重发，"
+              "同一次运行里后面的请求直接问回退模型，冷却期间不再打扰 Claude 账号"
+              if ok else f"c={c1},{c2} claude={len(claude_calls)} reroutes={len(reroutes)} o1={o1[-300:]!r} o2={o2[-200:]!r}")
+    finally:
+        s.close()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1319,6 +1339,7 @@ def main() -> int:
     check_steer(base / "steer", work)
     check_team(base / "team", work)
     check_v019(base / "v019", work)
+    check_v022(base / "v022", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)
     check_v018(base / "v018", work)

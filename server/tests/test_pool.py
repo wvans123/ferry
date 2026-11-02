@@ -38,13 +38,13 @@ model = "deepseek-flash"
 """
 
 
-def make(tmp_path, monkeypatch, handler):
+def make(tmp_path, monkeypatch, handler, extra=""):
     for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "FERRY_SESSION_STORE", "FERRY_TOKEN", "FERRY_SECRET"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("KEY_A", "ka")
     monkeypatch.setenv("KEY_B", "kb")
     monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
-    (tmp_path / "models.toml").write_text(MODELS, encoding="utf-8")
+    (tmp_path / "models.toml").write_text(MODELS + extra, encoding="utf-8")
     monkeypatch.setattr(app_mod.httpx, "AsyncClient", lambda **kw: REAL(transport=httpx.MockTransport(handler), **kw))
     cfg = load_default()
     return cfg, app_mod.create_app(cfg)
@@ -332,3 +332,71 @@ def test_without_a_fallback_the_request_waits_out_the_cool_down(tmp_path, monkey
 
     r = asyncio.run(ask())
     assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "later" and len(calls) == 2
+
+
+CLAUDE = """
+[providers.c]
+base_url = "https://c.example.com"
+api_key_env = "KEY_A"
+api = "anthropic"
+fallback = "gpt"
+
+[models.kiro]
+provider = "c"
+model = "claude-opus-5.5"
+"""
+
+
+def test_a_fallback_of_the_other_api_is_asked_by_the_client(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append(req.url.host)
+        if len(calls) == 1:
+            return httpx.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}},
+                                  headers={"retry-after": "1"})
+        return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant", "model": "claude",
+                                         "content": [{"type": "text", "text": "later"}], "stop_reason": "end_turn",
+                                         "usage": {"input_tokens": 5, "output_tokens": 1}})
+
+    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
+    token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}", "x-ferry-reroute": "1"}
+    body = {"model": "kiro", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]}
+
+    async def ask(h):
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.post("/anthropic/v1/messages", headers=h, json=body)
+            ack = (await c.post("/v1/ferry/commit", params={"conv": "y", "base": 0, "base_hash": ""}, headers=h,
+                                content=json.dumps({"append": [json.dumps({"role": "user", "content": "x"})], "tools": None}))).json()
+            r2 = await c.post("/anthropic/v1/messages", headers=h, json=body)
+            return r, ack, r2
+
+    r, ack, r2 = asyncio.run(ask(hdr))
+    assert r.status_code == 422 and "ferry-reroute:gpt@openai" in r.text  # gpt speaks OpenAI's API: the client asks it
+    kiro = {o["model"]: o for o in ack["cooling"]}["kiro"]
+    assert kiro["fallback"] == "gpt" and kiro["switch"] is True
+    assert r2.status_code == 422 and calls == ["c.example.com"]  # while it cools down: not asked at all
+
+
+def test_an_older_client_waits_out_the_cool_down_instead(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append(req.url.host)
+        if len(calls) == 1:
+            return httpx.Response(429, json={}, headers={"retry-after": "1"})
+        return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant", "model": "claude",
+                                         "content": [{"type": "text", "text": "later"}], "stop_reason": "end_turn",
+                                         "usage": {"input_tokens": 5, "output_tokens": 1}})
+
+    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
+    token = (tmp_path / "token").read_text().strip()
+
+    async def ask():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/anthropic/v1/messages", headers={"Authorization": f"Bearer {token}"},
+                                json={"model": "kiro", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]})
+
+    r = asyncio.run(ask())
+    assert r.status_code == 200 and "later" in r.text and calls == ["c.example.com", "c.example.com"]

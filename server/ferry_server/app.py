@@ -39,7 +39,7 @@ from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
 from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
-from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay
+from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
                      restore_cache_marks, wants_cache_marks)
 from .redact import Redactor
@@ -155,6 +155,23 @@ def create_app(cfg: Config) -> FastAPI:
             asyncio.create_task(send(cfg, "Ferry", f"{m.id} 被限流，冷却 {int(secs)} 秒；{what}", "limit"))
         return secs, fb
 
+    def reroute(request, purpose: str, kind: str, m, fb):
+        """m cools down and its fallback speaks the other API (Claude's vs OpenAI's): the server cannot pass the
+        stored conversation on as it is, so it tells the client to ask the fallback itself, in the fallback's format
+        (the client keeps the conversation in a neutral form). 422: no SDK retries it (Node's fetch would resend a 421
+        with an empty body). None when the client is too old for that, or for a summary (written here by summary_models)."""
+        if request.headers.get("x-ferry-reroute") != "1" or purpose == "summary":
+            return None
+        left = int(live.pool.cooling(m))
+        side = "anthropic" if fb.api == "anthropic" else "openai"
+        msg = f"ferry-reroute:{fb.id}@{side} {m.id} is rate-limited ({left} s to go); ask {fb.id} meanwhile"
+        write(audit_log, event="reroute", user=getattr(request.state, "user", ""), model=m.id, to=fb.id, seconds=left)
+        if kind == "anthropic":
+            return JSONResponse({"type": "error", "error": {"type": "ferry_reroute", "message": msg}}, status_code=422,
+                                headers={"x-ferry-reroute": fb.id})
+        return JSONResponse({"error": {"message": msg, "type": "ferry_reroute", "code": "ferry_reroute"}}, status_code=422,
+                            headers={"x-ferry-reroute": fb.id})
+
     def cooling_notes() -> list[dict]:
         """Accounts cooling down now, for the client's status line (sent with each commit answer)."""
         out = []
@@ -162,7 +179,9 @@ def create_app(cfg: Config) -> FastAPI:
             left = live.pool.cooling(m)
             if left > 0 and all(o["model"] != m.id for o in out):
                 fb = live.pool.fallback_for(cfg, m)
-                out.append({"model": m.id, "seconds": int(left), "fallback": fb.id if fb else ""})
+                out.append({"model": m.id, "seconds": int(left), "fallback": fb.id if fb else "",
+                            **({"switch": True, "api": "anthropic" if fb.api == "anthropic" else "openai"}
+                               if fb and not same_side(m, fb) else {})})  # the client asks fb itself
         return out[:5]
 
     def learn_limit(m, tokens: int) -> None:
@@ -391,6 +410,9 @@ def create_app(cfg: Config) -> FastAPI:
         """The server decides which model answers. A client may name one only when routing.expose is on."""
         if cfg.expose_models and requested in cfg.models:
             return cfg.models[requested]
+        if requested in cfg.models and any(live.pool.cooling(m) and (fb := live.pool.fallback_for(cfg, m)) and fb.id == requested
+                                           for m in cfg.models.values()):
+            return cfg.models[requested]  # the client asks a cooling model's fallback itself (reroute)
         default = cfg.models[cfg.default_model]
         if purpose == "summary" and cfg.summary_model and cfg.models[cfg.summary_model].api == default.api:
             return cfg.models[cfg.summary_model]  # (a summary model with another API cannot take this request)
@@ -617,6 +639,11 @@ def create_app(cfg: Config) -> FastAPI:
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
         fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
+        if fb and not same_side(tries[0], fb):  # the fallback speaks Claude's API: the client asks it itself
+            sent = reroute(request, purpose, "openai", tries[0], fb)
+            if sent:
+                return sent
+            fb = None
         if fb:  # its account cools down after "too many requests": the fallback answers meanwhile
             tries = [fb, *tries]
         model = tries[0]
@@ -709,6 +736,11 @@ def create_app(cfg: Config) -> FastAPI:
                     continue
                 if r.status_code == 429:  # too many requests: cool down, then the fallback or this one again
                     secs, fb = limited(model, r.headers)
+                    if fb and not same_side(model, fb):
+                        sent = reroute(request, purpose, "openai", model, fb)
+                        if sent:
+                            return sent
+                        fb = None
                     if fb:
                         tries.append((fb, False))
                         continue
@@ -796,6 +828,11 @@ def create_app(cfg: Config) -> FastAPI:
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
         fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
+        if fb and not same_side(tries[0], fb):  # the fallback speaks OpenAI's API: the client asks it itself
+            sent = reroute(request, purpose, "anthropic", tries[0], fb)
+            if sent:
+                return sent
+            fb = None
         if fb:
             tries = [fb, *tries]
         model = tries[0]
@@ -881,6 +918,11 @@ def create_app(cfg: Config) -> FastAPI:
                 last_err = (upstream.status_code, err, upstream.headers.get("content-type", "application/json"))
                 if upstream.status_code == 429:
                     secs, fb = limited(model, upstream.headers)
+                    if fb and not same_side(model, fb):
+                        sent = reroute(request, purpose, "anthropic", model, fb)
+                        if sent:
+                            return sent
+                        fb = None
                     if fb:
                         tries.append(fb)
                         continue

@@ -74,7 +74,7 @@ class Provider:
     max_concurrent: int = 0  # calls running at the same time on this account; more wait their turn (0 = no limit)
     rpm: int = 0             # calls started per minute at most; more wait (0 = no limit)
     cooldown: int = 60       # after "too many requests" (429): seconds this account is left alone (Retry-After wins)
-    fallback: str = ""       # model (same API form) that answers while this account cools down; "" = wait instead
+    fallback: str = ""       # model that answers while this account cools down ("" = wait); another API form: the client asks it
 
     @property
     def api_key(self) -> str:
@@ -168,8 +168,11 @@ def load(path: str | os.PathLike) -> Config:
         cfg.users[token] = u["name"]
     if not cfg.users:
         raise SystemExit("no [[users]] configured")
-    for mid, m in raw.get("models", {}).items():
-        cfg.models[mid] = ModelConfig(id=mid, **m)
+    if raw.get("providers"):  # accounts shared by models, as in models.toml (limits, cool-down, fallback)
+        cfg.providers, cfg.models = parse_models(raw, {})
+    else:
+        for mid, m in raw.get("models", {}).items():
+            cfg.models[mid] = ModelConfig(id=mid, **m)
     if not cfg.models:
         raise SystemExit("no [models.*] configured")
     r = raw.get("routing", {})

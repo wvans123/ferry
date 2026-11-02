@@ -670,7 +670,8 @@ function fillForm(pre, prov) {
   $("fRpm").value = prov?.rpm ? prov.rpm : ""; $("fCool").value = prov?.cooldown && prov.cooldown !== 60 ? prov.cooldown : "";
   const myApi = prov?.api || pre.api || "openai";
   $("fFallback").innerHTML = '<option value="">不改用，排队等</option>' + (P?.providers || []).filter((p) => p.id !== prov?.id)
-    .flatMap((p) => p.models.filter((m) => (m.api || p.api || "openai") === myApi).map((m) => `<option value="${esc(m.id)}" ${m.id === prov?.fallback ? "selected" : ""}>${esc(m.model)}（${esc(p.name)}）</option>`)).join("");
+    .flatMap((p) => p.models.map((m) => { const other = ((m.api || p.api || "openai") === "anthropic") !== (myApi === "anthropic");
+      return `<option value="${esc(m.id)}" ${m.id === prov?.fallback ? "selected" : ""}>${esc(m.model)}（${esc(p.name)}）${other ? " · 另一种接口，由客户端改发" : ""}</option>`; })).join("");
   $("keyWrap").hidden = !!pre.no_key;
   const needKey = !pre.no_key && !(prov && (prov.key_tail || prov.key_source));
   $("keyNeed").hidden = !needKey;

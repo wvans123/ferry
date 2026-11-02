@@ -41,6 +41,12 @@ def groups(cfg: Config) -> dict[str, list[str]]:
     return out
 
 
+def same_side(a, b) -> bool:
+    """Whether the server can send a's request to b as it is: both Anthropic's API, or both OpenAI-style (Chat
+    Completions and Responses are translated here). Otherwise the client asks again in b's format (a reroute)."""
+    return (a.api == "anthropic") == (b.api == "anthropic")
+
+
 class Pool:
     def __init__(self, keep: int = 5000) -> None:
         self.sticky: OrderedDict[str, str] = OrderedDict()   # conversation -> model id that serves it
@@ -69,10 +75,11 @@ class Pool:
         return new
 
     def fallback_for(self, cfg: Config, m: ModelConfig):
-        """The model that answers while m's account cools down: set on the provider, ready, same API form."""
+        """The model that answers while m's account cools down: set on the provider, ready, not cooling itself.
+        It may speak another API than m (Claude's while m speaks OpenAI's): see same_side()."""
         prov = cfg.providers.get(m.provider) if m.provider else None
         fb = cfg.models.get(getattr(prov, "fallback", "") or "")
-        return fb if fb and fb.ready and fb.api == m.api and fb.id != m.id and not self.cooling(fb) else None
+        return fb if fb and fb.ready and fb.id != m.id and not self.cooling(fb) else None
 
     async def enter(self, cfg: Config, m: ModelConfig) -> None:
         """Before a call to the provider: wait while it already has as many calls running as it may (the
