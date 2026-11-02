@@ -25,8 +25,9 @@ DSH / Codex / Claude Code / IDE ──(ferry-transport：增量、小块)──�
 | 2 | DSH 当客户端（重点） | 写一个 DSH 插件 `dsh-llm-ferry`，DSH 的对话按 Ferry 的规矩发给 Ferry 服务端，模型列表来自服务端。DSH 自带的 llm-pi-ai 只认三种接口（openai-completions、openai-responses、anthropic-messages），不能靠改配置接入，所以照它的结构另写一个模型插件，发送部分换成 ferry-transport |
 | 3 | 好用的客户端功能做成 DSH 插件 | 逐个挑：Office 读写、团队看板（Paperclip）、记忆、网关确认/证书处理等 |
 | 4 | 本机转发口（给 Codex、Claude Code、Cline 等） | 工作电脑上开一个本机地址，这些工具把它当模型地址；转发口用 ferry-transport 发给 Ferry 服务端 |
-| 5 | 团队：调度员 + 看门狗 | 见下 |
-| 6 | IDE 插件 | 需求还在时再做 |
+| 5 | IDE 插件 | 需求还在时再做 |
+
+main 分支上接着做：团队的调度员 + 看门狗（见下），agent 功能按模块改进。
 
 ## 团队怎么改（参考 DeepSeek Super-agent）
 
