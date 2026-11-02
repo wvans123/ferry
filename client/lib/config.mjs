@@ -35,7 +35,7 @@ export const DEFAULTS = {
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
-	render: true, // web_render: read JavaScript-built pages in a hidden browser (needs Electron: ferry install-electron)
+	render: false, // web_render: read JavaScript-built pages in a hidden browser (needs Electron: ferry install-electron)
 	electronPath: "", // Electron to use for web_render; empty = look in the usual places
 	renderWaitMs: 12000, // longest wait for a page in web_render to finish loading
 	blockedSites: [], // sites never opened by web_fetch / web_render (and their subdomains), e.g. ["mail.corp.com"]

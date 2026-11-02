@@ -912,7 +912,7 @@ def check_v018(root: Path, work: Path) -> None:
                 time.sleep(1.5)
             try:
                 s.home.mkdir(parents=True, exist_ok=True)
-                (s.home / "config.json").write_text(json.dumps({"electronPath": electron, "blockedSites": ["blocked.test"]}),
+                (s.home / "config.json").write_text(json.dumps({"render": True, "electronPath": electron, "blockedSites": ["blocked.test"]}),
                                                     encoding="utf-8")
                 c7, o7 = s.ferry("-p", "RENDERTEST: read the dashboard", env_extra=env_extra, timeout=180)
                 c8, o8 = s.ferry("-p", "BLOCKTEST: read my mail", env_extra=env_extra, timeout=120)

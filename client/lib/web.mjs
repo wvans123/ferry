@@ -247,7 +247,7 @@ export function createWeb(cfg) {
 					r = await renderToText(cfg, r.url, 0, signal).catch((e) => ({ ...r, text: `${r.text}\n\n[web_render failed: ${e.message}]` }));
 				} else if (r.sparse && mode === "client") {
 					r = { ...r, text: `${r.text}\n\n[This page is probably built by JavaScript, so it reads almost empty here. ` +
-						"web_render could show it, but Electron is not installed: the user can run `ferry install-electron`.]" };
+						"Tell the user; another source may have the same information.]" };
 				}
 				return show(r);
 			},

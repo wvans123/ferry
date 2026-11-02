@@ -72,6 +72,9 @@ class Provider:
     key: str = field(default="", repr=False)
     api: str = "openai"
     max_concurrent: int = 0  # calls running at the same time on this account; more wait their turn (0 = no limit)
+    rpm: int = 0             # calls started per minute at most; more wait (0 = no limit)
+    cooldown: int = 60       # after "too many requests" (429): seconds this account is left alone (Retry-After wins)
+    fallback: str = ""       # model (same API form) that answers while this account cools down; "" = wait instead
 
     @property
     def api_key(self) -> str:
@@ -358,7 +361,8 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             api_key_env=p.get("api_key_env", ""), drop_params=list(p.get("drop_params", pre.get("drop_params", []))),
             rename_params=dict(p.get("rename_params", pre.get("rename_params", {}))),
             no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
-            api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0))
+            api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0),
+            rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60), fallback=str(p.get("fallback", "") or ""))
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
         m = dict(m)
@@ -434,7 +438,7 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]
-        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent"):
+        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
     for m in models:

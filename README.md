@@ -333,7 +333,7 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 | `notify` | `true` | 长请求结束时响铃加通知 |
 | `phoneNotify` | `true` | 让服务端推手机通知（服务端要先在管理页设好 Bark） |
 | `remoteApprove` | `false` | 允许在手机控制台上批准这台电脑在等的操作（危险操作除外）；停止和拒绝总是可以 |
-| `render` | `true` | 用隐藏的浏览器读 JS 网页（`web_render`，需要先 `ferry install-electron`） |
+| `render` | `false` | 用隐藏的浏览器读 JS 网页（`web_render`）。默认关：大多数网页用不上，而且要先 `ferry install-electron` 下载约 100 MB |
 | `blockedSites` | 空 | 永远不打开的网站（含子域名），比如邮箱、通讯、网盘 |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |

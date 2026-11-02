@@ -284,3 +284,51 @@ def test_a_busy_only_provider_is_asked_again_and_limited_to_its_slots(tmp_path, 
         return await asyncio.gather(*[one(i) for i in range(4)])
 
     assert asyncio.run(many()) == [200] * 4 and state["max"] == 1
+
+
+def test_too_many_requests_cools_the_account_down_and_the_fallback_answers(tmp_path, monkeypatch):
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req.url.host)
+        if req.url.host == "b.example.com":
+            return httpx.Response(429, json={"error": {"message": "Too many requests"}}, headers={"retry-after": "1"})
+        return answer(req.url.host)
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}"}
+    cfg.providers["b"].fallback = "gpt"  # "other" (deepseek-flash on b) falls back to gpt on a
+
+    async def ask():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.post("/v1/chat/completions", headers=hdr, json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
+            ack = (await c.post("/v1/ferry/commit", params={"conv": "x", "base": 0, "base_hash": ""}, headers=hdr,
+                                content=json.dumps({"append": [json.dumps({"role": "user", "content": "x"})], "tools": None}))).json()
+            r2 = await c.post("/v1/chat/completions", headers=hdr, json={"model": "other", "messages": [{"role": "user", "content": "again"}]})
+            return r, ack, r2
+
+    r, ack, r2 = asyncio.run(ask())
+    assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "a.example.com"
+    notes = {o["model"]: o for o in ack["cooling"]}
+    assert notes["other"]["fallback"] == "gpt" and notes["other"]["seconds"] >= 0  # the client can say so
+    assert r2.json()["choices"][0]["message"]["content"] == "a.example.com" and seen == ["b.example.com", "a.example.com", "a.example.com"]
+
+
+def test_without_a_fallback_the_request_waits_out_the_cool_down(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append(req.url.host)
+        return httpx.Response(429, json={}, headers={"retry-after": "1"}) if len(calls) == 1 else answer("later")
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    token = (tmp_path / "token").read_text().strip()
+
+    async def ask():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
+
+    r = asyncio.run(ask())
+    assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "later" and len(calls) == 2

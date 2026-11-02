@@ -129,6 +129,16 @@ export function createCommands(cfg, deps) {
 			started = 0;
 		});
 
+		// the server says a model's account is cooling down after "too many requests" (and who answers meanwhile)
+		pi.on("session_start", (_e, ctx) => {
+			if (!ctx.hasUI) return;
+			cfg.onRoute = (notes) => {
+				const n = notes?.[0];
+				ctx.ui.setStatus("ferry-route", n ? `${n.model} is rate-limited: ${n.seconds}s to go, ` +
+					(n.fallback ? `${n.fallback} answers meanwhile` : "requests wait on the server") : undefined);
+			};
+		});
+
 		// compactAt: summarise once the context is this full, at the end of a request (not in the middle of work)
 		pi.on("agent_settled", (e, ctx) => {
 			const pct = Number(String(cfg.compactAt ?? "90%").replace("%", ""));

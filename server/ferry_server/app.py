@@ -138,6 +138,33 @@ def create_app(cfg: Config) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
+    def limited(m, headers) -> tuple[float, object]:
+        """A 429 from m's account: leave the account alone for its cool-down (Retry-After, else the provider's
+        setting) and tell the phone once. Returns (seconds, the fallback model or None)."""
+        prov = cfg.providers.get(m.provider) if m.provider else None
+        try:
+            secs = float((headers or {}).get("retry-after", "")) or 0
+        except ValueError:
+            secs = 0
+        secs = min(max(secs or float(getattr(prov, "cooldown", 60) or 60), 1), 120)  # a client waits ~5 min at most
+        fb = live.pool.fallback_for(cfg, m)
+        if live.pool.cool(m, secs):
+            write(audit_log, event="cooldown", model=m.id, seconds=secs, fallback=fb.id if fb else "")
+            from .notify import send
+            what = f"这段时间由 {fb.id} 回答" if fb else "请求在服务端排队，冷却后继续"
+            asyncio.create_task(send(cfg, "Ferry", f"{m.id} 被限流，冷却 {int(secs)} 秒；{what}", "limit"))
+        return secs, fb
+
+    def cooling_notes() -> list[dict]:
+        """Accounts cooling down now, for the client's status line (sent with each commit answer)."""
+        out = []
+        for m in cfg.models.values():
+            left = live.pool.cooling(m)
+            if left > 0 and all(o["model"] != m.id for o in out):
+                fb = live.pool.fallback_for(cfg, m)
+                out.append({"model": m.id, "seconds": int(left), "fallback": fb.id if fb else ""})
+        return out[:5]
+
     def learn_limit(m, tokens: int) -> None:
         new = int(tokens * 0.97)
         if new < limit_of(m):
@@ -540,7 +567,8 @@ def create_app(cfg: Config) -> FastAPI:
             return JSONResponse({"error": "missing messages", "missing": e.missing[:50]}, status_code=409)
         write(audit_log, event="commit", user=request.state.user, conv=conv[:12], base=base,
               appended=len(blob.get("append") or []), count=count, upload_bytes=len(raw), parts=parts)
-        return {"count": count, "hash": h}
+        notes = cooling_notes()
+        return {"count": count, "hash": h, **({"cooling": notes} if notes else {})}
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
@@ -588,6 +616,9 @@ def create_app(cfg: Config) -> FastAPI:
                                            "code": "context_length_exceeded"}}, status_code=413)
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
+        fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
+        if fb:  # its account cools down after "too many requests": the fallback answers meanwhile
+            tries = [fb, *tries]
         model = tries[0]
         if not model.ready:
             how = (f"set {model.api_key_env} and restart ferry-server" if model.api_key_env
@@ -676,6 +707,14 @@ def create_app(cfg: Config) -> FastAPI:
                     refused_marks = True
                     write(audit_log, event="cache_marks_refused", model=model.id)
                     continue
+                if r.status_code == 429:  # too many requests: cool down, then the fallback or this one again
+                    secs, fb = limited(model, r.headers)
+                    if fb:
+                        tries.append((fb, False))
+                        continue
+                    if not more and time.time() - started + secs < RETRY_WAIT_S:
+                        tries.append((model, marks))  # enter() waits for the cool-down
+                        continue
                 if more and r.status_code in RETRY_STATUSES:
                     live.pool.failed(model.id, r.status_code)
                     continue
@@ -756,6 +795,9 @@ def create_app(cfg: Config) -> FastAPI:
                                                             "message": f"model {model.id} is not an Anthropic model"}}, status_code=400)
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
+        fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
+        if fb:
+            tries = [fb, *tries]
         model = tries[0]
         if not model.ready:
             return JSONResponse({"type": "error", "error": {"type": "authentication_error", "message":
@@ -837,6 +879,14 @@ def create_app(cfg: Config) -> FastAPI:
                 live.pool.end(model.id)
                 write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
                 last_err = (upstream.status_code, err, upstream.headers.get("content-type", "application/json"))
+                if upstream.status_code == 429:
+                    secs, fb = limited(model, upstream.headers)
+                    if fb:
+                        tries.append(fb)
+                        continue
+                    if not more and time.time() - started + secs < RETRY_WAIT_S:
+                        tries.append(model)
+                        continue
                 if more and upstream.status_code in RETRY_STATUSES:
                     live.pool.failed(model.id, upstream.status_code)
                     continue

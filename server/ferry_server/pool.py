@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 
 from .config import Config, ModelConfig
 from .presets import norm
@@ -20,7 +20,7 @@ RETRY_STATUSES = {401, 402, 403, 404, 408, 409, 429, 500, 502, 503, 504, 520, 52
 # A limit or a hiccup (not a key or model problem): worth asking the same provider again after a short wait when no
 # other provider has the model. Relays such as kiro answer 502 within milliseconds when they are busy.
 TRANSIENT_STATUSES = {408, 429, 500, 502, 503, 504, 520, 521, 522, 524, 529}
-RETRY_WAIT_S = 45     # the most a request waits in total before the error goes back to the client
+RETRY_WAIT_S = 150    # the most a request waits in total (cool-downs included) before the error goes back to the client
 SHORT_PAUSE = 60      # seconds a provider is skipped after a limit / overload / outage
 LONG_PAUSE = 300      # ... after a key or model problem (401, 402, 403, 404)
 
@@ -50,11 +50,49 @@ class Pool:
         self.gates: dict[str, tuple[int, asyncio.Semaphore]] = {}  # provider -> (limit, its semaphore)
         self.held: dict[str, list[asyncio.Semaphore]] = {}         # model id -> gates its running calls hold
         self.waiting: Counter = Counter()                          # provider -> requests waiting for a free slot
+        self.cool_until: dict[str, float] = {}                     # provider -> left alone until (after a 429)
+        self.started: dict[str, deque] = {}                        # provider -> start times in the last minute (rpm)
+
+    @staticmethod
+    def account(m: ModelConfig) -> str:
+        return m.provider or m.id
+
+    def cooling(self, m: ModelConfig) -> float:
+        """Seconds this model's account still cools down (0 = not)."""
+        return max(0.0, self.cool_until.get(self.account(m), 0) - time.time())
+
+    def cool(self, m: ModelConfig, seconds: float) -> bool:
+        """After a 429: leave the account alone for a while. True when this starts a new cool-down."""
+        key, until = self.account(m), time.time() + seconds
+        new = self.cool_until.get(key, 0) <= time.time()
+        self.cool_until[key] = max(self.cool_until.get(key, 0), until)
+        return new
+
+    def fallback_for(self, cfg: Config, m: ModelConfig):
+        """The model that answers while m's account cools down: set on the provider, ready, same API form."""
+        prov = cfg.providers.get(m.provider) if m.provider else None
+        fb = cfg.models.get(getattr(prov, "fallback", "") or "")
+        return fb if fb and fb.ready and fb.api == m.api and fb.id != m.id and not self.cooling(fb) else None
 
     async def enter(self, cfg: Config, m: ModelConfig) -> None:
         """Before a call to the provider: wait while it already has as many calls running as it may (the
         provider's max_concurrent; 0 = no limit). Every enter() is followed by one end()."""
         prov = cfg.providers.get(m.provider) if m.provider else None
+        key = self.account(m)
+        # a cool-down after "too many requests", then the pace (calls per minute): wait here, quietly
+        while self.cooling(m) > 0:
+            await asyncio.sleep(min(self.cooling(m), 5))
+        rpm = int(getattr(prov, "rpm", 0) or 0)
+        if rpm > 0:
+            times = self.started.setdefault(key, deque())
+            while True:
+                now = time.time()
+                while times and now - times[0] >= 60:
+                    times.popleft()
+                if len(times) < rpm:
+                    times.append(now)
+                    break
+                await asyncio.sleep(60 - (now - times[0]) + 0.05)
         limit = int(getattr(prov, "max_concurrent", 0) or 0)
         if limit > 0:
             key = m.provider
@@ -108,7 +146,8 @@ class Pool:
         now = time.time()
         return {"busy": {k: v for k, v in self.busy.items() if v},
                 "paused": {k: int(t - now) for k, t in self.paused.items() if t > now},
-                "waiting": {k: v for k, v in self.waiting.items() if v}}
+                "waiting": {k: v for k, v in self.waiting.items() if v},
+                "cooling": {k: int(t - now) for k, t in self.cool_until.items() if t > now}}
 
 
 def retry_delay(headers, attempt: int) -> float:

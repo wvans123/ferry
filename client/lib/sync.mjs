@@ -244,6 +244,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		}
 		if (!res.ok) throw new FerryError(`Ferry sync failed: HTTP ${res.status} ${await res.text()}`);
 		const ack = await res.json();
+		cfg.onRoute?.(ack.cooling ?? null); // an account cooling down after "too many requests": the status line says so
 		if (ack.count !== msgs.length || ack.hash !== chain[msgs.length]) {
 			known.delete(conv);
 			throw new FerryError("Ferry server state does not match this client; it will resend on the next try");
