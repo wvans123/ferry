@@ -159,7 +159,7 @@ ferry doctor
 
 **更新**：都是 `ferry update`。用安装包装的，从 GitHub 下载新的安装包；用 git clone 装的，自动执行 `git pull`、`npm ci` 和重新安装（想改用安装包：`ferry update --release`）。有新版本时，ferry 启动时会提醒你。
 
-**公司网关先要你确认**：如果服务端地址被公司网关拦下，要你先确认一下（"访问提醒"页），ferry 会自动在浏览器里打开那一页。你点"继续"后，它自己接着启动。想一劳永逸，就请 IT 把服务端地址加进白名单。
+**公司网关先要你确认**：如果服务端地址被公司网关拦下，要你先确认一下（"访问提醒"页），ferry 会自动在浏览器里打开那一页。你点"继续"后，它自己接着启动。这个确认过一阵会过期：ferry 开着时每 10 分钟看一次（`gatewayCheck`，0 = 不看），过期了就马上打开确认页，不用等到 agent 干活时被挡；万一干活中途过期，它也会打开确认页、等你确认后接着发，不报错。随时想看一眼：`ferry check`（不需要确认就说一声，需要就打开确认页并等到通过）。想一劳永逸，就请 IT 把服务端地址加进白名单。
 
 ## 日常使用
 
@@ -343,7 +343,7 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理会检查 HTTPS（用公司自己的证书），浏览器能上而 ferry 报证书错误时靠它 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`electronPath`（Electron 在哪，空 = 自己找）、`renderWaitMs`（web_render 最多等页面多久，默认 12 秒）、`phoneConsole`（在手机控制台上显示这台电脑，默认关：关着就完全不发状态上报）。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`electronPath`（Electron 在哪，空 = 自己找）、`renderWaitMs`（web_render 最多等页面多久，默认 12 秒）、`gatewayCheck`（每几分钟看一次公司网关的确认是否过期，默认 10，0 = 不看）、`phoneConsole`（在手机控制台上显示这台电脑，默认关：关着就完全不发状态上报）。上下文长度用 `/context` 改，存在同一个文件里。
 
 **服务端**：大多在管理页里改，存在服务端数据目录的 `server.toml`。也可以用环境变量：
 
@@ -405,7 +405,7 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 | 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |
 | 系统提示 | 用 Ferry 自己的开场和工作方式代替 pi 的（不再提 pi 文档，避免模型去翻 agent 自己的配置），保留 pi 的工具说明，加上操作系统、shell、日期、是否 git 仓库 | `client/lib/prompt.mjs` |
 | 联网 | 默认在客户端执行，走公司代理，识别网关的确认页（按地址和页面文字）并报告，不点击通过；可选服务端代办：只允许 http(s)，拒绝本机和内网地址（管理页信任本机来的请求，不能让网页请求绕到它），每次跳转都重新检查，可设网站白名单 | `client/lib/web.mjs`、`server/ferry_server/web.py` |
-| 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，也会重新打开并提示重发 | `client/lib/gateway.mjs` |
+| 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；开着时每 10 分钟看一次确认是否过期，过期就先打开；会话中途确认过期，打开确认页、等确认后自动重发（最多等 3 分钟）；`ferry check` 手动查 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 斜杠命令和自定义 | pi 自带命令里用不上的，启动时从它的命令表里拿掉（只是不列出）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户 | `client/lib/trim.mjs`、`client/lib/commands.mjs` |
 | 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/rewind` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |

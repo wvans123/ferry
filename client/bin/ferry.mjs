@@ -2,6 +2,7 @@
 // Ferry CLI
 //   ferry                              start the agent in this folder (all pi options work, e.g. -p "question")
 //   ferry doctor                       check the setup step by step
+//   ferry check                        does the company gateway want its confirmation? opens it
 //   ferry login <server-url> <token> [--header "Name: value"]...   use a Ferry server on another machine
 //   ferry logout                       go back to the Ferry server on this computer
 //   ferry config [set <key> <value>]   show or change the client settings (memory, subagents, approvals...)
@@ -33,7 +34,7 @@ import {
 } from "../lib/config.mjs";
 import { APP_ROOT, findPython, install, startLocalServer, update } from "../lib/setup.mjs";
 import { BIN_DIR, installBundled, toolStatus } from "../lib/toolbins.mjs";
-import { gatewayOf, waitThroughGateway, whoAnswered } from "../lib/gateway.mjs";
+import { gatewayOf, probeGateway, waitThroughGateway, whoAnswered } from "../lib/gateway.mjs";
 
 const PKG = JSON.parse(readFileSync(join(APP_ROOT, "package.json"), "utf8"));
 const VERSION = PKG.version;
@@ -190,6 +191,28 @@ async function uploadTest(cfg, ok, bad, info) {
 		info("sizes are not the problem. If requests are still stopped, something in the way objects to what they contain " +
 			"(a company content filter): ask IT. Ferry does not disguise what it sends.");
 	}
+}
+
+/** ferry check: does the company gateway want its confirmation now? If so, open its page and wait until it is done. */
+async function check() {
+	const cfg = loadConfig();
+	if (cfg.mode !== "remote") {
+		console.log("This ferry uses a Ferry server on this computer: no company gateway in between.");
+		return 0;
+	}
+	await applyProxy(cfg);
+	const page = await probeGateway(cfg);
+	if (page === null) {
+		console.log(`Cannot reach ${cfg.server} (offline, or the server is not running). "ferry doctor" looks closer.`);
+		return 1;
+	}
+	if (page === "") {
+		console.log(`OK: ${new URL(cfg.server).hostname} answers; the company gateway does not want a confirmation now.`);
+		return 0;
+	}
+	const through = await waitThroughGateway(page, cfg.server, async () => (await probeGateway(cfg, 5000)) === "",
+		{ say: (m) => console.log(m) });
+	return through ? 0 : 1;
 }
 
 async function doctor() {
@@ -573,6 +596,7 @@ else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | 
 else if (cmd === "mcp") await mcp(rest);
 else if (cmd === "team") await (await import("../lib/teamcli.mjs")).teamCli(rest, { ferry: fileURLToPath(import.meta.url) }).then(exit);
 else if (cmd === "doctor") await doctor().then(exit);
+else if (cmd === "check") await check().then(exit);
 else if (cmd === "install-electron") {
 	await applyProxy(loadConfig());
 	const ok = (await import("../lib/render.mjs")).installElectron(rest[0] || "latest");
@@ -600,6 +624,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   (inside: /help lists the commands and keys; Shift+Tab switches the permission mode)
   ferry doctor [--no-model]         check the setup step by step, ending with a tiny request to each model
   ferry doctor --upload             which upload sizes get through the network to the server
+  ferry check                       does the company gateway want its confirmation now? if so, opens it
   ferry login <server-url> <token>  use a Ferry server on another machine
       [--header "Name: value"]      extra header for every request (e.g. a Cloudflare Access service token)
   ferry logout                      go back to a Ferry server on this computer

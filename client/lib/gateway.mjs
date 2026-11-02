@@ -26,6 +26,74 @@ export function openInBrowser(url) {
 	}
 }
 
+let lastOpened = 0;
+/** Open the gateway's page, at most once a minute (several requests may meet the gateway together). */
+export function openGatewayPage(url) {
+	if (Date.now() - lastOpened < 60000) return false;
+	lastOpened = Date.now();
+	return openInBrowser(url);
+}
+
+/**
+ * Ask the Ferry server's /health through whatever is in between. Returns "" when the server answers, the page to open
+ * when the company gateway wants a confirmation, or null when the server cannot be reached at all (offline, down).
+ */
+export async function probeGateway(cfg, timeoutMs = 8000) {
+	try {
+		const res = await fetch(`${cfg.server}/health`, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+		const location = res.headers.get("location") ?? "";
+		if (res.status >= 300 && res.status < 400 && gatewayPage(location)) return location;
+		const text = await res.text().catch(() => "");
+		if (res.status === 200 && text.includes('"ok"')) return "";
+		// the gateway's own page in place of the server's answer: opening the server's address shows it in the browser
+		return gatewayPage(location, text.slice(0, 30000)) ? `${cfg.server}/` : "";
+	} catch {
+		return null;
+	}
+}
+
+/** Wait (up to waitMs) until the server answers again. True when it does. */
+export async function waitForServer(cfg, waitMs = 180000, signal) {
+	const end = Date.now() + waitMs;
+	while (Date.now() < end && !signal?.aborted) {
+		await new Promise((r) => setTimeout(r, 2500));
+		if ((await probeGateway(cfg, 5000)) === "") return true;
+	}
+	return false;
+}
+
+export const GATEWAY_NOTE = "The company gateway wants a confirmation: it is open in your browser. Confirm there; Ferry goes on by itself.";
+
+/**
+ * While ferry is open, look every few minutes whether the company gateway wants its confirmation again, and open
+ * its page right away: confirming between requests instead of in the middle of the agent's work. onState(text)
+ * shows a note (undefined clears it). Returns a function that stops the watch.
+ */
+export function watchGateway(cfg, { everyMs = 10 * 60000, onState = () => {} } = {}) {
+	let stopped = false;
+	let timer;
+	const round = async () => {
+		if (stopped) return;
+		const page = await probeGateway(cfg);
+		if (page) {
+			openGatewayPage(page);
+			onState(GATEWAY_NOTE);
+			await waitForServer(cfg, 10 * 60000);
+			onState(undefined);
+		}
+		if (!stopped) {
+			timer = setTimeout(round, everyMs);
+			timer.unref?.();
+		}
+	};
+	timer = setTimeout(round, 1000);
+	timer.unref?.();
+	return () => {
+		stopped = true;
+		clearTimeout(timer);
+	};
+}
+
 /** The gateway page a response points at, or "". r: { status, location, body } as from getJson. */
 export function gatewayOf(r) {
 	if (r.status >= 300 && r.status < 400 && gatewayPage(r.location)) return r.location;
@@ -47,7 +115,7 @@ export async function waitThroughGateway(page, server, check, { waitMs = 180000,
 	while (Date.now() < end) {
 		await new Promise((r) => setTimeout(r, 2500));
 		if (await check()) {
-			say("Through. Starting.");
+			say("Through.");
 			return true;
 		}
 	}

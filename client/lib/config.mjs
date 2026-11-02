@@ -47,6 +47,7 @@ export const DEFAULTS = {
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
+	gatewayCheck: 10, // minutes between looks whether the company gateway wants its confirmation again (0 = never)
 	phoneConsole: false, // report this window's status to the server's phone console (off: no requests for it at all)
 	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
@@ -95,6 +96,7 @@ export const ADVANCED_SETTINGS = {
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
+	gatewayCheck: ["number", "every this many minutes, look whether the company gateway wants its confirmation again and open its page right away (0 = never)"],
 	phoneConsole: ["boolean", "show this computer's ferry on the server's phone console (status only); off by default: it costs a request every few seconds while a phone looks"],
 	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],

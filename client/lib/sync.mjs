@@ -10,9 +10,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { FERRY_HOME, PROTOCOL, serverHeaders } from "./config.mjs";
-import { gatewayPage, openInBrowser, whoAnswered } from "./gateway.mjs";
-
-let lastOpened = 0;
+import { GATEWAY_NOTE, gatewayPage, openGatewayPage, waitForServer, whoAnswered } from "./gateway.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const SALT = randomUUID();
@@ -213,6 +211,20 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			await new Promise((r) => setTimeout(r, 1500));
 			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal, 64 * 1024);
 		}
+		// the company gateway wants its confirmation again (it runs out after a while): open its page, wait until the
+		// server answers, and send again, so the agent's work goes on instead of stopping with an error
+		for (let again = 0; again < 2 && !res.headers.get("content-type")?.includes("json"); again++) {
+			const loc = res.headers.get("location") ?? "";
+			const text = gatewayPage(loc) ? "" : await res.clone().text().catch(() => "");
+			const page = gatewayPage(loc) ? loc : gatewayPage("", text.slice(0, 30000)) ? `${cfg.server}/` : "";
+			if (!page) break;
+			openGatewayPage(page);
+			cfg.onGateway?.(GATEWAY_NOTE);
+			const through = await waitForServer(cfg, 180000, signal);
+			cfg.onGateway?.(undefined);
+			if (!through) break;
+			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
+		}
 		if (res.status === 409) { // the server's copy differs or is gone: start it again (messages it has by reference)
 			const why = await res.clone().json().catch(() => ({}));
 			if (why.missing) haveBlobs.clear();
@@ -226,11 +238,8 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (res.status === 426) throw new FerryError(`Ferry client and server versions do not match: ${await res.text()}`);
 		if (!res.headers.get("content-type")?.includes("json")) {
 			const loc = res.headers.get("location") ?? "";
-			if (gatewayPage(loc)) { // the gateway's confirmation ran out mid-session
-				if (Date.now() - lastOpened > 60000) {
-					lastOpened = Date.now();
-					openInBrowser(loc);
-				}
+			if (gatewayPage(loc)) { // the gateway's confirmation ran out and nobody confirmed within 3 minutes
+				openGatewayPage(loc);
 				throw new FerryError("The company network gateway wants a confirmation again. It is open in your browser " +
 					`(${loc}): confirm there, then send your message again.`);
 			}
@@ -239,10 +248,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			const who = whoAnswered({ status: res.status, headers: res.headers, body: text });
 			if (gatewayPage(loc, text)) {
 				// the gateway's page has no address of its own: open the server's, the gateway shows its page there
-				if (Date.now() - lastOpened > 60000) {
-					lastOpened = Date.now();
-					openInBrowser(`${cfg.server}/`);
-				}
+				openGatewayPage(`${cfg.server}/`);
 				throw new FerryError(`The Ferry server did not get this request: ${who} If it is the company gateway, confirm in ` +
 					"the browser window just opened, then send your message again. (ferry doctor checks the path.)");
 			}

@@ -822,6 +822,16 @@ def check_gateway(root: Path, work: Path) -> None:
         check("F37 公司网关要先确认", c0 != 0 and "company network gateway" in o0 and c1 == 0 and "[x] step one" in o1
               and "proxycontrolwarn" in gate.read_text(encoding="utf-8"),
               "doctor 指出是公司网关在等确认；ferry 启动时自动在浏览器打开确认页，确认后自己接着运行")
+        gate.unlink()
+        opened = {"FERRY_TEST_OPENED_FILE": str(gate)}
+        c2, o2 = s.ferry("check", env_extra=opened)
+        c3, o3 = s.ferry("check")
+        # the confirmation runs out in the middle of the agent's work: ferry opens the page, waits, and goes on
+        c4, o4 = s.ferry("-p", f"EXPIRYTEST: {gate.name}", cwd=root, env_extra={**opened, "FERRY_PERMISSION_MODE": "bypass"})
+        ok = (c2 == 0 and "Through" in o2 and c3 == 0 and "does not want a confirmation" in o3
+              and c4 == 0 and "EXPIRY: went on after the confirmation" in o4 and gate.exists())
+        check("F62 网关确认过期", ok, "ferry check 发现要确认就打开确认页并等到通过，不需要时说一声；agent 干活中途确认过期，"
+              "自动打开确认页，确认后接着发，不报错" if ok else f"check={c2},{c3} run={c4} {o2[-200:]!r} {o3[-150:]!r} {o4[-300:]!r}")
     finally:
         s.close()
 

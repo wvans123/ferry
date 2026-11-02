@@ -12,12 +12,17 @@ Ferry 客户端的规矩：只上传新增内容、单个请求不超过 1 MB、
 DSH / Codex / Claude Code / IDE ──(ferry-transport：增量、小块)──▶ Ferry 服务端 ──(完整对话)──▶ 模型
 ```
 
-## 顺序
+## 分支
+
+- `main`：Ferry 自己的客户端 + 服务端，照常改进、发版。
+- `integrations`：DSH、Codex、Claude Code 这些接入都在这个分支上做，不影响 main；做稳了再合回去。
+
+## 顺序（integrations 分支）
 
 | 顺序 | 模块 | 做什么 |
 |---|---|---|
 | 1 | ferry-transport | 从 ferry 客户端拆出发送逻辑，ferry 自己改用它（行为不变，自测全过） |
-| 2 | DSH 当客户端（重点） | DSH 底层也用 pi-ai：把 ferry-transport 注册成 DSH 的一种模型接口，DSH 的对话就按 Ferry 的规矩发给 Ferry 服务端。模型列表来自服务端。开始前先读 DSH 插件接口的源码 |
+| 2 | DSH 当客户端（重点） | 写一个 DSH 插件 `dsh-llm-ferry`，DSH 的对话按 Ferry 的规矩发给 Ferry 服务端，模型列表来自服务端。DSH 自带的 llm-pi-ai 只认三种接口（openai-completions、openai-responses、anthropic-messages），不能靠改配置接入，所以照它的结构另写一个模型插件，发送部分换成 ferry-transport |
 | 3 | 好用的客户端功能做成 DSH 插件 | 逐个挑：Office 读写、团队看板（Paperclip）、记忆、网关确认/证书处理等 |
 | 4 | 本机转发口（给 Codex、Claude Code、Cline 等） | 工作电脑上开一个本机地址，这些工具把它当模型地址；转发口用 ferry-transport 发给 Ferry 服务端 |
 | 5 | 团队：调度员 + 看门狗 | 见下 |

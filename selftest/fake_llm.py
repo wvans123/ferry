@@ -279,6 +279,10 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "image_create", {"prompt": "a small ferry on a river at dawn", "path": "images/ferry.png"})
         return ("text", "IMAGE: " + text_of(tools[-1])[:120])
+    if "EXPIRYTEST" in first:  # the gateway's confirmation runs out while the agent works (the bash step takes it away)
+        if not tools:
+            return ("tool", "bash", {"command": "mv " + first.split("EXPIRYTEST:", 1)[1].strip().split()[0] + " gate-gone.txt"})
+        return ("text", "EXPIRY: went on after the confirmation")
     if "LIMITTEST" in first:  # answered by the fallback (an OpenAI-style model) while Claude's account cools down
         if not tools:
             return ("tool", "bash", {"command": "echo fallback-step"})
