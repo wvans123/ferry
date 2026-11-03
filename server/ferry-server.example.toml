@@ -5,11 +5,9 @@
 host = "127.0.0.1"         # 只在本机监听。要让别的电脑访问，前面用 Caddy/Nginx 加 HTTPS 转发，不要直接改成 0.0.0.0
 port = 8787
 max_body_bytes = 1000000   # 单个请求体上限（字节），超出返回 413
-data_dir = "data"          # 会话缓存、占位符映射、日志
+data_dir = "data"          # 会话缓存、日志、问题报告
 rules_dir = "rules"        # 服务端规则：_global.md + <项目名>.md
-dictionary = "dictionary.toml"
-redact = true              # 脱敏：词表和内置规则命中的内容换成占位符再发给模型（默认关闭）
-secret_env = "FERRY_SECRET"  # 生成占位符用的密钥；换了以后旧占位符无法还原
+secret_env = "FERRY_SECRET"  # 服务端密钥（至少 16 个字符）
 session_ttl_days = 7
 
 # 每个用户一个令牌，令牌放在环境变量里

@@ -7,7 +7,7 @@ from ferry_server.config import load_default
 
 
 def make(tmp_path, monkeypatch):
-    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FERRY_SESSION_STORE", "FERRY_REDACT", "FERRY_TOKEN", "FERRY_SECRET"):
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FERRY_SESSION_STORE", "FERRY_TOKEN", "FERRY_SECRET"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
     monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
@@ -38,10 +38,10 @@ def test_admin_is_local_and_keyed(tmp_path, monkeypatch):
             st = (await c.get("/admin/api/status")).json()
             assert st["models"][0]["id"] == "deepseek" and st["token"]
             # changing needs the header a foreign page cannot send
-            assert (await c.put("/admin/api/settings", json={"redact": False})).status_code == 403
-            r = await c.put("/admin/api/settings", json={"redact": False, "public_url": "https://f.example.com/",
+            assert (await c.put("/admin/api/settings", json={"public_url": "x"})).status_code == 403
+            r = await c.put("/admin/api/settings", json={"public_url": "https://f.example.com/",
                                                          "session_store": "disk"}, headers={"X-Ferry-Admin": "1"})
-            assert r.status_code == 200 and r.json()["redact"] is False and r.json()["public_url"] == "https://f.example.com"
+            assert r.status_code == 200 and r.json()["public_url"] == "https://f.example.com"
             assert cfg.session_store == "disk" and "session_store = \"disk\"" in (tmp_path / "server.toml").read_text()
             # through a tunnel the request also comes from 127.0.0.1 but carries Cloudflare headers
             assert (await c.get("/admin/api/status", headers={"cf-connecting-ip": "1.2.3.4"})).status_code == 403
@@ -59,10 +59,10 @@ def test_admin_is_local_and_keyed(tmp_path, monkeypatch):
     run(go())
     # settings survive a restart
     cfg2 = load_default()
-    assert cfg2.redact is False and cfg2.public_url == "https://f.example.com" and cfg2.session_store == "disk"
+    assert cfg2.public_url == "https://f.example.com" and cfg2.session_store == "disk"
 
 
-def test_providers_keys_prompts_redaction(tmp_path, monkeypatch):
+def test_providers_keys_prompts_report_words(tmp_path, monkeypatch):
     cfg, app = make(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY")
     key = (tmp_path / "admin-key").read_text().strip()
@@ -96,17 +96,13 @@ def test_providers_keys_prompts_redaction(tmp_path, monkeypatch):
             assert (await c.put("/admin/api/prompts/my-app", headers=H, json={"text": "- 这是 Vue 项目"})).status_code == 200
             pr = (await c.get("/admin/api/prompts")).json()
             assert pr["global"].startswith("- 用中文") and any(p["name"] == "my-app" for p in pr["projects"])
-            # redaction: structured form, and trying it out
-            d = (await c.get("/admin/api/redaction")).json()
-            assert {b["name"] for b in d["builtins"] if b["on"]} == {"private-ipv4", "email"}
-            d["terms"] = ["Project Titan"]
-            for b in d["builtins"]:
-                b["on"] = True
-            assert (await c.put("/admin/api/redaction", headers=H, json=d)).status_code == 200
-            t = (await c.post("/admin/api/redaction/try", headers=H, json={**d, "sample": "Project Titan 在 10.1.2.3，电话 13812345678"})).json()
-            assert "Project Titan" not in t["masked"] and "10.1.2.3" not in t["masked"] and "13812345678" not in t["masked"]
-            bad = await c.put("/admin/api/redaction", headers=H, json={**d, "custom": [{"name": "x", "regex": "("}]})
-            assert bad.status_code == 400
+            # words always hidden in problem reports
+            assert (await c.put("/admin/api/reports/words", json={"text": "x"})).status_code == 403
+            r = (await c.put("/admin/api/reports/words", headers=H, json={"text": "Project Titan\n\n  host-01 \n"})).json()
+            assert r["words"] == ["Project Titan", "host-01"]
+            from ferry_server.report import scrub
+            text, n = scrub(cfg, "project titan on host-01 at 10.1.2.3, call 13812345678")
+            assert n == 4 and "titan" not in text.lower() and "host-01" not in text and "10.1.2.3" not in text
 
     run(go())
 

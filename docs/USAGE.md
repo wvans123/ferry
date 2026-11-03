@@ -215,7 +215,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `permissionMode` | `default` | 启动时的权限模式：`default` / `acceptEdits` / `plan` / `bypass` |
 | `thinking` | `medium` | Claude 和 GPT 想多久再回答：`low` / `medium` / `high` / `xhigh`。越高越适合难题，也越慢越贵 |
 | `memory` | `true` | 跨对话的记忆 |
-| `web` | `client` | 联网工具在哪执行：`client`（这台电脑）/ `server`（服务端代办，需服务端开启）/ `off` |
+| `web` | `client` | 联网工具（`web_fetch`、`web_search`）：`client` 在这台电脑上执行，`off` 关掉 |
 | `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome） |
 | `goalMaxTurns` / `goalBudget` | `100` / `0` | `/goal` 最多轮数和 token 预算（如 `2m`，0 表示不限） |
 | `notify` | `true` | 长请求结束时响铃加通知 |
@@ -261,7 +261,7 @@ Ferry 哪里没做好，在出问题的那个对话里输入：
 
 1. agent 根据这个对话写一份问题报告：你想做什么、Ferry 做了什么、哪里出错、报错原文、它认为的原因。它被要求不写你的工作内容：不放文件内容和代码，不写文件名、项目名、公司名、人名、内部地址，只用"一个 3 MB 的 Word 文件"这类说法。
 2. 发出前，报告全文连同自动附上的版本号和工具使用次数（只有次数，比如 `bash 12 (2 failed)`）显示给你，你选 Send 才发。
-3. 报告只发到你自己的 Ferry 服务端，工作电脑不需要能上 GitHub。服务端再隐去敏感词表里的词、内网 IP、邮箱、手机号、Key 和路径里的用户名，然后用它自己的 GitHub 令牌开一个 issue。服务端怎么设见 [SERVER.md](SERVER.md#问题报告)。
+3. 报告只发到你自己的 Ferry 服务端，工作电脑不需要能上 GitHub。服务端再隐去你在管理页列的词、内网 IP、邮箱、手机号、Key 和路径里的用户名，然后用它自己的 GitHub 令牌开一个 issue。服务端怎么设见 [SERVER.md](SERVER.md#问题报告)。
 4. 服务端没设令牌或连不上 GitHub 时，报告留在服务端，管理页里能看到、能再发一次。工作电脑连不上服务端时，报告存在 `%USERPROFILE%\.ferry\reports`，下一次 `/report` 时一起发。
 
 仓库是公开的，issue 谁都能看到。发之前请把报告从头看一遍。

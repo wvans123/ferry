@@ -8,13 +8,14 @@
 
 ```bat
 git pull
-npm ci
-pip install -e server
 python evals\run.py
 ```
 
+第一次运行时，脚本会自己执行 `npm ci`（装客户端的依赖）和 `pip install -e server`（给这个 Python 装上服务端），以后就跳过。
+
 - 每个任务在 `evals\runs\` 下有自己的文件夹，用自己的 `FERRY_HOME`，并且每次运行都临时起一个 Ferry 服务端（`FERRY_SERVER_HOME` 也是临时的），所以不会碰你平时的设置和服务端。agent 在"全部放行"模式下跑。
 - 结果存进 `evals\results\<时间>-<版本>.json`，屏幕上打印一张表，并和上一次的结果比较。把这个 json 提交推送上来，下一个会话就能看到。
+- 任务每次都一样，模型的回答每次会有些不同，所以同一个任务这次过、下次不过是正常的。要比较两个版本，用 `--repeat 3` 看通过率，比只跑一次可靠。
 - 没通过的任务保留文件夹：`answer.txt` 是 agent 的回答，`ferry.log` 是运行记录，`project\` 是它改过的文件。
 
 常用的参数：

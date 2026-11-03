@@ -115,7 +115,6 @@ async function fetchModels(cfg, waited = false) {
 		if (r.status === 200 && r.body.models?.length) {
 			cfg.sessionStore = r.body.sessionStore;
 			cfg.features = r.body.features ?? [];
-			cfg.serverWeb = r.body.web === true;
 			writeModelsCache(r.body.models);
 			return r.body.models;
 		}
@@ -273,12 +272,9 @@ async function doctor() {
 		ok(`token accepted; the server picks the model: ${r.body.models.map(label).join(", ")}`);
 		const store = { disk: "cached on disk", memory: "cached in memory only", none: "not kept (full upload every turn)" };
 		info(`conversation on the server: ${store[r.body.sessionStore] ?? "cached"}; the full history stays on this computer`);
-		const webSetting = cfg.web ?? "client";
-		info(webSetting === "server" ? (r.body.web ? "web tools: on the server" : "web tools: set to run on the server, but the server has web access off")
-			: webSetting === "off" ? "web tools: off" : "web tools: on this computer, through its normal network (ferry config set web server|off to change)");
-		if (webSetting === "client" || webSetting === true || cfg.web === undefined) {
-			if (cfg.blockedSites?.length) info(`blocked sites: ${cfg.blockedSites.join(", ")}`);
-		}
+		const webOff = cfg.web === "off" || cfg.web === false;
+		info(webOff ? "web tools: off" : "web tools: on this computer, through its normal network (ferry config set web off to turn them off)");
+		if (!webOff && cfg.blockedSites?.length) info(`blocked sites: ${cfg.blockedSites.join(", ")}`);
 		for (const m of r.body.models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);
 		}
@@ -384,7 +380,7 @@ async function run(args) {
 	const { createGoal } = await import("../lib/goal.mjs");
 	const { createJobs } = await import("../lib/jobs.mjs");
 	const { createProjectMcp } = await import("../lib/mcp.mjs");
-	const { webMode } = await import("../lib/web.mjs");
+	const { webOn } = await import("../lib/web.mjs");
 	const status = async () => {
 		const t = Date.now();
 		const h = await getJson({ server: cfg.server, headers: cfg.headers }, "/health", 5000).catch((e) => ({ error: e }));
@@ -394,7 +390,7 @@ async function run(args) {
 			`Server: ${cfg.mode === "local" ? "on this computer" : cfg.server}  ${h.json ? `reachable in ${Date.now() - t} ms, version ${h.body.version}`
 				: `NOT reachable (${h.error?.cause?.code ?? h.error?.message ?? `HTTP ${h.status}`})`}`,
 			`Model: chosen by the server${m.routesTo ? `: ${m.routesTo} (${m.model})` : ""}`,
-			`Web tools: ${webMode(cfg) || "off"}   Browser: ${cfg.browser ? "on" : "off"}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
+			`Web tools: ${webOn(cfg) ? "on" : "off"}   Browser: ${cfg.browser ? "on" : "off"}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
 		];
 	};
 	const { createWeb } = await import("../lib/web.mjs");

@@ -2,7 +2,7 @@
 //
 // pi re-sends the whole conversation on every model request. This provider uploads only the messages the
 // server has not seen yet (split into parts when they exceed chunkBytes), then sends a tiny request that
-// refers to the server-side copy. The server rebuilds the full request, adds its rules, redacts it and
+// refers to the server-side copy. The server rebuilds the full request, adds its rules and
 // calls the model. If the server has lost its copy, the client re-uploads everything automatically.
 import { fitPictures } from "./pictures.mjs";
 import { createHash, randomUUID } from "node:crypto";

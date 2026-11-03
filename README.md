@@ -9,7 +9,7 @@ A Claude-Code-style coding agent for locked-down Windows PCs. The agent runs on 
 ```
 C:\my-project> ferry
 
-  Ferry v0.25.0  server ferry.example.com
+  Ferry v0.26.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
   memory: 3 (/memory)  ·  subagents on  ·  /help for commands (/goal /tasks /cost /rewind)
 
@@ -32,7 +32,7 @@ C:\my-project> ferry
 工作电脑                                       Ferry 服务端（你自己的电脑或服务器）             模型
 ┌──────────────────────────────┐   只传新增部分   ┌──────────────────────────────┐            ┌──────────┐
 │ ferry（agent）                │ ── 每次 ≤ 1MB ──> │ 拼回完整对话、加团队提示词、   │ ─────────> │ Claude   │
-│ 读写文件、执行命令、记忆、权限 │ <── 逐字返回 ──── │ 选模型、（可选）脱敏、存 Key  │ <───────── │ DeepSeek │
+│ 读写文件、执行命令、记忆、权限 │ <── 逐字返回 ──── │ 选模型、存 Key                │ <───────── │ DeepSeek │
 └──────────────────────────────┘                  └──────────────────────────────┘            └──────────┘
 ```
 
@@ -132,8 +132,8 @@ agent 自己会用的能力：
 ## 安全须知
 
 - 服务端能看到对话原文（`session_store = "none"` 时处理完就丢），所以服务端必须是你信得过的机器，并且只用 HTTPS 访问。
-- 脱敏默认关闭。打开后也只有词表和内置规则命中的内容会被替换，其他信息照样发给模型。公司明确不许外发的内容，就不要交给 agent。
-- 联网默认在工作电脑上执行，受公司网关管，Ferry 不会替你点掉网关的确认页。改成服务端代办（`web = server`）等于让工作电脑经你的服务端上外网，开之前确认公司规定允许。
+- Ferry 不替换对话里的敏感内容，交给 agent 的东西都会发给模型。公司明确不许外发的内容，就不要交给 agent。
+- 联网在工作电脑上执行，受公司网关管，Ferry 不会替你点掉网关的确认页。
 - 令牌存在工作电脑的 `%USERPROFILE%\.ferry\config.json`。泄露了就在管理页换一个；用"添加设备"发的令牌，作废那一台即可。
 - 全局记忆存在服务端，agent 被要求只放你的偏好，不放工作内容。管理页里能看到每一条，随时可删。
 - 第一次试用，先拿一个测试文件夹和编出来的内容。
@@ -148,7 +148,8 @@ agent 自己会用的能力：
 | [DEPLOY-WINDOWS](docs/DEPLOY-WINDOWS.md) · [MAC](docs/DEPLOY-MAC.md) · [LINUX](docs/DEPLOY-LINUX.md) | 在这三种机器上部署服务端 |
 | [CUSTOMIZE.md](docs/CUSTOMIZE.md) | 自己写命令、技能、子 agent、钩子、权限规则、MCP |
 | [TEAM.md](docs/TEAM.md) | 用 Paperclip 组 agent 团队 |
-| [DESIGN.md](docs/DESIGN.md) | 增量同步协议、提示词组装、脱敏、代码地图 |
+| [DESIGN.md](docs/DESIGN.md) | 增量同步协议、提示词组装、代码地图 |
+| [MODULES.md](docs/MODULES.md) | 模块怎么写、现在有哪些模块（加功能、删功能都从这里开始） |
 | [CONTEXT-AND-MEMORY.md](docs/CONTEXT-AND-MEMORY.md) | 上下文和记忆的方案，以及和 Cursor、Claude Code、Codex 的对比 |
 | [ROADMAP.md](docs/ROADMAP.md) | 接下来做什么、离商业产品还差什么 |
 | [GOAL.md](GOAL.md) | 验收标准：端到端自测的每一项和最近一次结果 |
@@ -178,7 +179,7 @@ client/      ferry 命令行（Node.js）
              子 agent subagent、联网 web、公司网关 gateway、Office office、/goal goal ……
   skills/    内置技能
   test/      客户端单元测试
-server/      ferry-server（Python / FastAPI）：会话缓存、提示词组装、脱敏、模型适配、管理页
+server/      ferry-server（Python / FastAPI）：会话缓存、提示词组装、模型适配、管理页
 selftest/    端到端自测
 evals/       真实任务评测
 examples/    自己扩展用的例子：命令、技能、子 agent、钩子、权限、MCP

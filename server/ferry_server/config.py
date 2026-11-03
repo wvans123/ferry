@@ -10,23 +10,7 @@ from pathlib import Path
 
 DEFAULT_RULES = """- Reply in the same language the user writes in.
 - Before editing a file, read it first; keep edits minimal.
-- Placeholders such as [FERRY-...] (eight capital letters or digits after the dash) stand for confidential values. \
-Use them exactly as given; never guess what they hide.
 """
-
-DEFAULT_DICTIONARY = """# Ferry 脱敏词表：命中的内容发给模型前换成 [FERRY-XXXXXXXX]，模型返回时再换回原文。
-# 在 terms 里加上你的敏感词（公司名、项目代号、主机名……），改完重启 ferry-server 生效。
-terms = []
-
-[[patterns]]
-name = "private-ipv4"
-regex = '\\b(?:10(?:\\.\\d{1,3}){3}|172\\.(?:1[6-9]|2\\d|3[01])(?:\\.\\d{1,3}){2}|192\\.168(?:\\.\\d{1,3}){2})\\b'
-
-[[patterns]]
-name = "email"
-regex = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}'
-"""
-
 
 @dataclass
 class ModelConfig:
@@ -88,7 +72,6 @@ class Config:
     max_body_bytes: int = 1_000_000
     data_dir: Path = Path("data")
     rules_dir: Path = Path("rules")
-    dictionary: Path | None = None
     secret: str = ""
     session_ttl_days: int = 7
     max_upstream_bytes: int = 0  # 0 = no cap; otherwise old tool outputs are dropped to stay under it
@@ -99,7 +82,6 @@ class Config:
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
-    redact: bool = False  # true: replace words from the list and built-in patterns with placeholders before the model
     # the server picks the model: clients ask for "auto"; summaries can go to a cheaper model
     default_model: str = ""
     summary_model: str = ""
@@ -114,11 +96,6 @@ class Config:
     models: dict[str, ModelConfig] = field(default_factory=dict)
     providers: dict[str, Provider] = field(default_factory=dict)
     record_details: bool = False  # keep the last requests' prompts in memory for the admin page
-    # web access for the work computer's agent (web_fetch / web_search run here); off unless switched on
-    web_enabled: bool = False
-    web_allow: list[str] = field(default_factory=list)  # empty: every site; else these sites and their subdomains
-    web_engine: str = "bing"  # bing (reachable from mainland China) or duckduckgo
-    web_proxy: str = ""       # e.g. http://127.0.0.1:7890 when this computer reaches the internet through a proxy
 
 
 def load(path: str | os.PathLike) -> Config:
@@ -136,17 +113,10 @@ def load(path: str | os.PathLike) -> Config:
         max_body_bytes=int(s.get("max_body_bytes", 1_000_000)),
         data_dir=rel(s.get("data_dir", "data")),
         rules_dir=rel(s.get("rules_dir", "rules")),
-        dictionary=rel(s.get("dictionary")),
         secret=os.environ.get(s.get("secret_env", "FERRY_SECRET"), ""),
         session_ttl_days=int(s.get("session_ttl_days", 7)),
         max_upstream_bytes=int(s.get("max_upstream_bytes", 0)),
         session_store=s.get("session_store", "disk"),
-        redact=bool(s.get("redact", False)),
-        web_enabled=(os.environ["FERRY_WEB"].lower() in ("1", "true", "on", "yes")) if os.environ.get("FERRY_WEB")
-        else bool(s.get("web", False)),
-        web_allow=list(s.get("web_allow", [])),
-        web_engine=s.get("web_engine", "bing"),
-        web_proxy=s.get("web_proxy", ""),
         max_concurrent=int(s.get("max_concurrent", 6)),
         bark_url=os.environ.get("FERRY_BARK_URL") or s.get("bark_url", ""),
         github_repo=os.environ.get("FERRY_GITHUB_REPO") or s.get("github_repo", "wvans123/ferry"),
@@ -484,9 +454,6 @@ def load_default() -> Config:
     rules = home / "rules" / "_global.md"
     if not rules.exists():
         rules.write_text(DEFAULT_RULES, encoding="utf-8")
-    dictionary = home / "dictionary.toml"
-    if not dictionary.exists():
-        dictionary.write_text(DEFAULT_DICTIONARY, encoding="utf-8")
     secret = os.environ.get("FERRY_SECRET") or _persistent_secret(home / "secret")
     token = os.environ.get("FERRY_TOKEN") or _persistent_secret(home / "token")
     settings_file = home / "server.toml"
@@ -505,7 +472,6 @@ def load_default() -> Config:
         port=int(os.environ.get("FERRY_PORT", 8787)),
         data_dir=home / "data",
         rules_dir=home / "rules",
-        dictionary=dictionary,
         secret=secret,
         users={token: "local"},
         max_upstream_bytes=int(env("FERRY_MAX_UPSTREAM_BYTES") or saved.get("max_upstream_bytes", 0)),
@@ -516,16 +482,10 @@ def load_default() -> Config:
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
-        redact=(env("FERRY_REDACT").lower() not in ("0", "false", "off", "no")) if env("FERRY_REDACT")
-        else bool(saved.get("redact", False)),
         models_file=models_file,
         settings_file=settings_file,
         public_url=saved.get("public_url", ""),
         record_details=bool(saved.get("record_details", False)),
-        web_enabled=(env("FERRY_WEB").lower() in ("1", "true", "on", "yes")) if env("FERRY_WEB") else bool(saved.get("web", False)),
-        web_allow=list(saved.get("web_allow", [])),
-        web_engine=saved.get("web_engine", "bing"),
-        web_proxy=saved.get("web_proxy", ""),
     )
     apply_models_file(cfg, models_file)
     cfg.models_mtime = models_file.stat().st_mtime
@@ -542,13 +502,8 @@ def save_settings(cfg: Config) -> None:
         "# Ferry server settings, written by the admin page. Environment variables with the same meaning win.\n"
         f'public_url = "{cfg.public_url}"\n'
         f'session_store = "{cfg.session_store}"\n'
-        f"redact = {'true' if cfg.redact else 'false'}\n"
         f"max_upstream_bytes = {int(cfg.max_upstream_bytes)}\n"
         f"record_details = {'true' if cfg.record_details else 'false'}\n"
-        f"web = {'true' if cfg.web_enabled else 'false'}\n"
-        f"web_allow = {json.dumps(cfg.web_allow, ensure_ascii=False)}\n"
-        f"web_engine = {json.dumps(cfg.web_engine)}\n"
-        f"web_proxy = {json.dumps(cfg.web_proxy)}\n"
         f"max_concurrent = {int(cfg.max_concurrent)}\n"
         f"bark_url = {json.dumps(cfg.bark_url)}\n"
         f"github_repo = {json.dumps(cfg.github_repo)}\n"

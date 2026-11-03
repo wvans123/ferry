@@ -1,4 +1,4 @@
-"""SQLite storage: session cache (incremental sync), tool schemas, upload parts, placeholder mappings.
+"""SQLite storage: session cache (incremental sync), tool schemas, upload parts.
 
 The client is the source of truth for every conversation. Everything here is a cache the server can lose:
 on a mismatch the client re-uploads in full.
@@ -45,11 +45,7 @@ class Store:
                                              PRIMARY KEY (upload, seq));
             """
         )
-        cols = [r[1] for r in self.db.execute("PRAGMA table_info(mapping)").fetchall()]
-        if cols and "owner" not in cols:  # v0.1 table had no owner column; its data is not reusable
-            self.db.execute("DROP TABLE mapping")
-        self.db.execute("CREATE TABLE IF NOT EXISTS mapping (owner TEXT, placeholder TEXT, original TEXT, kind TEXT, "
-                        "PRIMARY KEY (owner, placeholder))")
+        self.db.execute("DROP TABLE IF EXISTS mapping")  # redaction placeholders, before 0.26
 
     # ---------- uploads ----------
     def put_part(self, upload: str, seq: int, data: bytes) -> None:
@@ -143,14 +139,3 @@ class Store:
             self.db.execute("DELETE FROM conv")
             self.db.execute("DELETE FROM msg")
             self.db.execute("DELETE FROM blob")
-
-    # ---------- placeholder mappings ----------
-    # Mappings are per user: a user can only get back originals that they themselves sent.
-    def put_mapping(self, owner: str, placeholder: str, original: str, kind: str) -> None:
-        with self.lock, self.db:
-            self.db.execute("INSERT OR IGNORE INTO mapping VALUES (?,?,?,?)", (owner, placeholder, original, kind))
-
-    def get_mapping(self, owner: str, placeholder: str) -> str | None:
-        row = self.db.execute("SELECT original FROM mapping WHERE owner=? AND placeholder=?",
-                              (owner, placeholder)).fetchone()
-        return row[0] if row else None
