@@ -131,7 +131,7 @@ You are a security reviewer. ...
 
 ```json
 {
-  "allow": ["bash(npm test*)", "edit(src/**)", "web_fetch(docs.python.org)", "mcp__browser__*"],
+  "allow": ["bash(npm test*)", "edit(src/**)", "web_fetch(docs.python.org)", "bash(agent-browser*)"],
   "ask":   ["bash(git push*)"],
   "deny":  ["bash(curl*)", "read(secrets/**)"]
 }
@@ -143,7 +143,8 @@ You are a security reviewer. ...
 | `edit(src/**)` | 改 `src` 下任意层的文件，包括新建（write） |
 | `read(secrets/**)` | 读文件（通常放在 deny 里） |
 | `web_fetch(github.com)` | 读这个网站和它的子域名的网页 |
-| `mcp__browser__*` | 某个 MCP 服务器的全部工具，这里是浏览器 |
+| `bash(agent-browser*)` | 浏览器的所有操作（打开网页、点击、填表）都不再问 |
+| `mcp__github__*` | 某个 MCP 服务器的全部工具，这里是叫 github 的那个 |
 | `powershell`、`task` | 只写工具名，就是这个工具的所有调用 |
 
 - 规则文件有三个，内容合在一起生效：`%USERPROFILE%\.ferry\permissions.json`（你的，所有项目）、"以后都允许"自动写的个人项目文件、项目里的 `.ferry\permissions.json`（团队）。

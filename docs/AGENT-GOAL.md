@@ -361,3 +361,11 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | 服务端代办联网没人用 | 删掉：`web = server`、服务端的 web.py、`/v1/ferry/web/*`、`FERRY_WEB`、管理页"联网"卡片。客户端 `web` 只剩 `client` 和 `off`，以前设成 `server` 的当成 `client` | F35 去掉服务端部分 |
 | 以后要按模块开发 | 新文档 docs/MODULES.md：模块包括哪些部分、现在有哪些模块；服务端模块用 `mount()` 自己注册接口，`/report` 先改成这样 | 服务端单元测试 |
 
+## v0.27：浏览器换成 agent-browser
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 想让 agent 用浏览器；Playwright MCP 每次请求都带二十来个工具定义，看一次页面几千 token，默认关着 | 浏览器模块改用 Vercel 的 agent-browser：随 Ferry 装好（安装包只带 Windows 的程序，18 MB），启动时放进 pi 的 bin 文件夹，agent 用 bash 调用（`open`、`snapshot -i`、`click @e3`、`fill`、`get text`、`screenshot`）。Ferry 设好用电脑上的 Edge（没有就 Chrome，`browserPath` 可指定）、自己的资料夹 `browser-profile`（登录一次记住）、默认显示窗口（`browserHeadless`）；技能说明 `client/browser-skill/` 只在浏览器打开时列出；看页面的子命令不问，打开、点击、填表要确认；ferry 退出时关掉浏览器。默认打开（`browser` 默认 true）。去掉 `@playwright/mcp` | F36 改写：脚本生成的内容、填表、点按钮、技能在系统提示里、退出后浏览器关掉；客户端单元测试 |
+| 网站黑名单只管 web_fetch | `blockedSites` 也管命令：命令里出现的网址、`agent-browser open` 的网站在黑名单上就拦下（curl 也一样） | 客户端单元测试 |
+| 第一次真模型评测（Windows，DeepSeek）6/7：fix_bug 判"测试文件被改了" | 判分的问题：Windows 上 Python 写文件用 CRLF，按字节比较就不一样。改成按文本比较。另加一个评测任务 `browser_page`（用浏览器读脚本生成的页面、填表） | `evals/run.py --verify` 8/8 |
+

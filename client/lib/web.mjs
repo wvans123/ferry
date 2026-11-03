@@ -176,8 +176,27 @@ export function webOn(cfg) {
 	return cfg.web !== "off" && cfg.web !== false;
 }
 
+/** Sites a shell command would reach: every http(s) address, and the page agent-browser is told to open. */
+export function commandSites(command) {
+	const c = String(command ?? "");
+	const urls = c.match(/https?:\/\/[^\s"'<>|;&)]+/gi) ?? [];
+	for (const m of c.matchAll(/\bagent-browser(?:\.exe)?\b[^|;&\n]*?\b(?:open|goto|navigate|read|new)\s+["']?([^\s"'|;&]+)/gi)) urls.push(m[1]);
+	return urls;
+}
+
 export function createWeb(cfg) {
 	return (pi) => {
+		if (cfg.blockedSites?.length) {
+			// blocked sites hold for every tool: the browser (agent-browser open), curl, anything a command reaches
+			pi.on("tool_call", (event) => {
+				if (event.toolName !== "bash" && event.toolName !== "job_start") return undefined;
+				for (const u of commandSites(event.input?.command)) {
+					const hit = blockedSite(u, cfg.blockedSites);
+					if (hit) return { block: true, reason: `${hit} is on the user's blocked sites list: do not open it, by any tool. Tell the user if the task needs it.` };
+				}
+				return undefined;
+			});
+		}
 		if (!webOn(cfg)) return;
 		const where = "Runs on this computer through its normal network (company proxy and gateway rules apply).";
 		const notBlocked = (url) => {

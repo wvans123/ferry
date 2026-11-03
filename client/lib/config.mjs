@@ -36,7 +36,7 @@ export const DEFAULTS = {
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
 	blockedSites: [], // sites never opened by web_fetch (and their subdomains), e.g. ["mail.corp.com"]
-	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
+	browser: true, // let the agent drive the browser on this computer (Edge on Windows) with agent-browser
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
 	thinking: "medium", // how long Claude / GPT think: low, medium, high, xhigh
@@ -66,7 +66,7 @@ export const SETTINGS = {
 	web: ["string", "web_fetch and web_search, on this computer's network (the company proxy and gateway rules apply)",
 		["client  on", "off"]],
 	blockedSites: ["list", "sites the agent may never open with web_fetch, subdomains included (e.g. your mail, chat and cloud drive)"],
-	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
+	browser: ["boolean", "let the agent drive the browser on this computer (Edge on Windows): JavaScript pages, logins, clicking, forms"],
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
@@ -82,7 +82,7 @@ export const ADVANCED_SETTINGS = {
 	notifyAfterSeconds: ["number", "how long a request must take before the notification"],
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
-	browserHeadless: ["boolean", "run that browser without a window"],
+	browserHeadless: ["boolean", "run that browser without a window (by default you see what the agent does)"],
 	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],

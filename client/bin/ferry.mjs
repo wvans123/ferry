@@ -231,6 +231,8 @@ async function doctor() {
 	} else ok(`search tools: fd and rg (${[...new Set(Object.values(tools))].map((v) => v === "agent" ? BIN_DIR : "on PATH").join(", ")})`);
 	const proxy = await applyProxy(cfg);
 	info(`proxy: ${proxy || "none"}${proxy ? `; not used for: ${process.env.NO_PROXY}` : ""}`);
+	const browser = (await import("../lib/browser.mjs")).prepareBrowser(cfg);
+	info(`browser: ${browser.on ? `agent-browser with ${browser.browser}` : browser.why}`);
 	if (cfg.mode === "remote") {
 		const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(cfg.server);
 		if (cfg.server.startsWith("https://") || local) ok(`server ${cfg.server} (set with ferry login)`);
@@ -381,6 +383,8 @@ async function run(args) {
 	const { createJobs } = await import("../lib/jobs.mjs");
 	const { createProjectMcp } = await import("../lib/mcp.mjs");
 	const { webOn } = await import("../lib/web.mjs");
+	const { createBrowser, prepareBrowser } = await import("../lib/browser.mjs");
+	const browserState = prepareBrowser(cfg);
 	const status = async () => {
 		const t = Date.now();
 		const h = await getJson({ server: cfg.server, headers: cfg.headers }, "/health", 5000).catch((e) => ({ error: e }));
@@ -390,11 +394,10 @@ async function run(args) {
 			`Server: ${cfg.mode === "local" ? "on this computer" : cfg.server}  ${h.json ? `reachable in ${Date.now() - t} ms, version ${h.body.version}`
 				: `NOT reachable (${h.error?.cause?.code ?? h.error?.message ?? `HTTP ${h.status}`})`}`,
 			`Model: chosen by the server${m.routesTo ? `: ${m.routesTo} (${m.model})` : ""}`,
-			`Web tools: ${webOn(cfg) ? "on" : "off"}   Browser: ${cfg.browser ? "on" : "off"}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
+			`Web tools: ${webOn(cfg) ? "on" : "off"}   Browser: ${browserState.on ? `on (${browserState.browser})` : browserState.why}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
 		];
 	};
 	const { createWeb } = await import("../lib/web.mjs");
-	const { createBrowser } = await import("../lib/browser.mjs");
 	const sync = createSyncProvider(cfg, models);
 	cfg.phone = (await import("../lib/phone.mjs")).phoneNotifier(cfg);
 	// an approval left waiting: tell the phone after a while
@@ -438,7 +441,7 @@ async function run(args) {
 			{ name: "ferry-image", factory: (await import("../lib/image.mjs")).createImage(cfg), hidden: true },
 			{ name: "ferry-office", factory: (await import("../lib/office.mjs")).createOffice(), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },
-			{ name: "ferry-browser", factory: createBrowser(cfg), hidden: true },
+			{ name: "ferry-browser", factory: createBrowser(browserState), hidden: true },
 			{ name: "ferry-project-mcp", factory: createProjectMcp(), hidden: true },
 			{ name: "ferry-subagents", factory: createSubagents(cfg, {
 				makeSync: () => createSyncProvider(cfg, models, { purpose: "subagent" }) }), hidden: true },

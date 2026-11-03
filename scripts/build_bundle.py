@@ -91,6 +91,10 @@ def main() -> int:
             shutil.copy2(ROOT / name, stage / name)
     for name in ["client", "server", "selftest", "docs", "deploy", "node_modules"]:
         copy(ROOT / name, stage / name)
+    if a.platform == "win":  # agent-browser ships a program for every platform (about 115 MB); keep the Windows one
+        for f in (stage / "node_modules" / "agent-browser" / "bin").glob("agent-browser-*"):
+            if not f.name.startswith("agent-browser-win32-x64"):
+                f.unlink()
 
     if not a.skip_tools:
         fetch_tools(stage, a.platform)
