@@ -9,6 +9,7 @@
 // Each folder has MEMORY.md, an index with one line per memory, and one Markdown file per memory.
 // Only the two indexes go into the system prompt; the model reads a memory when its line looks relevant.
 // The model writes memories with the `memory` tool, which can touch nothing outside these folders.
+import { unwrap } from "./text.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -71,7 +72,7 @@ function dropIndexLine(dir, name) {
 	writeFileSync(join(dir, INDEX), lines.length ? `${lines.join("\n")}\n` : "", "utf8");
 }
 
-const GUIDE = `You have a memory that lasts across conversations. It is stored on the user's computer as Markdown files.
+const GUIDE = unwrap(`You have a memory that lasts across conversations. It is stored on the user's computer as Markdown files.
 There are two scopes:
 - user: about the user, in every project: their role, preferences, how they want you to work, corrections they gave you.
 - project: about this project folder: decisions and their reasons, conventions, where things live, known pitfalls.
@@ -84,13 +85,14 @@ Save a memory (action "save") when:
 - you learn a fact about the user or the project that will matter in later conversations and is not written in the
   code, the git history or the project's AGENTS.md;
 - you worked something out with real effort (a non-obvious build step, the cause of a confusing failure).
+
 Do not save: things anyone can read from the code, temporary details of the current task, secrets, passwords, keys,
 or personal data about other people. Keep each memory short and specific. Update an existing memory (same name)
 instead of adding a near-duplicate, and delete memories that turn out to be wrong. When the user asks you to forget
 something, delete it.
 
 Memories can be out of date. If one disagrees with the code or with what the user says now, trust the code and the
-user, and fix the memory. Rules in AGENTS.md and the user's current instructions take priority over memories.`;
+user, and fix the memory. Rules in AGENTS.md and the user's current instructions take priority over memories.`);
 
 // ---------- global scope: on the Ferry server ----------
 
@@ -144,11 +146,10 @@ async function runGlobal(cfg, params) {
 	throw new Error(`unknown action ${params.action}`);
 }
 
-const GLOBAL_GUIDE = `
-There is also a global scope, kept on the user's Ferry server and shared by every computer they use Ferry on. Use it
+const GLOBAL_GUIDE = "\n" + unwrap(`There is also a global scope, kept on the user's Ferry server and shared by every computer they use Ferry on. Use it
 only for things about the user that should follow them everywhere (preferences, how they want you to work, terms
 they use). Never put content from their work there (code, documents, company or project details, names of people):
-that belongs in the project scope, which stays on this computer. When a memory fits both user and global, prefer global.`;
+that belongs in the project scope, which stays on this computer. When a memory fits both user and global, prefer global.`);
 
 /** The system prompt section: what memory is, plus the indexes. */
 export function memorySection(cwd, g = global) {
@@ -156,8 +157,8 @@ export function memorySection(cwd, g = global) {
 	const project = loadIndex(scopeDir("project", cwd));
 	const team = teamMember() ? `
 
-You are one member of a team. The project memory is shared by the whole team: save there what every member should
-know. A third scope, role, is yours alone: how you do your part of the work, what you learned doing it.
+${unwrap(`You are one member of a team. The project memory is shared by the whole team: save there what every member should
+know. A third scope, role, is yours alone: how you do your part of the work, what you learned doing it.`)}
 
 Your own (role) memory index:
 ${loadIndex(scopeDir("role", cwd)) || "(empty)"}` : "";

@@ -833,6 +833,24 @@ def check_prompt_rules(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_v023(root: Path, work: Path) -> None:
+    """web_download (a 3GPP-style zip into the project, unpacked) and ask_user without a terminal."""
+    proj = root / "proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "DOWNLOADTEST: get TS 23.501", cwd=proj, env_extra={"FERRY_PERMISSION_MODE": "bypass"})
+        ok1 = c1 == 0 and "DOWNLOAD:" in o1 and "5G system architecture" in o1 and (proj / "downloads" / "23501-j40.zip").exists()
+        check("F64 下载文件", ok1, "web_download 把 zip 存进项目的 downloads/，自动解压，agent 接着读里面的文件"
+              if ok1 else f"code={c1} {o1[-300:]!r}")
+        c2, o2 = s.ferry("-p", "ASKTEST: make a report", cwd=proj)
+        ok2 = c2 == 0 and "ASK:" in o2 and "Nobody can answer here" in o2 and "PPT" in o2
+        check("F65 选项式提问", ok2, "ask_user 在没有终端时（-p、团队成员）不卡住：告诉 agent 按推荐的选项继续"
+              if ok2 else f"code={c2} {o2[-300:]!r}")
+    finally:
+        s.close()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1371,6 +1389,7 @@ def main() -> int:
     check_v019(base / "v019", work)
     check_v022(base / "v022", work)
     check_prompt_rules(base / "rules", work)
+    check_v023(base / "v023", work)
     check_diy(base / "diy")
     check_claude_goal_jobs(base / "claude", work)
     check_v018(base / "v018", work)

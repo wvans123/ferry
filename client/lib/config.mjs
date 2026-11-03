@@ -47,6 +47,7 @@ export const DEFAULTS = {
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
+	downloadMaxMB: 300, // web_download: the biggest file it saves
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
 	phoneConsole: false, // report this window's status to the server's phone console (off: no requests for it at all)
 	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
@@ -96,6 +97,7 @@ export const ADVANCED_SETTINGS = {
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
+	downloadMaxMB: ["number", "web_download: the biggest file it saves, in MB"],
 	rulesFromParents: ["boolean", "also put AGENTS.md / CLAUDE.md from folders above the project into the system prompt (off: only Ferry's own and the project's)"],
 	phoneConsole: ["boolean", "show this computer's ferry on the server's phone console (status only); off by default: it costs a request every few seconds while a phone looks"],
 	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],

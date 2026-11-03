@@ -21,7 +21,7 @@ import { createOffice } from "./office.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
 // no nesting; the task list, goal and background jobs belong to the main agent
-const NOT_FOR_SUBAGENTS = new Set(["task", "task_batch", "todo", "goal_update", "job_start", "job_output", "job_stop"]);
+const NOT_FOR_SUBAGENTS = new Set(["task", "task_batch", "todo", "ask_user", "goal_update", "job_start", "job_output", "job_stop"]);
 
 // At most cfg.maxParallel subagents run at once (task, background task, task_batch); the others wait for a slot, so a
 // big batch does not flood the Ferry server or the model provider.

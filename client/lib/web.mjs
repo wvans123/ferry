@@ -5,7 +5,11 @@
 //   address to confirm in a browser; Ferry never clicks through it.
 // cfg.web = "server": the Ferry server fetches (only when its admin page has web access on).
 // cfg.web = "off": no web tools.
-import { basename } from "node:path";
+import { createWriteStream, mkdirSync, renameSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { unzipSync } from "fflate";
 import { Type } from "typebox";
 import { PROTOCOL, serverHeaders } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
@@ -109,7 +113,7 @@ export async function fetchPage(url, offset = 0, signal) {
 	const r = await get(url, signal);
 	const ctype = r.res.headers.get("content-type") ?? "";
 	if (gatewayPage(r.url, r.buf.length < 30000 ? r.text : "")) throw new GatewayError(r.url, url); // such pages are small
-	if (ctype && !/text|html|json|xml|javascript/i.test(ctype)) throw new Error(`${ctype} is not text; only pages and text files can be read`);
+	if (ctype && !/text|html|json|xml|javascript/i.test(ctype)) throw new Error(`${ctype} is not text: save the file with web_download, then read it (office_read for Word, Excel, PowerPoint, PDF)`);
 	const isHtml = /html/i.test(ctype) || /^\s*<(!doctype html|html)/i.test(r.text.slice(0, 200));
 	const { title, text } = isHtml ? htmlToText(r.text, r.url) : { title: "", text: r.text };
 	const part = text.slice(offset, offset + PAGE_CHARS);
@@ -117,6 +121,84 @@ export async function fetchPage(url, offset = 0, signal) {
 	const sparse = isHtml && text.replace(/\s+/g, " ").length < 300 && /<script\b/i.test(r.text);
 	return { url: r.url, status: r.res.status, title, chars: text.length, text: part,
 		next_offset: text.length > offset + PAGE_CHARS ? offset + PAGE_CHARS : null, sparse };
+}
+
+// ---------- downloading a file (3GPP specs and contributions, PDFs, zips) ----------
+
+/** A file name for what was downloaded: from Content-Disposition, else from the address. */
+function fileNameOf(res, url) {
+	const cd = res.headers.get("content-disposition") ?? "";
+	const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) ?? /filename="?([^";]+)"?/i.exec(cd);
+	let name = m ? decodeURIComponent(m[1]) : decodeURIComponent(basename(new URL(url).pathname) || "download");
+	name = name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").trim() || "download";
+	return name;
+}
+
+/**
+ * Download url into the project folder (dest: a file or folder path inside cwd; default downloads/<name>).
+ * A .zip is unpacked next to it unless unzip is false. Returns { path, bytes, type, files }.
+ */
+export async function downloadFile(url, { dest, unzip = true, cwd = process.cwd(), maxBytes = 300e6, signal } = {}) {
+	if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+	let current = url;
+	let res;
+	for (let i = 0; i < 6; i++) {
+		res = await fetch(current, { redirect: "manual", signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(600000)]),
+			headers: { "User-Agent": UA } });
+		const loc = res.headers.get("location");
+		if (res.status >= 300 && res.status < 400 && loc) {
+			const next = new URL(loc, current).href;
+			if (gatewayPage(next)) throw new GatewayError(next, url);
+			current = next;
+			continue;
+		}
+		break;
+	}
+	if (!res.ok) throw new Error(`HTTP ${res.status} from ${current}`);
+	const type = res.headers.get("content-type") ?? "";
+	if (/text\/html/i.test(type)) {
+		const text = await res.text();
+		if (gatewayPage(current, text.slice(0, 30000))) throw new GatewayError(current, url);
+		throw new Error(`${current} is a web page, not a file. Read it with web_fetch (a folder listing shows the file links).`);
+	}
+	const size = Number(res.headers.get("content-length") || 0);
+	if (size > maxBytes) throw new Error(`the file is ${Math.round(size / 1e6)} MB, more than the ${Math.round(maxBytes / 1e6)} MB limit`);
+	const root = resolve(cwd);
+	let target = resolve(root, dest || join("downloads", fileNameOf(res, current)));
+	if (dest && (dest.endsWith("/") || dest.endsWith("\\") || !extname(target))) target = join(target, fileNameOf(res, current));
+	const rel = relative(root, target);
+	if (rel.startsWith("..") || resolve(rel) === rel) throw new Error("save downloads inside the project folder");
+	mkdirSync(dirname(target), { recursive: true });
+	const part = `${target}.part`;
+	let got = 0;
+	const counter = new TransformStream({
+		transform(chunk, ctl) {
+			got += chunk.length;
+			if (got > maxBytes) ctl.error(new Error(`the file is bigger than the ${Math.round(maxBytes / 1e6)} MB limit`));
+			else ctl.enqueue(chunk);
+		},
+	});
+	try {
+		await pipeline(Readable.fromWeb(res.body.pipeThrough(counter)), createWriteStream(part));
+		renameSync(part, target);
+	} catch (e) {
+		rmSync(part, { force: true });
+		throw e;
+	}
+	const out = { path: relative(root, target) || target, bytes: statSync(target).size, type, files: [] };
+	if (unzip !== false && /\.zip$/i.test(target)) {
+		const dir = target.replace(/\.zip$/i, "");
+		const entries = unzipSync(readFileSync(target));
+		for (const [name, data] of Object.entries(entries)) {
+			if (name.endsWith("/")) continue;
+			const f = resolve(dir, name);
+			if (!f.startsWith(resolve(dir) + sep)) continue; // a name that climbs out of the folder
+			mkdirSync(dirname(f), { recursive: true });
+			writeFileSync(f, data);
+			out.files.push(relative(root, f));
+		}
+	}
+	return out;
 }
 
 // ---------- in a hidden browser (render.mjs) ----------
@@ -200,6 +282,11 @@ const RenderParams = Type.Object({
 	url: Type.String({ description: "The full address, e.g. https://example.com/dashboard" }),
 	offset: Type.Optional(Type.Number({ description: "Continue a long page from this character (next_offset of the previous call)" })),
 });
+const DownloadParams = Type.Object({
+	url: Type.String({ description: "The file's full address, e.g. https://www.3gpp.org/ftp/Specs/archive/23_series/23.501/23501-j40.zip" }),
+	path: Type.Optional(Type.String({ description: "Where to save it in the project folder (a file or a folder); default downloads/<file name>" })),
+	unzip: Type.Optional(Type.Boolean({ description: "Unpack a .zip next to it (default true)" })),
+});
 const SearchParams = Type.Object({
 	query: Type.String({ description: "What to search for" }),
 	count: Type.Optional(Type.Number({ description: "How many results, default 8" })),
@@ -266,6 +353,27 @@ export function createWeb(cfg) {
 				async execute(_id, params, signal) {
 					notBlocked(params.url);
 					return show(await renderToText(cfg, params.url, params.offset ?? 0, signal));
+				},
+			});
+		}
+		if (mode === "client") {
+			pi.registerTool({
+				name: "web_download",
+				label: "Download",
+				description: "Download a file (Word, PDF, zip, spreadsheet...) from the web into the project folder, e.g. 3GPP " +
+					"specifications and contributions from https://www.3gpp.org/ftp/. A .zip is unpacked next to it. Then read " +
+					"the files with office_read or read. To find a file, read the folder listing with web_fetch first. " + where,
+				promptSnippet: "Download a file from the web into the project folder",
+				parameters: DownloadParams,
+				annotations: { readOnlyHint: false, openWorldHint: true },
+				async execute(_id, params, signal, _onUpdate, ctx) {
+					notBlocked(params.url);
+					const r = await downloadFile(params.url, { dest: params.path, unzip: params.unzip, cwd: ctx?.cwd ?? process.cwd(),
+						maxBytes: Number(cfg.downloadMaxMB ?? 300) * 1e6, signal });
+					const files = r.files.length ? `\nUnpacked ${r.files.length} file(s):\n${r.files.slice(0, 40).map((f) => `- ${f}`).join("\n")}` +
+						(r.files.length > 40 ? `\n... and ${r.files.length - 40} more` : "") : "";
+					return { content: [{ type: "text", text: `Saved ${r.path} (${(r.bytes / 1e6).toFixed(2)} MB${r.type ? `, ${r.type}` : ""}).${files}` }],
+						details: r };
 				},
 			});
 		}

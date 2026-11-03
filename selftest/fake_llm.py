@@ -283,6 +283,17 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "bash", {"command": "mv " + first.split("EXPIRYTEST:", 1)[1].strip().split()[0] + " gate-gone.txt"})
         return ("text", "EXPIRY: went on after the confirmation")
+    if "DOWNLOADTEST" in first:  # download a spec zip, then read the unpacked file
+        if not tools:
+            return ("tool", "web_download", {"url": "http://127.0.0.1:9100/ftp/23501-j40.zip"})
+        if len(tools) == 1:
+            return ("tool", "read", {"path": "downloads/23501-j40/23501-j40.txt"})
+        return ("text", "DOWNLOAD: " + text_of(tools[-1])[:80])
+    if "ASKTEST" in first:  # ask the user; with no terminal the tool says to go on with the recommendation
+        if not tools:
+            return ("tool", "ask_user", {"questions": [{"question": "Which format?", "options": [{"label": "Word"}, {"label": "PPT"}],
+                                                        "recommended": ["PPT"]}]})
+        return ("text", "ASK: " + text_of(tools[-1])[:160])
     if "LIMITTEST" in first:  # answered by the fallback (an OpenAI-style model) while Claude's account cools down
         if not tools:
             return ("tool", "bash", {"command": "echo fallback-step"})
@@ -431,6 +442,18 @@ class H(BaseHTTPRequestHandler):
             return self.send_html("<html><head><title>JS app</title></head><body><div id='root'></div><script>"
                                   "setTimeout(function(){document.getElementById('root').innerHTML="
                                   "'<h1>Dashboard</h1><p>The animal is <b>otter-77</b>.</p>'},300)</script></body></html>")
+        if self.path == "/ftp/23501-j40.zip":  # a 3GPP-style file to download
+            import io, zipfile
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("23501-j40.txt", "TS 23.501 clause 5.1: the 5G system architecture")
+            data = buf.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self.path == "/page.html":
             return self.send_html("<html><head><title>Ferry page</title><script>var x=1;</script></head><body>"
                                   "<h1>Ferry</h1><p>The secret word is <b>pelican-42</b>.</p>"

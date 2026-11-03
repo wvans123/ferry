@@ -268,10 +268,11 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | 能力 | 说明 |
 |---|---|
 | 任务清单 | 多步任务先列计划，输入框上方显示进度 |
+| 提问 | `ask_user`：agent 拿不准时弹出选项让你选，每题单选或多选，推荐项排在最前并标出，最后一项"其他"可以自己写；按 Esc 不回答。没有终端时（`-p`、团队成员）不卡住，按推荐项继续并说明 |
 | 记忆 | 跨对话记住你的偏好、纠正和项目里的决定。说"记住……"或"忘掉……"即可。分你个人（这台电脑上所有项目）和这个项目两层，存在工作电脑 `%USERPROFILE%\.ferry\memory`，都是可以直接改的 Markdown 文件 |
 | 全局记忆 | 服务端管理页"设备和手机"里打开后，多一层 global：存在服务端，你所有电脑共用（偏好、习惯、术语）。工作内容不往这里放，项目记忆照旧只在本机。`/memory global <内容>` 也能直接存一条 |
 | 子 agent | "在整个代码库里找……"这类活交给上下文全新的子 agent，只把结论带回来，主对话不会被撑大。几个子 agent 可以同时跑 |
-| 联网 | `web_search`（Bing）、`web_fetch`（读网页），在工作电脑上执行，走公司代理，受公司网关管。读网页时按网站询问 |
+| 联网 | `web_search`（Bing）、`web_fetch`（读网页）、`web_download`（下载文件到项目的 downloads/，zip 自动解压；比如 3GPP 的规范和文稿：先用 web_fetch 读 https://www.3gpp.org/ftp/ 下的目录页找到文件，再下载，然后用 office_read 读），在工作电脑上执行，走公司代理，受公司网关管。按网站询问；下载默认最大 300 MB（`downloadMaxMB`） |
 | 读 JS 网页 | 有些网页要等 JavaScript 跑完才有内容，`web_fetch` 读到的是空的。装了 Electron（`ferry install-electron`）后，这种页面会自动交给一个看不见的浏览器打开、等它加载完再读文字（`web_render`）。只读不点，不带登录和 cookie，每个页面用完即清 |
 | 不许打开的网站 | `ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`：这些网站和它们的子域名，`web_fetch` 和 `web_render` 都不会打开，跳转过去的也拦下 |
 | 浏览器 | `ferry config set browser true` 后，agent 能操作电脑上的 Edge：打开网页、点击、填表、读页面 |
@@ -280,7 +281,7 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | 以前的对话 | 说"看看我昨天那个对话里定了什么"，它会用 `past_conversations` 列出、搜索、读取这台电脑上以前的对话（默认这个文件夹的，也可以搜全部） |
 | 回退 | `/rewind` 回到之前某条消息：对话、agent 改过的文件，或两样一起 |
 | 思考 | Claude 和 GPT 默认打开思考（中等）。难的活可以调高：`/config` → `thinking` |
-| 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型（模型要支持看图，Claude、GPT、deepseek-flash 都支持） |
+| 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型。几 MB 的图片也没问题：发出前缩小到长边 1568 像素、约 300 KB 以内，超过上传上限还会分块发。模型要能看图：Claude、GPT、Gemini、带 vl 的模型等按名字自动认出（经 kiro 之类中转的也算），其他的在服务端 models.toml 里给模型加 `vision = true` |
 | 花费 | 底栏显示本次对话花了多少钱；`/cost` 看明细；服务端管理页的"用量和费用"按天、按项目、按模型汇总 |
 | 提醒 | 一个请求超过 30 秒才做完时，会响一声并弹出 Windows 通知 |
 | 手机通知 | 目标完成或卡住、做了 5 分钟以上的活做完、确认框等你超过 5 分钟时，推到手机（iPhone 用 Bark：管理页 → 设置 → 手机通知，贴上 Bark 的地址）。只发一句话，不带对话内容。打开了手机控制台的话，点通知直接进控制台 |

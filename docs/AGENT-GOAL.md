@@ -326,3 +326,12 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | 问题 | 改了什么 | 自测 |
 |---|---|---|
 | 每 10 分钟查一次网关确认，晚上没人时也弹确认页 | 去掉定时检查（`gatewayCheck` 设置也删了）。只在两种时候打开确认页：agent 干活中途被挡；你自己运行 `ferry check`。在 ferry 里输入 `!ferry check` 就能查：Windows 上安装时另放一个给 Git Bash 用的 `ferry` 启动脚本（以前只有 ferry.cmd，Git Bash 里直接打 ferry 找不到） | F62、F24 |
+
+## v0.23
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| web_fetch 下不了 3GPP FTP 上的文件 | 新工具 `web_download`：把文件（zip、Word、PDF……）存进项目的 downloads/（也可以指定位置，只能在项目文件夹里），zip 自动解压，然后用 office_read 读。找文件：先用 web_fetch 读 https://www.3gpp.org/ftp/ 下的目录页。按网站询问（和 web_fetch 一样），计划模式下不能用；最大 300 MB（`downloadMaxMB`）。web_fetch 碰到文件时也会提示改用它 | F64、客户端单元测试 |
+| agent 需要能弹选项的提问 | 新工具 `ask_user`：1–4 题，每题 2–6 个选项，单选或多选，推荐项排最前并标"(recommended)"，多选时推荐项默认勾上；最后一项"Other"自己写；Esc 不回答。没有终端时（-p、团队成员）告诉 agent 按推荐项继续。子 agent 不能用（只有主对话能问你） | F65、客户端单元测试 |
+| 记忆说明里还有硬换行 | 记忆、/goal 的说明也改成整句（一个 unwrap 小工具把源码里按 120 字折的行接回去） | — |
+| 经 kiro 等中转的 Claude 没标"能看图"，agent 看不了图 | 服务端按模型名自动认出能看图的模型（Claude、GPT-4o/4.1/5/6、o3/o4、Gemini、带 vl/vision 的等），手动设的 `vision = true` 仍然有效 | 服务端单元测试 |

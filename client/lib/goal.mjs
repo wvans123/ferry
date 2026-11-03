@@ -9,6 +9,7 @@
 // States: pursuing, paused, achieved, unmet (blocked; needs you), budget (token budget used up).
 // While pursuing, every time the agent stops, Ferry sends it on ("continue toward the goal") unless it has reported
 // the goal achieved or unmet, the budget is used up, or the turn limit is reached. Esc pauses the goal.
+import { unwrap } from "./text.mjs";
 import { steerState } from "./steer.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -40,7 +41,7 @@ function tokensSince(entries, t) {
 }
 
 function guide(goal) {
-	return `The user gave you a goal to pursue on your own, across as many turns as it takes:
+	return unwrap(`The user gave you a goal to pursue on your own, across as many turns as it takes:
 
 ${goal.objective}
 
@@ -51,7 +52,7 @@ How to work on it:
 - When every part is done and checked, call goal_update with status "achieved", a short summary and the evidence.
 - If you cannot go on without the user (a decision, access, missing information) or it turns out impossible, call
   goal_update with status "unmet" and say exactly what is needed.
-- Otherwise keep going: you will be prompted to continue after each turn. Do not stop to ask whether to continue.`;
+- Otherwise keep going: you will be prompted to continue after each turn. Do not stop to ask whether to continue.`);
 }
 
 export function createGoal(cfg) {

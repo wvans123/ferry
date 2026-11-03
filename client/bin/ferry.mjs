@@ -439,6 +439,7 @@ async function run(args) {
 				serverWindow: (id) => models.find((m) => m.id === id)?.contextWindow }), hidden: true },
 			{ name: "ferry-memory", factory: createMemory(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
+			{ name: "ferry-ask", factory: (await import("../lib/ask.mjs")).createAsk(), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },
 			{ name: "ferry-past", factory: createPastConversations(), hidden: true },

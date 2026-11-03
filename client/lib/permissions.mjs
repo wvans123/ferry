@@ -32,9 +32,9 @@ const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "offi
 // tools are checked one by one; web_*: the server's own allow list)
 const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search", "memory", "task", "task_batch",
 	"past_conversations", "office_read", "web_search",
-	"job_output", "job_stop", "goal_update", "team"]); // team: only the team's own board
+	"job_output", "job_stop", "goal_update", "team", "ask_user"]); // team: only the team's own board
 // reads, but from a site the user may not want contacted: asked per site (like Claude Code's WebFetch), also in plan mode
-const NET = new Set(["web_fetch", "web_render"]); // web_render: the same, through a hidden browser
+const NET = new Set(["web_fetch", "web_render", "web_download"]); // web_download: saves into the project folder only // web_render: the same, through a hidden browser
 
 export function hostOf(url) {
 	try {
@@ -297,7 +297,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	// a site tool is "read only" by its annotation, but which sites it contacts is still the user's choice
 	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && (READ_ONLY.has(tool) || readOnlyTool(tool));
-	if (mode === "plan" && !readOnly && !NET.has(tool)) {
+	if (mode === "plan" && ((!readOnly && !NET.has(tool)) || tool === "web_download")) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
 			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
 	}

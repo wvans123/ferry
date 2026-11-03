@@ -39,6 +39,7 @@ from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
 from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
+from .presets import sees_pictures
 from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
                      restore_cache_marks, wants_cache_marks)
@@ -285,7 +286,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     def describe(m, mid=None) -> dict:
         return {"id": mid or m.id, "contextWindow": limit_of(m), "maxTokens": m.max_tokens,
-                "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision,
+                "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision or sees_pictures(m.model),
                 "price": m.price}
 
     def reload() -> None:

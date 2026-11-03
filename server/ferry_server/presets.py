@@ -163,3 +163,13 @@ def anthropic_url(base_url: str) -> str:
     if base.endswith("/v1/messages"):
         return base
     return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+
+
+# Models known to read pictures, by name: for a model added by hand or behind a relay (kiro's Claude, a gateway's
+# GPT), where nobody ticked "vision". Without it the agent is told it cannot look at pictures.
+_SEES = re.compile(r"claude|gpt-4o|gpt-4\.1|gpt-5|gpt-6|\bo[34]\b|gemini|grok-(4|vision)|-vl\b|vl-|vision|glm-4\.?[5-9]?v|"
+                   r"qwen.*(vl|omni)|kimi-k2\.5|doubao.*vision|deepseek-flash|llava|pixtral|mistral-(medium|small)-3", re.I)
+
+
+def sees_pictures(model: str) -> bool:
+    return bool(_SEES.search(model or ""))

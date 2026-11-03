@@ -19,7 +19,8 @@ function style(webTools) {
 	return [
 		"# How to work",
 		"- Do what was asked, completely, and nothing more. If the request can be read in ways that lead to different " +
-			"results, ask one short question first; otherwise pick the sensible reading and say which you took.",
+			"results, ask first (ask_user, with options and your recommendation); otherwise pick the sensible reading and " +
+			"say which you took.",
 		"- Look before you act: read the files, documents or code involved first. Never guess their contents, and never " +
 			"invent facts, figures, quotes, sources or file paths.",
 		"- Work with several steps: keep the to-do list (todo) current, one item in progress at a time, each item marked " +
