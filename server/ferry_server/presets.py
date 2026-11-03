@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-# (model name, context window in tokens, max output tokens[, extras]); extras: vision (takes images) and
+# (model name, context window in tokens, max output tokens[, extras]); extras: vision (False: text only) and
 # price (USD per million tokens: input, output, cache_read, cache_write), from the providers' price pages.
 Model = tuple
 
@@ -23,7 +23,7 @@ PRESETS: list[dict] = [
         "id": "deepseek", "name": "DeepSeek", "group": "国内",
         "base_url": "https://api.deepseek.com",
         "key_hint": "platform.deepseek.com → API Keys", "key_url": "https://platform.deepseek.com/api_keys",
-        "models": [("deepseek-flash", 1_000_000, 32_000, {"vision": True}), ("deepseek-v4-pro", 128_000, 8_192)],
+        "models": [("deepseek-flash", 1_000_000, 32_000, {"vision": True}), ("deepseek-v4-pro", 128_000, 8_192, {"vision": False})],
         "drop_params": ["store"], "rename_params": {"max_completion_tokens": "max_tokens"},
     },
     {
@@ -164,12 +164,3 @@ def anthropic_url(base_url: str) -> str:
         return base
     return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
 
-
-# Models known to read pictures, by name: for a model added by hand or behind a relay (kiro's Claude, a gateway's
-# GPT), where nobody ticked "vision". Without it the agent is told it cannot look at pictures.
-_SEES = re.compile(r"claude|gpt-4o|gpt-4\.1|gpt-5|gpt-6|\bo[34]\b|gemini|grok-(4|vision)|-vl\b|vl-|vision|glm-4\.?[5-9]?v|"
-                   r"qwen.*(vl|omni)|kimi-k2\.5|doubao.*vision|deepseek-flash|llava|pixtral|mistral-(medium|small)-3", re.I)
-
-
-def sees_pictures(model: str) -> bool:
-    return bool(_SEES.search(model or ""))

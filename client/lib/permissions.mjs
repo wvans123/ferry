@@ -34,7 +34,7 @@ const READ_ONLY = new Set(["read", "grep", "find", "ls", "todo", "history_search
 	"past_conversations", "office_read", "web_search",
 	"job_output", "job_stop", "goal_update", "team", "ask_user"]); // team: only the team's own board
 // reads, but from a site the user may not want contacted: asked per site (like Claude Code's WebFetch), also in plan mode
-const NET = new Set(["web_fetch", "web_render", "web_download"]); // web_download: saves into the project folder only // web_render: the same, through a hidden browser
+const NET = new Set(["web_fetch"]);
 
 export function hostOf(url) {
 	try {
@@ -191,7 +191,6 @@ export function parseRule(rule) {
 function ruleMatches(rule, tool, subject) {
 	const r = parseRule(rule);
 	if (!r) return false;
-	// a site allowed (or denied) for web_fetch counts for web_render too
 	const toolOk = r.tool === tool || (NET.has(r.tool) && NET.has(tool)) || (r.tool === "shell" && SHELL.has(tool)) || ((r.tool === "edits" || r.tool === "edit") && EDIT.has(tool))
 		|| (r.tool.includes("*") && globToRegex(r.tool, false).test(tool)); // mcp__browser__*
 	if (!toolOk) return false;
@@ -297,7 +296,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	// a site tool is "read only" by its annotation, but which sites it contacts is still the user's choice
 	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && (READ_ONLY.has(tool) || readOnlyTool(tool));
-	if (mode === "plan" && ((!readOnly && !NET.has(tool)) || tool === "web_download")) {
+	if (mode === "plan" && !readOnly && !NET.has(tool)) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
 			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
 	}

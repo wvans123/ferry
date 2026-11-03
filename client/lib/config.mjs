@@ -35,10 +35,7 @@ export const DEFAULTS = {
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
-	render: false, // web_render: read JavaScript-built pages in a hidden browser (needs Electron: ferry install-electron)
-	electronPath: "", // Electron to use for web_render; empty = look in the usual places
-	renderWaitMs: 12000, // longest wait for a page in web_render to finish loading
-	blockedSites: [], // sites never opened by web_fetch / web_render (and their subdomains), e.g. ["mail.corp.com"]
+	blockedSites: [], // sites never opened by web_fetch (and their subdomains), e.g. ["mail.corp.com"]
 	browser: false, // let the agent drive a browser on this computer (Edge on Windows) through Playwright MCP
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: false, // run the browser without a window
@@ -47,10 +44,7 @@ export const DEFAULTS = {
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
-	downloadMaxMB: 300, // web_download: the biggest file it saves
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
-	phoneConsole: false, // report this window's status to the server's phone console (off: no requests for it at all)
-	remoteApprove: false, // let the phone console approve waiting actions (never dangerous ones); stop and deny always work
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 	compactAt: "90%", // summarise the conversation once the context is this full (at the end of a request); "off" = only when it must
 	compactKeep: "20k", // how much of the latest conversation a summary keeps word for word
@@ -71,14 +65,12 @@ export const SETTINGS = {
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
 	web: ["string", "where web_fetch and web_search run",
 		["client  this computer (the company proxy and gateway rules apply)", "server  the Ferry server, if its admin page allows it", "off"]],
-	render: ["boolean", "web_render: read pages built by JavaScript in a hidden browser (needs Electron: ferry install-electron)"],
-	blockedSites: ["list", "sites the agent may never open with web_fetch / web_render, subdomains included (e.g. your mail, chat and cloud drive)"],
+	blockedSites: ["list", "sites the agent may never open with web_fetch, subdomains included (e.g. your mail, chat and cloud drive)"],
 	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
 	phoneNotify: ["boolean", "phone notifications through the Ferry server (set Bark on its admin page): goal done, long work done, approval waiting"],
-	remoteApprove: ["boolean", "let the phone console (the server's /m page) approve actions waiting here; dangerous ones still need this computer"],
 	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
 	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
 };
@@ -89,17 +81,13 @@ export const ADVANCED_SETTINGS = {
 	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
 	notifyAfterSeconds: ["number", "how long a request must take before the notification"],
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
-	electronPath: ["string", "Electron for web_render (full path to electron.exe); empty = look in the usual places"],
-	renderWaitMs: ["number", "longest wait, in milliseconds, for a page in web_render to finish loading"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window"],
 	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
-	downloadMaxMB: ["number", "web_download: the biggest file it saves, in MB"],
 	rulesFromParents: ["boolean", "also put AGENTS.md / CLAUDE.md from folders above the project into the system prompt (off: only Ferry's own and the project's)"],
-	phoneConsole: ["boolean", "show this computer's ferry on the server's phone console (status only); off by default: it costs a request every few seconds while a phone looks"],
 	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],
 	systemCerts: ["boolean", "also trust the HTTPS certificates this computer trusts (needed when a company proxy checks HTTPS)"],
@@ -138,9 +126,37 @@ export function trustCertificates(cfg) {
 		if (!extra.length || typeof tls.setDefaultCACertificates !== "function") return 0;
 		const all = new Set([...tls.getCACertificates("default"), ...extra]);
 		tls.setDefaultCACertificates([...all]);
+		shareCertificates([...all]);
 		return extra.length;
 	} catch {
 		return 0; // an unreadable caFile or an older Node: Node's own list stays
+	}
+}
+
+/**
+ * The same certificates for the agent's commands: curl, git, Python and Node in commands use their own lists too, and
+ * fail behind a proxy that inspects HTTPS. Written once to <FERRY_HOME>/ca-bundle.pem and pointed at by the usual
+ * variables (only those you have not set yourself); commands inherit them, and the proxy variables, from ferry.
+ */
+function shareCertificates(pems) {
+	try {
+		const file = join(FERRY_HOME, "ca-bundle.pem");
+		const text = `${pems.map((p) => p.trim()).join("\n")}\n`;
+		let old = "";
+		try {
+			old = readFileSync(file, "utf8");
+		} catch {
+			// first time
+		}
+		if (old !== text) {
+			mkdirSync(FERRY_HOME, { recursive: true });
+			writeFileSync(file, text, "utf8");
+		}
+		for (const k of ["CURL_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS"]) {
+			if (!process.env[k]) process.env[k] = file;
+		}
+	} catch {
+		// cannot write: commands keep their own lists
 	}
 }
 

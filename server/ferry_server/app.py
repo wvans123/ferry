@@ -33,13 +33,11 @@ from . import PROTOCOL, __version__
 from .config import Config, refresh_models
 from .devices import Devices
 from . import globalmem
-from .console import mount_console
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
 from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
-from .presets import sees_pictures
 from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
                      restore_cache_marks, wants_cache_marks)
@@ -241,8 +239,6 @@ def create_app(cfg: Config) -> FastAPI:
             return Response(status_code=302, headers={"location": "http://127.0.0.1:9100/proxycontrolwarn?url=ferry"})
         if request.url.path == "/health" or request.url.path.startswith("/admin"):
             return await call_next(request)  # the admin page has its own, local-only sign-in
-        if request.url.path == "/m" or request.url.path.startswith("/m/"):
-            return await call_next(request)  # the phone console has its own password sign-in
         if request.method == "GET" and request.url.path in ("/", "/favicon.ico", "/robots.txt"):
             # a browser lands here, e.g. after the company gateway's confirmation page: not an error, not logged
             if request.url.path != "/":
@@ -286,7 +282,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     def describe(m, mid=None) -> dict:
         return {"id": mid or m.id, "contextWindow": limit_of(m), "maxTokens": m.max_tokens,
-                "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision or sees_pictures(m.model),
+                "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision,
                 "price": m.price}
 
     def reload() -> None:
@@ -969,6 +965,5 @@ def create_app(cfg: Config) -> FastAPI:
         return Response(last_err[1], status_code=last_err[0], media_type=last_err[2])
 
     from .admin import mount_admin
-    mount_console(app, cfg, live, audit_log)
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
     return app

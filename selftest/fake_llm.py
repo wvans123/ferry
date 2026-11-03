@@ -170,13 +170,9 @@ def decide_agent(msgs):
                                        "description": "integration tests use the real database",
                                        "content": "Integration tests must hit the real database, never mocks."})
         return ("text", "SAVED: " + text_of(tools[-1]))
-    if "RENDERTEST" in first:  # a page built by JavaScript: web_fetch hands it to the hidden browser by itself
-        if not tools:
-            return ("tool", "web_fetch", {"url": "http://127.0.0.1:9100/jsapp.html"})
-        return ("text", "RENDER: " + text_of(tools[-1]).replace("\n", " ")[:200])
     if "BLOCKTEST" in first:  # a site on the user's blocked list
         if not tools:
-            return ("tool", "web_render", {"url": "https://mail.blocked.test/inbox"})
+            return ("tool", "web_fetch", {"url": "https://mail.blocked.test/inbox"})
         return ("text", "BLOCK: " + text_of(tools[-1])[:160])
     if "MEMTEST-RECALL" in first:
         return ("text", "INDEX HAS test-db" if "[test-db](test-db.md)" in system else "NO MEMORY")
@@ -283,9 +279,12 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "bash", {"command": "mv " + first.split("EXPIRYTEST:", 1)[1].strip().split()[0] + " gate-gone.txt"})
         return ("text", "EXPIRY: went on after the confirmation")
-    if "DOWNLOADTEST" in first:  # download a spec zip, then read the unpacked file
+    if "DOWNLOADTEST" in first:  # download a spec zip with a command, unpack it, then read the file
         if not tools:
-            return ("tool", "web_download", {"url": "http://127.0.0.1:9100/ftp/23501-j40.zip"})
+            return ("tool", "bash", {"command": "mkdir -p downloads && curl -sSL -o downloads/23501-j40.zip "
+                                                "http://127.0.0.1:9100/ftp/23501-j40.zip && (python3 -m zipfile -e "
+                                                "downloads/23501-j40.zip downloads/23501-j40 || python -m zipfile -e "
+                                                "downloads/23501-j40.zip downloads/23501-j40) && echo unpacked"})
         if len(tools) == 1:
             return ("tool", "read", {"path": "downloads/23501-j40/23501-j40.txt"})
         return ("text", "DOWNLOAD: " + text_of(tools[-1])[:80])

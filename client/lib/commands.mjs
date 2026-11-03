@@ -121,13 +121,23 @@ export function createCommands(cfg, deps) {
 		pi.on("before_agent_start", (event) => {
 			if (event.messageType === "user" && !(steerState.redirecting && started)) started = Date.now();
 		});
-		pi.on("agent_settled", (_e, ctx) => {
+		let lastStop = null; // how the last answer ended: an error stops the work
+		pi.on("message_end", (e) => {
+			if (e.message?.role === "assistant") lastStop = { reason: e.message.stopReason, error: e.message.errorMessage };
+		});
+		pi.on("agent_settled", (e, ctx) => {
 			if (steerState.redirecting) return; // interrupted with a new message: the work goes on
 			const secs = (Date.now() - started) / 1000;
 			if (ctx?.hasUI && started && cfg.notify !== false && secs >= (cfg.notifyAfterSeconds ?? 30)) notifyDone(secs);
-			// a long piece of work: also to the phone (you have probably walked away)
-			if (ctx?.hasUI && started && secs >= (cfg.phoneAfterSeconds ?? 300)) cfg.phone?.("Done", `after ${Math.round(secs / 60)} min`, "done");
+			// a long piece of work: also to the phone (you have probably walked away). Done, or stopped by an error;
+			// not when you stopped it yourself (Esc)
+			if (ctx?.hasUI && started && !e?.aborted && secs >= (cfg.phoneAfterSeconds ?? 300)) {
+				const mins = `after ${Math.round(secs / 60)} min`;
+				if (lastStop?.reason === "error") cfg.phone?.("Stopped", `${mins}: ${String(lastStop.error ?? "an error").slice(0, 160)}`, "stopped");
+				else cfg.phone?.("Done", mins, "done");
+			}
 			started = 0;
+			lastStop = null;
 		});
 
 		// the server says a model's account is cooling down after "too many requests" (and who answers meanwhile)

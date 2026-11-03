@@ -213,8 +213,3 @@ def test_a_refused_summary_is_asked_again_with_a_note_on_the_task(tmp_path, monk
     out = "".join(json.loads(l[6:])["choices"][0]["delta"].get("content") or "" for l in r.text.splitlines() if l.startswith("data: {"))
     assert out == "THE SUMMARY" and len(systems) == 2 and "expected task" in systems[1]
 
-
-def test_models_behind_a_relay_that_read_pictures_are_marked_by_name():
-    from ferry_server.presets import sees_pictures
-    assert sees_pictures("claude-opus-4.5") and sees_pictures("gpt-6.1-sol") and sees_pictures("qwen3-vl-plus")
-    assert not sees_pictures("deepseek-chat") and not sees_pictures("gpt-image-2") and not sees_pictures("kimi-k2")

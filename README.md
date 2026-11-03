@@ -155,7 +155,7 @@ ferry doctor
 
 `ferry doctor` 全是 OK 就可以用了。
 
-**好几台电脑都要登录**：在管理页"设备和手机"里给每台电脑**添加设备**，每台拿到自己的令牌和登录命令（令牌只显示一次）。某台电脑丢了或不用了，点"作废"，只有它连不上。
+**好几台电脑都要登录**：在管理页"设备和记忆"里给每台电脑**添加设备**，每台拿到自己的令牌和登录命令（令牌只显示一次）。某台电脑丢了或不用了，点"作废"，只有它连不上。
 
 **更新**：都是 `ferry update`。用安装包装的，从 GitHub 下载新的安装包；用 git clone 装的，自动执行 `git pull`、`npm ci` 和重新安装（想改用安装包：`ferry update --release`）。有新版本时，ferry 启动时会提醒你。
 
@@ -196,7 +196,6 @@ ferry doctor
 | `ferry -p "问题"` | 只问一句，打印回答后退出（适合放进脚本） |
 | `ferry doctor` | 逐项检查：网络、令牌、模型、搜索工具 |
 | `ferry config` | 查看和修改客户端设置 |
-| `ferry install-electron` | 装 Electron（约 100MB）到 `%USERPROFILE%\.ferry\electron`，让 agent 能读 JS 生成的网页。从 GitHub 下载，下不动时先 `set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。已经在别处装好了的话：`ferry config set electronPath <electron.exe 的完整路径>` |
 | `ferry mcp list` / `ferry mcp import` | 查看用到的 MCP 服务器 / 从 Claude Desktop、Claude Code、Cursor、VS Code 导入 |
 | `ferry login <地址> <令牌>` / `ferry logout` | 连到远程服务端 / 改回本机服务端 |
 | `ferry update` | 更新到最新版。git clone 装的会自己 `git pull` + `npm ci`；安装包装的从 GitHub 下载（打不开 GitHub 时，在别的电脑下载 `ferry-windows-*.zip` 拷过来，`ferry update 文件.zip`）。装在哪就更新在哪；本机有服务端时一起升级，升级后重启服务端 |
@@ -270,22 +269,20 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 | 任务清单 | 多步任务先列计划，输入框上方显示进度 |
 | 提问 | `ask_user`：agent 拿不准时弹出选项让你选，每题单选或多选，推荐项排在最前并标出，最后一项"其他"可以自己写；按 Esc 不回答。没有终端时（`-p`、团队成员）不卡住，按推荐项继续并说明 |
 | 记忆 | 跨对话记住你的偏好、纠正和项目里的决定。说"记住……"或"忘掉……"即可。分你个人（这台电脑上所有项目）和这个项目两层，存在工作电脑 `%USERPROFILE%\.ferry\memory`，都是可以直接改的 Markdown 文件 |
-| 全局记忆 | 服务端管理页"设备和手机"里打开后，多一层 global：存在服务端，你所有电脑共用（偏好、习惯、术语）。工作内容不往这里放，项目记忆照旧只在本机。`/memory global <内容>` 也能直接存一条 |
+| 全局记忆 | 服务端管理页"设备和记忆"里打开后，多一层 global：存在服务端，你所有电脑共用（偏好、习惯、术语）。工作内容不往这里放，项目记忆照旧只在本机。`/memory global <内容>` 也能直接存一条 |
 | 子 agent | "在整个代码库里找……"这类活交给上下文全新的子 agent，只把结论带回来，主对话不会被撑大。几个子 agent 可以同时跑 |
-| 联网 | `web_search`（Bing）、`web_fetch`（读网页）、`web_download`（下载文件到项目的 downloads/，zip 自动解压；比如 3GPP 的规范和文稿：先用 web_fetch 读 https://www.3gpp.org/ftp/ 下的目录页找到文件，再下载，然后用 office_read 读），在工作电脑上执行，走公司代理，受公司网关管。按网站询问；下载默认最大 300 MB（`downloadMaxMB`） |
-| 读 JS 网页 | 有些网页要等 JavaScript 跑完才有内容，`web_fetch` 读到的是空的。装了 Electron（`ferry install-electron`）后，这种页面会自动交给一个看不见的浏览器打开、等它加载完再读文字（`web_render`）。只读不点，不带登录和 cookie，每个页面用完即清 |
-| 不许打开的网站 | `ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`：这些网站和它们的子域名，`web_fetch` 和 `web_render` 都不会打开，跳转过去的也拦下 |
+| 联网 | `web_search`（Bing）、`web_fetch`（读网页），在工作电脑上执行，走公司代理，受公司网关管，按网站询问。下载文件（比如 3GPP 的规范和文稿）和 Cursor 一样直接交代就行：agent 用 web_fetch 读 https://www.3gpp.org/ftp/ 下的目录页找到文件，用命令 `curl -L -o` 下载、解压，再用 office_read 读。命令也走公司代理，并且用和 ferry 一样的证书（公司检查 HTTPS 的证书也在内，见 `systemCerts`） |
+| 不许打开的网站 | `ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`：这些网站和它们的子域名，`web_fetch` 不会打开，跳转过去的也拦下 |
 | 浏览器 | `ferry config set browser true` 后，agent 能操作电脑上的 Edge：打开网页、点击、填表、读页面 |
 | 长输出 | 命令输出太长时，全文存到文件，只给模型看开头和结尾，需要时它自己去读 |
 | 压缩和找回 | 对话太长时自动写摘要；之后需要原文时，用 `history_search` 在本地完整记录里找回 |
 | 以前的对话 | 说"看看我昨天那个对话里定了什么"，它会用 `past_conversations` 列出、搜索、读取这台电脑上以前的对话（默认这个文件夹的，也可以搜全部） |
 | 回退 | `/rewind` 回到之前某条消息：对话、agent 改过的文件，或两样一起 |
 | 思考 | Claude 和 GPT 默认打开思考（中等）。难的活可以调高：`/config` → `thinking` |
-| 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型。几 MB 的图片也没问题：发出前缩小到长边 1568 像素、约 300 KB 以内，超过上传上限还会分块发。模型要能看图：Claude、GPT、Gemini、带 vl 的模型等按名字自动认出（经 kiro 之类中转的也算），其他的在服务端 models.toml 里给模型加 `vision = true` |
+| 读图 | 告诉它图片的路径就行，它会用 read 工具读出图片交给模型。几 MB 的图片也没问题：发出前缩小到长边 1568 像素、约 300 KB 以内，超过上传上限还会分块发。默认每个模型都能看图；只认文字的模型在服务端 models.toml 里给它加 `vision = false` |
 | 花费 | 底栏显示本次对话花了多少钱；`/cost` 看明细；服务端管理页的"用量和费用"按天、按项目、按模型汇总 |
 | 提醒 | 一个请求超过 30 秒才做完时，会响一声并弹出 Windows 通知 |
-| 手机通知 | 目标完成或卡住、做了 5 分钟以上的活做完、确认框等你超过 5 分钟时，推到手机（iPhone 用 Bark：管理页 → 设置 → 手机通知，贴上 Bark 的地址）。只发一句话，不带对话内容。打开了手机控制台的话，点通知直接进控制台 |
-| 手机控制台 | 管理页"设备和手机"里设密码、打开后，手机浏览器访问 `外网地址/m`：看到每台电脑上的 ferry 在做什么（项目、对话、目标、正在跑的命令、最近一句话），可以**停止**，也可以**允许 / 拒绝**它在等的确认。允许要那台电脑先同意：`ferry config set remoteApprove true`；危险操作和项目以外的操作只能在电脑上批准 |
+| 手机通知 | 做了 5 分钟以上的活做完、或者因为出错停下，目标完成或卡住，确认框等你超过 5 分钟时，推到手机（iPhone 用 Bark：管理页 → 设置 → 手机通知，贴上 Bark 的地址）。只发一句话，不带对话内容 |
 | Office 文件 | 读 Word（含修订痕迹和批注）、Excel、PowerPoint、PDF；按修订方式改 Word（像 change request 那样显示删了什么、加了什么）；改 Excel 单元格；从 Markdown 新建 Word、从表格新建 Excel。直接处理文件，不需要装 Office，也不会去操作屏幕上的窗口 |
 | 批量派活 | "把这个文件夹里 40 篇稿件每篇看一遍"：每篇派一个子 agent，同时最多 3 个（`maxParallel`），报告汇总到一个文件。服务端也限制每个用户同时的模型请求数（管理页 → 设置），多的排队，不会把服务端压垮 |
 | 省 token | 上下文超过 80k（`trimOldOutputs`）时，很久以前的长工具输出（读过的大文件、长命令输出）换成一行说明，最近 6 个保留；需要时它会重读，`history_search` 也能找回原文 |
@@ -333,8 +330,6 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 | `goalMaxTurns` / `goalBudget` | `100` / `0` | `/goal` 最多轮数和 token 预算（如 `2m`，0 = 不限） |
 | `notify` | `true` | 长请求结束时响铃加通知 |
 | `phoneNotify` | `true` | 让服务端推手机通知（服务端要先在管理页设好 Bark） |
-| `remoteApprove` | `false` | 允许在手机控制台上批准这台电脑在等的操作（危险操作除外）；停止和拒绝总是可以 |
-| `render` | `false` | 用隐藏的浏览器读 JS 网页（`web_render`）。默认关：大多数网页用不上，而且要先 `ferry install-electron` 下载约 100 MB |
 | `blockedSites` | 空 | 永远不打开的网站（含子域名），比如邮箱、通讯、网盘 |
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径 |
 | `proxy` | 空 | 连服务端用的代理，空 = 用 `HTTPS_PROXY` 环境变量 |
@@ -344,7 +339,7 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理会检查 HTTPS（用公司自己的证书），浏览器能上而 ferry 报证书错误时靠它 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`electronPath`（Electron 在哪，空 = 自己找）、`renderWaitMs`（web_render 最多等页面多久，默认 12 秒）、`rulesFromParents`（项目上层文件夹里的 AGENTS.md / CLAUDE.md 也放进提示，默认关：只放 Ferry 自己的和项目自己的；`/status` 列出用了哪些、略过了哪些）、`phoneConsole`（在手机控制台上显示这台电脑，默认关：关着就完全不发状态上报）。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的（`ferry config --all` 或 `/config` → More settings）：`trimOldOutputs`（上下文多大时开始省略旧工具输出，默认 80k，0 = 不省略）、`maxParallel`（同时跑几个子 agent，默认 3）、`phoneAfterSeconds`（多久算"做了很久"，默认 300 秒）、`subagents`（子 agent）、`bigOutputBytes`（长输出存文件的阈值）、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`rulesFromParents`（项目上层文件夹里的 AGENTS.md / CLAUDE.md 也放进提示，默认关：只放 Ferry 自己的和项目自己的；`/status` 列出用了哪些、略过了哪些）。上下文长度用 `/context` 改，存在同一个文件里。
 
 **服务端**：大多在管理页里改，存在服务端数据目录的 `server.toml`。也可以用环境变量：
 
@@ -382,7 +377,6 @@ ferry team goal "调研三种方案并写汇报 PPT"   # 给负责人一个目�
 - **脱敏默认关闭**。打开后，也只有词表和内置规则命中的内容会被替换，其他信息照样会发给模型。脱敏能降低风险，但不是保证。公司明确不允许外发的内容，就不要交给 agent。
 - **联网默认在工作电脑上执行**，受公司网关管，Ferry 不会替你点掉网关的确认页。改成服务端代办（`web = server`），等于让工作电脑经你的服务端访问外网，开启前请确认公司规定允许。
 - **令牌**存在工作电脑的 `%USERPROFILE%\.ferry\config.json` 里。泄露了就在管理页换一个新的；用"添加设备"发的令牌，作废那一台即可。
-- **手机控制台**能从外网打开，所以有自己的密码（只存哈希，错 5 次锁 10 分钟），登录状态保存 30 天，换密码就全部失效。手机上批准操作，等于远程授权工作电脑做事：默认关闭，要在那台电脑上 `remoteApprove` 打开，危险操作仍然只能在电脑上批准。从手机远程让工作电脑做事，开启前请确认公司规定允许。
 - **全局记忆**存在服务端，agent 被要求只放你的偏好，不放工作内容；管理页里能看到每一条、随时删。
 - 试用时请先拿一个测试文件夹和编的内容。
 

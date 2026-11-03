@@ -834,14 +834,14 @@ def check_prompt_rules(root: Path, work: Path) -> None:
 
 
 def check_v023(root: Path, work: Path) -> None:
-    """web_download (a 3GPP-style zip into the project, unpacked) and ask_user without a terminal."""
+    """Downloading a 3GPP-style zip with a command (curl) and unpacking it; ask_user without a terminal."""
     proj = root / "proj"
     proj.mkdir(parents=True, exist_ok=True)
     s = Stack(root, work, "agent")
     try:
         c1, o1 = s.ferry("-p", "DOWNLOADTEST: get TS 23.501", cwd=proj, env_extra={"FERRY_PERMISSION_MODE": "bypass"})
         ok1 = c1 == 0 and "DOWNLOAD:" in o1 and "5G system architecture" in o1 and (proj / "downloads" / "23501-j40.zip").exists()
-        check("F64 下载文件", ok1, "web_download 把 zip 存进项目的 downloads/，自动解压，agent 接着读里面的文件"
+        check("F64 下载文件", ok1, "agent 用命令（curl）把 zip 下载到项目里、解压，接着读里面的文件"
               if ok1 else f"code={c1} {o1[-300:]!r}")
         c2, o2 = s.ferry("-p", "ASKTEST: make a report", cwd=proj)
         ok2 = c2 == 0 and "ASK:" in o2 and "Nobody can answer here" in o2 and "PPT" in o2
@@ -918,30 +918,8 @@ def check_web_browser(root: Path, work: Path) -> None:
         s.close()
 
 
-def find_electron() -> str:
-    """Electron for the web_render test, or "" (the test is then skipped)."""
-    cands = [os.environ.get("FERRY_TEST_ELECTRON", "")]
-    try:
-        root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=20, shell=WINDOWS).stdout.strip()
-        cands.append(str(Path(root) / "electron" / "dist" / ("electron.exe" if WINDOWS else "electron")))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return next((c for c in cands if c and Path(c).exists()), "")
-
-
-def phone(base: str, method: str, path: str, body=None, cookie: str = "") -> tuple[int, dict, str]:
-    """A request like the phone console page makes: its own cookie, no Ferry token."""
-    req = urllib.request.Request(f"{base}{path}", data=json.dumps(body).encode() if body is not None else None, method=method,
-                                 headers={"Content-Type": "application/json", "X-Ferry-M": "1", **({"Cookie": cookie} if cookie else {})})
-    try:
-        with DIRECT.open(req, timeout=30) as r:
-            return r.status, json.loads(r.read().decode() or "{}"), (r.headers.get("set-cookie") or "").split(";")[0]
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode() or "{}"), ""
-
-
 def check_v018(root: Path, work: Path) -> None:
-    """One token per computer, global memory shared by them, web_render, the phone console."""
+    """One token per computer, global memory shared by them, the blocked sites list."""
     s = Stack(root, work, "agent")
     try:
         key = (s.data / "admin-key").read_text(encoding="utf-8").strip()
@@ -967,103 +945,15 @@ def check_v018(root: Path, work: Path) -> None:
         check("F56 全局记忆", ok, "一台电脑存进全局记忆（放在服务端），同一用户的另一台电脑下次对话就看得到；别的用户看不到"
               if ok else f"{o4[-200:]} | {o5[-200:]} | {o6[-120:]} | {stored}")
 
-        electron = find_electron()
-        if not electron:
-            print("  SKIP  F57 web_render（这台机器上没有 Electron；设 FERRY_TEST_ELECTRON 或 npm install -g electron）")
-        else:
-            xvfb = None
-            env_extra = {}
-            if not WINDOWS and sys.platform != "darwin" and not os.environ.get("DISPLAY") and shutil.which("Xvfb"):
-                xvfb = subprocess.Popen(["Xvfb", ":97", "-screen", "0", "1280x900x24"], stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL)
-                env_extra["DISPLAY"] = ":97"
-                time.sleep(1.5)
-            try:
-                s.home.mkdir(parents=True, exist_ok=True)
-                (s.home / "config.json").write_text(json.dumps({"render": True, "electronPath": electron, "blockedSites": ["blocked.test"]}),
-                                                    encoding="utf-8")
-                c7, o7 = s.ferry("-p", "RENDERTEST: read the dashboard", env_extra=env_extra, timeout=180)
-                c8, o8 = s.ferry("-p", "BLOCKTEST: read my mail", env_extra=env_extra, timeout=120)
-                ok = (c7 == 0 and "otter-77" in o7 and "rendered in a hidden browser" in o7
-                      and c8 == 0 and "blocked sites list" in o8)
-                check("F57 web_render", ok, "JS 生成的页面 web_fetch 读到空的，自动交给隐藏的 Electron 打开，读到了内容；"
-                      "黑名单里的网站拒绝打开" if ok else f"{o7[-300:]} | {o8[-200:]}")
-            finally:
-                (s.home / "config.json").unlink(missing_ok=True)
-                if xvfb:
-                    xvfb.terminate()
-        check_console(s, work, admin)
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "config.json").write_text(json.dumps({"blockedSites": ["blocked.test"]}), encoding="utf-8")
+        c8, o8 = s.ferry("-p", "BLOCKTEST: read my mail")
+        (s.home / "config.json").unlink(missing_ok=True)
+        check("F57 网站黑名单", c8 == 0 and "blocked sites list" in o8, "黑名单里的网站，web_fetch 拒绝打开"
+              if c8 == 0 and "blocked sites list" in o8 else o8[-300:])
     finally:
         s.close()
         (work / "perm-ok.txt").unlink(missing_ok=True)
-
-
-def check_console(s: "Stack", work: Path, admin: dict) -> None:
-    """The phone console: ferry waits for an approval, the phone sees it and approves; the work goes on."""
-    if WINDOWS:
-        print("  SKIP  F58 手机控制台（Windows 上没有伪终端，Linux 上检查）")
-        return
-    import pty
-    import select
-
-    s.http("PUT", "/admin/api/remote", {"console": True, "password": "phone-pass-123"}, headers=admin)
-    s.home.mkdir(parents=True, exist_ok=True)
-    (s.home / "config.json").write_text(json.dumps({"remoteApprove": True, "phoneConsole": True}), encoding="utf-8")
-    (work / "perm-ok.txt").unlink(missing_ok=True)
-    env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40",
-           "FERRY_AUTO_APPROVE": "0"}
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.chdir(work)
-        os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
-    seen = b""
-    plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
-                             b.decode("utf-8", "replace"))
-
-    def wait_for(text: str, secs: float) -> bool:
-        nonlocal seen
-        end = time.time() + secs
-        while time.time() < end:
-            r, _, _ = select.select([fd], [], [], 0.3)
-            if r:
-                try:
-                    seen += os.read(fd, 65536)
-                except OSError:
-                    return False
-            if text in plain(seen):
-                return True
-        return False
-
-    detail = ""
-    try:
-        started = wait_for("shift+tab", 60)
-        os.write(fd, b"PERMTEST from the phone")
-        time.sleep(0.5)
-        os.write(fd, b"\r")
-        asked = wait_for("Allow bash", 60)
-        code, _, cookie = phone(s.base, "POST", "/m/login", {"password": "phone-pass-123"})
-        pend = None
-        end = time.time() + 20
-        while time.time() < end and not pend:
-            _, st, _ = phone(s.base, "GET", "/m/api/state", cookie=cookie)
-            pend = next((c for c in st.get("clients", []) if (c.get("pending") or {}).get("id")), None)
-            if not pend:
-                time.sleep(0.5)
-        acted = phone(s.base, "POST", "/m/api/act", {"id": pend["id"], "action": "approve", "approval": pend["pending"]["id"]},
-                      cookie=cookie)[1] if pend else {}
-        done = wait_for("PERM: touched", 30) and wait_for("Allowed from the phone", 5)
-        ok = (started and asked and code == 200 and pend and pend["state"] == "asking" and "touch perm-ok.txt" in pend["pending"]["detail"]
-              and acted.get("ok") and done and (work / "perm-ok.txt").exists())
-        detail = (f"ferry 等确认时手机页面看到它（{pend['device']} · {pend['project']}：{pend['pending']['tool']}），在手机上点允许，命令执行完成"
-                  if ok else f"started={started} asked={asked} login={code} pend={pend} acted={acted} | {plain(seen)[-400:]}")
-    finally:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            os.waitpid(pid, 0)
-        except (ProcessLookupError, ChildProcessError, OSError):
-            pass
-        (s.home / "config.json").unlink(missing_ok=True)
-    check("F58 手机控制台", bool(detail) and detail.startswith("ferry 等确认"), detail)
 
 
 def check_install_update(root: Path) -> None:

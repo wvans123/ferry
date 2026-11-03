@@ -335,3 +335,12 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | agent 需要能弹选项的提问 | 新工具 `ask_user`：1–4 题，每题 2–6 个选项，单选或多选，推荐项排最前并标"(recommended)"，多选时推荐项默认勾上；最后一项"Other"自己写；Esc 不回答。没有终端时（-p、团队成员）告诉 agent 按推荐项继续。子 agent 不能用（只有主对话能问你） | F65、客户端单元测试 |
 | 记忆说明里还有硬换行 | 记忆、/goal 的说明也改成整句（一个 unwrap 小工具把源码里按 120 字折的行接回去） | — |
 | 经 kiro 等中转的 Claude 没标"能看图"，agent 看不了图 | 服务端按模型名自动认出能看图的模型（Claude、GPT-4o/4.1/5/6、o3/o4、Gemini、带 vl/vision 的等），手动设的 `vision = true` 仍然有效 | 服务端单元测试 |
+
+## v0.24
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 下载文件为什么要专门的工具 | 去掉 `web_download`，和 Cursor 一样用命令下载（`curl -L -o`）、解压。以前命令里联网常失败，是因为命令不认公司检查 HTTPS 用的证书：现在 ferry 把它信任的证书（系统的、公司的、caFile）写成 `%USERPROFILE%\.ferry\ca-bundle.pem`，命令通过 CURL_CA_BUNDLE、SSL_CERT_FILE、REQUESTS_CA_BUNDLE、GIT_SSL_CAINFO、NODE_EXTRA_CA_CERTS 用上它（你自己设过的不动），代理变量本来就传给命令。系统提示改成：下载用 curl，下完确认不是网关的 HTML 页面 | F64、客户端单元测试 |
+| web_render 用不上 | 删掉：web_render、`ferry install-electron`、render / electronPath / renderWaitMs 设置 | F57 改成只查网站黑名单 |
+| 模型都能看图，不需要标 | 默认每个模型都能看图（`vision` 默认 true）；只认文字的模型写 `vision = false`（预设里的 deepseek-v4-pro 已标好）。去掉按名字猜的规则 | 服务端单元测试 |
+| 手机控制台只看得到标题，没用 | 删掉：/m 页面、状态上报、手机上批准、管理页里的那一栏，以及 phoneConsole / remoteApprove 设置。手机上只收 Bark：5 分钟以上的活做完，或者**因为出错停下**（新增，带一句原因），目标完成或卡住，确认框等你太久 | F58 删除 |

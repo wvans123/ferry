@@ -164,7 +164,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
     <a href="#redaction" data-page="redaction">脱敏</a>
     <a href="#calls" data-page="calls">调用记录</a>
     <a href="#usage" data-page="usage">用量和费用</a>
-    <a href="#devices" data-page="devices">设备和手机</a>
+    <a href="#devices" data-page="devices">设备和记忆</a>
     <a href="#settings" data-page="settings">设置</a>
     <div class="grow"></div>
     <button class="btn danger stop" id="stop">停止服务端</button>
@@ -341,10 +341,10 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       </div>
     </section>
 
-    <!-- devices, global memory, phone console -->
+    <!-- devices, global memory -->
     <section data-view="devices" hidden>
-      <h1>设备和手机</h1>
-      <p class="lead">每台电脑一个令牌；所有电脑共用一份全局记忆；在手机上看各台电脑在做什么。</p>
+      <h1>设备和记忆</h1>
+      <p class="lead">每台电脑一个令牌；所有电脑共用一份全局记忆。</p>
       <div class="card">
         <h2>设备</h2>
         <p class="hint">给每台要登录的电脑单独加一个设备，各用各的令牌。某台电脑丢了或不用了，只作废它一个，别的不受影响。主令牌在"设置 → 令牌"里换。</p>
@@ -360,15 +360,6 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         <p class="hint">打开后，agent 多了一种记忆"global"，存在这台服务端上，所有电脑共用：适合放你的偏好、习惯、常用术语。每台电脑自己的记忆（项目记忆、本机的用户记忆）照旧留在那台电脑上。agent 被要求不把工作内容写进全局记忆。</p>
         <label class="switch"><input type="checkbox" id="memOn"> <b>打开全局记忆</b></label>
         <div class="tablecard" style="margin:12px -4px 0"><table><thead><tr><th>记忆</th><th>说明</th><th>更新</th><th></th></tr></thead><tbody id="memRows"></tbody></table></div>
-      </div>
-      <div class="card">
-        <h2>手机控制台</h2>
-        <p class="hint">在手机浏览器打开 <b>外网地址/m</b>，输入密码，就能看到每台电脑上的 ferry 在做什么，可以<b>停止</b>，也可以<b>允许或拒绝</b>它在等的确认。打开后点 Bark 通知会直接跳到这个页面。</p>
-        <p class="hint">在手机上"允许"需要那台电脑同意：在那台电脑上运行 <code>ferry config set remoteApprove true</code>。危险操作和项目文件夹以外的操作只能在电脑上批准。停止和拒绝总是可以。</p>
-        <div class="row"><input type="password" id="conPw" placeholder="设一个密码（至少 8 个字符）" autocomplete="new-password" style="flex:1;min-width:200px"><button class="btn primary" id="conSavePw">保存密码</button></div>
-        <label class="switch" style="margin-top:12px"><input type="checkbox" id="conOn"> <b>打开手机控制台</b></label>
-        <p class="hint" id="conUrl" style="margin:10px 0 0"></p>
-        <div class="tablecard" style="margin:12px -4px 0"><table><thead><tr><th>电脑</th><th>项目</th><th>状态</th><th>最后报告</th></tr></thead><tbody id="conRows"></tbody></table></div>
       </div>
     </section>
 
@@ -566,7 +557,7 @@ async function loadOverview() {
   const t = await api("traffic?minutes=" + minutes);
   const k = t.totals, span = { 60: "近 1 小时", 360: "近 6 小时", 1440: "近 24 小时" }[minutes];
   const kd = k.kinds || {};
-  const parts = kd.model !== undefined ? `（其中模型调用 ${kd.model}、上传对话 ${kd.upload}、手机控制台状态上报 ${kd.status}、其他 ${kd.other}）` : "";
+  const parts = kd.model !== undefined ? `（其中模型调用 ${kd.model}、上传对话 ${kd.upload}、其他 ${kd.other}）` : "";
   $("ovSummary").innerHTML = k.requests ? `${span}：<b>${k.requests}</b> 个请求${parts}，<b>${k.chats}</b> 次模型调用，收到 <b>${bytes(k.in)}</b>，发给模型 <b>${bytes(k.up)}</b>` + (k.errors ? `，<span style="color:var(--bad)">${k.errors} 次出错</span>` : "")
     : `${span}没有请求。工作电脑连上并开始对话后，这里会有变化。`;
   drawChart(t);
@@ -849,7 +840,7 @@ async function openCall(a) {
   $("callBody").innerHTML = html; $("callDlg").showModal();
 }
 
-/* ---------- devices, global memory, phone console ---------- */
+/* ---------- devices, global memory ---------- */
 function seen(ts) { if (!ts) return '<span class="muted">还没连过</span>'; const s = Date.now() / 1000 - ts; return s < 120 ? '<span class="tag good">在线</span>' : when(ts); }
 async function loadDevices() {
   await loadStatus(); if (!S) return;
@@ -862,14 +853,6 @@ async function loadDevices() {
   $("memRows").innerHTML = m.items.map((x) => `<tr><td class="mono">${esc(x.name)}</td><td>${esc(x.description)}</td><td class="num">${when(x.updated)}</td>
     <td class="r"><button class="btn small" data-mem="${esc(x.user)}/${esc(x.name)}">删除</button></td></tr>`).join("")
     || `<tr><td colspan="4" class="empty">${m.enabled ? "还没有全局记忆。让 agent 记住什么时，它会自己决定放哪。" : "全局记忆没打开。"}</td></tr>`;
-  $("conOn").checked = S.console;
-  $("conPw").placeholder = S.console_password ? "已设密码；要换就输入新的" : "设一个密码（至少 8 个字符）";
-  $("conUrl").innerHTML = !S.console ? "" : S.console_url ? `手机上打开：<b class="mono">${esc(S.console_url)}</b>` : '<span style="color:var(--lamp)">先在"设置"里填外网地址，手机才知道去哪打开。</span>';
-  const c = await api("clients");
-  $("conRows").innerHTML = c.clients.map((x) => `<tr><td>${esc(x.device)}</td><td>${esc(x.project)}</td>
-    <td>${!x.online ? '<span class="muted">离线</span>' : x.state === "asking" ? '<span class="tag lamp">等确认</span>' : x.state === "working" ? '<span class="tag">工作中</span>' : '<span class="muted">空闲</span>'}</td>
-    <td class="num">${x.ago} 秒前</td></tr>`).join("")
-    || `<tr><td colspan="4" class="empty">${S.console ? "现在没有 ferry 在报告。打开控制台后，新启动或正在运行的 ferry 会在半分钟内出现。" : "手机控制台没打开。"}</td></tr>`;
 }
 $("devAdd").onclick = async () => {
   try {
@@ -891,8 +874,6 @@ $("memRows").onclick = async (e) => {
   const [u, n] = b.dataset.mem.split("/");
   try { await api(`memory/${encodeURIComponent(u)}/${encodeURIComponent(n)}`, "DELETE"); loadDevices(); } catch (err) { toast(err.message); }
 };
-$("conSavePw").onclick = async () => { try { S = await api("remote", "PUT", { password: $("conPw").value }); $("conPw").value = ""; toast("已保存密码；手机上要重新登录"); loadDevices(); } catch (e) { toast(e.message); } };
-$("conOn").onchange = async () => { try { S = await api("remote", "PUT", { console: $("conOn").checked }); toast($("conOn").checked ? "已打开手机控制台" : "已关闭手机控制台"); loadDevices(); } catch (e) { toast(e.message); $("conOn").checked = !$("conOn").checked; } };
 
 /* ---------- settings ---------- */
 async function loadSettings() {

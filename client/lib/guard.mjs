@@ -1,6 +1,5 @@
 // The permission gate: every tool call passes through decide() (permissions.mjs) before it runs.
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
-import { randomBytes } from "node:crypto";
 import { findBash } from "./config.mjs";
 import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule } from "./permissions.mjs";
 
@@ -28,43 +27,16 @@ async function ask(ui, verdict, event, cwd, who) {
 	const isShell = tool === "bash" || tool === "powershell";
 	const isEdit = ["edit", "write", "office_edit", "office_create", "image_create"].includes(tool);
 	const rules = isShell ? [...new Set((verdict.pending ?? verdict.segments ?? [input.command ?? ""]).map((s) => prefixRule(tool, s)))]
-		: tool === "web_fetch" || tool === "web_render" ? [`web_fetch(${hostOf(input.url)})`] // one site (covers both)
+		: tool === "web_fetch" ? [`web_fetch(${hostOf(input.url)})`] // one site
 		: [tool.startsWith("mcp__") ? `${tool.split("__").slice(0, 2).join("__")}__*` : tool]; // a whole MCP server
-	const scope = tool === "web_fetch" || tool === "web_render" ? "user" : "project"; // a site you trust, you trust everywhere
+	const scope = tool === "web_fetch" ? "user" : "project"; // a site you trust, you trust everywhere
 	const options = ["Allow once"];
 	if (!verdict.danger && !verdict.outside) {
 		if (isEdit) options.push("Allow all file changes from now on (auto-edit mode)");
 		else options.push(scope === "user" ? `Always allow this site: ${hostOf(input.url)}` : `Always allow in this project: ${rules.join(", ")}`);
 	}
 	options.push("Deny", "Deny, and tell the agent what to do instead");
-	// the phone console may answer instead (remote.mjs): it closes this question with its own answer
-	const remote = new AbortController();
-	let fromPhone = null;
-	state.pendingAsk = {
-		id: randomBytes(4).toString("hex"), tool, detail: short(detail, 300),
-		danger: verdict.danger || (verdict.outside ? "outside the project folder" : ""),
-		answer: (action, note) => {
-			if (fromPhone) return;
-			fromPhone = { action, note };
-			remote.abort();
-		},
-	};
-	state.onPending?.();
-	let choice;
-	try {
-		choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options, { signal: remote.signal });
-	} finally {
-		state.pendingAsk = null;
-		state.onPending?.();
-	}
-	if (fromPhone?.action === "approve") {
-		ui.notify(`Allowed from the phone: ${tool}`, "info");
-		return undefined;
-	}
-	if (fromPhone) {
-		ui.notify(`Denied from the phone: ${tool}`, "warning");
-		return { block: true, reason: fromPhone.note || "The user denied this action from their phone" };
-	}
+	const choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options);
 	if (choice === "Allow once") return undefined;
 	if (choice?.startsWith("Allow all file changes")) {
 		state.mode = "acceptEdits";
