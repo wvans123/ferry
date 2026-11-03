@@ -118,6 +118,16 @@ def run_one(task, ferry: list[str], base: Path, server_home: Path, env: dict) ->
     return {"task": task.ID, "ok": bool(ok), "note": note, "seconds": seconds, "exit": code, **usage(home)}
 
 
+def prepare(ferry_path: str) -> None:
+    """First run in this folder: install what the Ferry here needs (once; later runs skip this)."""
+    if Path(ferry_path).resolve().is_relative_to(ROOT) and not (ROOT / "node_modules").exists():
+        print("First run: npm ci (installs the client's packages) ...", flush=True)
+        subprocess.run(["npm.cmd" if os.name == "nt" else "npm", "ci", "--no-audit", "--no-fund"], cwd=ROOT, check=True)
+    if subprocess.run([sys.executable, "-c", "import ferry_server"], capture_output=True).returncode != 0:
+        print("First run: pip install -e server (the Ferry server for this Python) ...", flush=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e", str(ROOT / "server")], check=True)
+
+
 def ferry_version(ferry: list[str]) -> str:
     try:
         r = subprocess.run([*ferry, "--version"], capture_output=True, text=True, timeout=60)
@@ -208,7 +218,8 @@ def main() -> int:
         sys.exit(f"set {key} first")
     ferry = [shutil.which("node") or "node", a.ferry]
     if not Path(a.ferry).exists():
-        sys.exit(f"{a.ferry} not found; run npm ci in {ROOT}, or pass --ferry")
+        sys.exit(f"{a.ferry} not found; pass --ferry")
+    prepare(a.ferry)
     env = {**os.environ, "FERRY_MODEL": a.provider}
     if a.model:
         env[f"FERRY_{a.provider.upper()}_MODEL"] = a.model

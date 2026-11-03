@@ -26,7 +26,7 @@ LIMIT = 1_000_000
 TOKEN = "ferry-selftest-token"
 TOKEN_BOB = "ferry-selftest-token-bob"
 SECRET = "ferry-selftest-secret-0123456789"
-SENSITIVE = ["Project Titan", "internal-host-01", "10.1.2.3", "bob@corp.example", "EMP-12345"]
+CONTENT = ["internal-host-01", "10.1.2.3", "bob@corp.example", "EMP-12345"]  # what notes.txt says
 LONG_FILES, FILE_BYTES = 36, 45 * 1024
 results: list[tuple[str, bool]] = []
 
@@ -97,7 +97,6 @@ class Stack:
         self.data = root / "server-data"
         srv = root / "server"
         (srv / "rules").mkdir(parents=True)
-        shutil.copy(ROOT / "server" / "dictionary.example.toml", srv / "dictionary.toml")
         shutil.copy(ROOT / "server" / "rules" / "_global.md", srv / "rules" / "_global.md")
         (srv / "rules" / "work.md").write_text("- Project rule v1: answer briefly.\n", encoding="utf-8")
         self.rules = srv / "rules"
@@ -884,24 +883,19 @@ def find_browser() -> str:
 
 def check_web_browser(root: Path, work: Path) -> None:
     pages = {"FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100"}
-    s = Stack(root, work, "agent", server_env={"FERRY_WEB": "1", "FERRY_TEST_WEB_LOCAL": "1", **pages})
+    s = Stack(root, work, "agent", server_env=pages)
     try:
-        c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)  # default: on this computer
-        on_server = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "web"]
-        client_ok = c1 == 0 and "pelican-42" in o1 and not on_server
+        c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)
+        client_ok = c1 == 0 and "pelican-42" in o1
         c2, o2 = s.ferry("-p", "GATETEST: read the gated site", env_extra=pages)
         gate_ok = c2 == 0 and "company network gateway" in o2
         s.home.mkdir(parents=True, exist_ok=True)
-        (s.home / "config.json").write_text(json.dumps({"web": "server"}), encoding="utf-8")
-        c3, o3 = s.ferry("-p", "WEBTEST: look it up")
-        on_server = [a.get("kind") for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "web"]
         (s.home / "config.json").write_text(json.dumps({"web": "off"}), encoding="utf-8")
         s.ferry("-p", "TODOTEST: plan it")
         off_ok = "web_fetch" not in json.dumps(jsonl(s.upstream)[-1].get("tools", []))
         (s.home / "config.json").unlink()
-        check("F35 联网工具", client_ok and gate_ok and c3 == 0 and "pelican-42" in o3 and on_server == ["search", "fetch"]
-              and off_ok, "默认在工作电脑上搜索和读网页（服务端没有联网记录）；公司网关要确认的网站会说明去哪确认；"
-              "设成 server 时由服务端代办；设成 off 时没有联网工具")
+        check("F35 联网工具", client_ok and gate_ok and off_ok,
+              "在工作电脑上搜索和读网页；公司网关要确认的网站会说明去哪确认；设成 off 时没有联网工具")
         browser = find_browser()
         if not browser:
             print("  SKIP  F36 浏览器（这台机器上没有 Chrome / Edge）")
@@ -1027,7 +1021,7 @@ def main() -> int:
     print(f"logs: {base}")
     prompt = "请读取 Project Titan 目录下的 notes.txt 并告诉我内容"
 
-    print("\n[1/14] 基本流程：读文件、脱敏、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
+    print("\n[1/14] 基本流程：读文件、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
     s = Stack(base / "basic", work, "basic")
     try:
         code, out = s.ferry("--mode", "json", "-p", prompt)
@@ -1036,12 +1030,8 @@ def main() -> int:
                   and e.get("assistantMessageEvent", {}).get("type") == "text_delta"]
         final = "".join(deltas)
         ups = jsonl(s.upstream)
-        up_text = s.upstream.read_text(encoding="utf-8") if s.upstream.exists() else ""
-        leaks = sum(up_text.count(x) for x in SENSITIVE)
-        check("F6 敏感词不外泄", code == 0 and len(ups) >= 2 and leaks == 0,
-              f"模型收到 {len(ups)} 个请求，原文出现 {leaks} 次")
-        check("F7 工具调用还原", "internal-host-01" in final and "10.1.2.3" in final and "FERRY-" not in final,
-              "模型用占位符下指令，客户端读到真实文件并显示原文" if "internal-host-01" in final else f"输出: {out[-300:]!r}")
+        check("F7 读文件", code == 0 and len(ups) >= 2 and "internal-host-01" in final,
+              "模型让客户端读文件，客户端读到并交回，回答里有文件内容" if "internal-host-01" in final else f"输出: {out[-300:]!r}")
         check("F8 逐字流式", len(deltas) >= 10, f"最后一轮回复分 {len(deltas)} 段到达客户端")
         sys0 = system_text(ups[0]) if ups else ""
         check("F9 服务端规则拼进提示词", "<server-rules>" in sys0 and "Project rule v1" in sys0
@@ -1054,9 +1044,8 @@ def main() -> int:
               and "Project rule v1" not in system_text(ups2[0]), "改规则文件后不重启服务端，下一次请求即用新规则")
         logs = (s.data / "audit.jsonl").read_text(encoding="utf-8") + (s.data / "access.jsonl").read_text(encoding="utf-8")
         chats = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "chat"]
-        check("F11 审计日志不含正文", chats and all(a.get("masked") for a in chats[1:2]) and
-              not any(x in logs for x in SENSITIVE + ["FILE SAYS", "notes.txt"]),
-              f"{len(chats)} 条模型调用记录，有脱敏计数，没有对话内容")
+        check("F11 日志不含正文", chats and not any(x in logs for x in CONTENT + ["Project Titan", "FILE SAYS", "notes.txt"]),
+              f"{len(chats)} 条模型调用记录，没有对话内容")
         check("F12 模型参数适配", ups and all("store" not in u and "max_completion_tokens" not in u
                                           and "max_tokens" in u and u["model"] == "deepseek-chat" for u in ups),
               "假模型拒收 store / max_completion_tokens，服务端已去掉或改名")
@@ -1099,8 +1088,6 @@ def main() -> int:
         check("F14 超大内容分片上传", ok_run and big,
               f"服务端丢会话后全量重传 {max([a['upload_bytes'] for a in big] or [0]):,} 字节，"
               f"拆成 {max([a['parts'] for a in big] or [0])} 块")
-        leaks = sum(s.upstream.read_text(encoding="utf-8").count(x) for x in SENSITIVE)
-        check("F6b 长会话也不外泄", leaks == 0, f"原文出现 {leaks} 次")
         chats = [a for a in audit if a.get("event") == "chat"]
         by = lambda purpose: {a["model"] for a in chats if a.get("purpose") == purpose}
         offered = [m["id"] for m in json.loads((s.home / "models-cache.json").read_text(encoding="utf-8"))]
@@ -1198,21 +1185,13 @@ def main() -> int:
     print("\n[9/14] 多用户隔离、版本协商、弱密钥", flush=True)
     s = Stack(base / "users", work, "basic")
     try:
-        code, out = s.ferry("-p", prompt)  # wesley sends "Project Titan" once, so wesley owns its placeholder
-        first_user = [m for m in jsonl(s.upstream)[0]["messages"] if m["role"] == "user"][0]
-        ph = re.search(r"\[FERRY-[A-Z2-7]{8}\]", json.dumps(first_user, ensure_ascii=False)).group(0)
-        ask = {"model": "main", "stream": False, "messages": [{"role": "user", "content": f"open {ph}"}]}
-        _, as_bob = s.http("POST", "/v1/chat/completions", ask, token=TOKEN_BOB)
-        _, as_wes = s.http("POST", "/v1/chat/completions", ask, token=TOKEN)
-        arg = lambda r: r["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+        code, out = s.ferry("-p", prompt)
         st_c, _ = s.http("POST", "/v1/ferry/commit?conv=shared&base=0&base_hash=",
                          json.dumps({"append": ["{}"], "tools": None}).encode(), token=TOKEN_BOB)
         st_x, _ = s.http("POST", "/v1/chat/completions",
                          {"model": "main", "stream": False, "ferry": {"conv": "shared", "count": 1,
                           "hash": __import__("hashlib").sha256(b"{}").hexdigest()}}, token=TOKEN)
-        check("F18 用户之间相互隔离", code == 0 and ph in arg(as_bob) and "Project Titan" in arg(as_wes)
-              and st_c == 200 and st_x == 409,
-              "别人的占位符还原不出原文；别人的会话缓存也读不到")
+        check("F18 用户之间相互隔离", code == 0 and st_c == 200 and st_x == 409, "别人的会话缓存读不到")
         st_p, body_p = s.http("GET", "/v1/ferry/models", headers={"x-ferry-protocol": "2"})
         check("F19 版本不一致时明确拒绝", st_p == 426 and "protocol" in json.dumps(body_p),
               f"协议版本 2 的客户端收到 HTTP {st_p}")

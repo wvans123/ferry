@@ -25,11 +25,10 @@ Anthropic 和 OpenAI 的 API 不对中国大陆和香港提供服务。要用这
 | 概览 | 工作电脑用的登录命令（带令牌，一键复制）、流量图、最近的调用 |
 | 服务商和模型 | 选预设（DeepSeek、Kimi、智谱、通义、火山、硅基流动、各家编程套餐、Claude、OpenAI、OpenRouter、本机 Ollama、自定义），只填 API Key；读出服务商的模型列表，勾选要用的；选默认模型、写摘要用的模型、生成图片用的模型；每个模型的上下文、最大输出和价格；测试按钮 |
 | 提示词 | 所有工作电脑都会带上的团队提示词，可以按项目写 |
-| 脱敏 | 默认关闭。打开后，敏感词表和内网 IP、邮箱、手机号、Key 这类内容先换成占位符再发给模型，回复里再换回来。只对 OpenAI 兼容接口生效，Claude 原生接口不做脱敏 |
 | 调用记录 | 每次调用的项目、模型、大小、token、耗时，可以点开看详情 |
 | 用量和费用 | 按天、项目、模型汇总，能看到每个模型的缓存命中 |
 | 设备和记忆 | 给每台电脑一个令牌；全局记忆（所有电脑共用） |
-| 设置 | 外网地址、服务端存不存对话、请求上限、并发、手机通知（Bark）、问题报告（GitHub）、联网代办、开机启动、换令牌 |
+| 设置 | 外网地址、服务端存不存对话、请求上限、并发、手机通知（Bark）、问题报告（GitHub）、开机启动、换令牌 |
 
 API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4 位。
 
@@ -78,8 +77,6 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 | `FERRY_SERVER_HOME` | 数据放哪，比如 `D:\ferry\server`（令牌、Key、models.toml、日志） |
 | `DEEPSEEK_API_KEY` 等 | 用环境变量给 Key，优先于管理页里填的 |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
-| `FERRY_REDACT` | `1` 打开脱敏（默认关闭） |
-| `FERRY_WEB` | `1` 允许服务端替工作电脑联网（默认关闭） |
 | `FERRY_GITHUB_TOKEN` / `FERRY_GITHUB_REPO` | 问题报告用的 GitHub 令牌和仓库（优先于管理页） |
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
@@ -93,7 +90,7 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 1. 在 GitHub 上建一个 fine-grained personal access token：Settings → Developer settings → Fine-grained tokens，Repository access 只选 `wvans123/ferry`，Permissions 里只给 Issues 读写。
 2. 管理页 → 设置 → 问题报告，填仓库（默认 `wvans123/ferry`）和这个令牌，保存。令牌存在数据目录的 `github-token` 文件里，管理页不再显示它。
 
-发出前，服务端会隐去这些内容（不管脱敏开没开）：敏感词表里的词和自定义规则、内网 IP、邮箱、手机号、Key、路径里的用户名（`C:\Users\<user>\...`）。每份报告都存在数据目录的 `data/reports/` 里，管理页列出最近 30 份：发成功的带 issue 链接，没发出的写着原因，可以再发一次。
+发出前，服务端会隐去这些内容：问题报告卡片里列的词（公司名、产品名、项目代号、主机名，一行一个）、内网 IP、邮箱、手机号、Key、路径里的用户名（`C:\Users\<user>\...`）。每份报告都存在数据目录的 `data/reports/` 里，管理页列出最近 30 份：发成功的带 issue 链接，没发出的写着原因，可以再发一次。
 
 公开仓库的 issue 谁都能看。不想公开，就建一个私有仓库专门收报告，把仓库名填成它。
 

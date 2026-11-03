@@ -10,15 +10,21 @@ import json
 import os
 import re
 import time
-import tomllib
 from pathlib import Path
 
 import httpx
+from fastapi import FastAPI, Request
 
+from . import __version__
 from .config import Config
-from .redact import BUILTIN_PATTERNS
 
 HIDDEN = "[hidden]"
+PATTERNS = [  # private IPv4, e-mail, mainland phone numbers, API keys and tokens
+    r"\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b",
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    r"(?<!\d)1[3-9]\d{9}(?!\d)",
+    r"\b(?:sk|pk|rk|ghp|gho|github_pat|xox[abp])[-_][A-Za-z0-9_-]{16,}\b",
+]
 MAX_TEXT = 20_000
 # a user name in a Windows or macOS home path: C:\Users\zhang.san\..., /Users/zhang/...
 HOME_RX = re.compile(r"(?i)([A-Z]:[\\/]+Users[\\/]+|/Users/|/home/)[^\\/\s\"'`]+")
@@ -49,23 +55,30 @@ def save_github_token(cfg: Config, value: str) -> None:
         pass
 
 
-def _word_list(cfg: Config) -> re.Pattern:
-    """The redaction word list and its patterns (admin page: 脱敏), used for reports even when redaction is off."""
-    parts = [rx for _, _, rx in BUILTIN_PATTERNS]
-    if cfg.dictionary and cfg.dictionary.exists():
-        try:
-            raw = tomllib.loads(cfg.dictionary.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError:
-            raw = {}
-        terms = sorted({t for t in raw.get("terms", []) if str(t).strip()}, key=len, reverse=True)
-        if terms:
-            parts.insert(0, "|".join(re.escape(t) for t in terms))
-        parts += [p["regex"] for p in raw.get("patterns", []) if p.get("regex")]
+def words_path(cfg: Config) -> Path:
+    return (cfg.home or cfg.data_dir) / "report-words.txt"
+
+
+def words(cfg: Config) -> list[str]:
+    """Words always hidden in reports (company, product, project names), one per line, set on the admin page."""
+    p = words_path(cfg)
+    return [w.strip() for w in p.read_text(encoding="utf-8").splitlines() if w.strip()] if p.exists() else []
+
+
+def save_words(cfg: Config, text: str) -> None:
+    p = words_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(w.strip() for w in str(text).splitlines() if w.strip()) + "\n", encoding="utf-8")
+
+
+def _hide_rx(cfg: Config) -> re.Pattern:
+    terms = sorted(set(words(cfg)), key=len, reverse=True)
+    parts = ([ "|".join(re.escape(t) for t in terms)] if terms else []) + PATTERNS
     return re.compile("|".join(f"(?:{p})" for p in parts), re.IGNORECASE)
 
 
 def scrub(cfg: Config, text: str) -> tuple[str, int]:
-    """Hide words from the list, built-in patterns (private IPs, e-mail, phone numbers, keys) and user names in paths."""
+    """Hide the word list, private IPs, e-mail addresses, phone numbers, keys and user names in paths."""
     n = 0
 
     def hide(_m: re.Match) -> str:
@@ -79,7 +92,7 @@ def scrub(cfg: Config, text: str) -> tuple[str, int]:
         return m.group(1) + "<user>"
 
     text = HOME_RX.sub(home, str(text)[:MAX_TEXT])
-    return _word_list(cfg).sub(hide, text), n
+    return _hide_rx(cfg).sub(hide, text), n
 
 
 def _dir(cfg: Config) -> Path:
@@ -161,3 +174,17 @@ async def post(cfg: Config, rep: dict, client: httpx.AsyncClient | None = None) 
         if own:
             await c.aclose()
     return save(cfg, rep)
+
+
+def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
+    """The route the work computer's /report uses. audit(**row) writes one line to the audit log."""
+
+    @app.post("/v1/ferry/report")
+    async def report(request: Request):
+        b = json.loads(await request.body() or b"{}")
+        rep = build(cfg, b, request.state.user or "", getattr(request.state, "device_name", "") or "", __version__)
+        rep = await post(cfg, rep, client)
+        audit(event="report", user=request.state.user, ok=bool(rep["issue"]), hidden=rep["hidden"])
+        return {"ok": bool(rep["issue"]), "id": rep["id"], "issue": rep["issue"], "hidden": rep["hidden"],
+                **({"error": rep["error"]} if rep["error"] else {})}
+

@@ -1,8 +1,8 @@
 """A fake OpenAI-compatible model for end-to-end tests. Logs every request body it receives.
 
 usage: python fake_llm.py <log file> <mode> [port]
-  basic   turn 1: read "<first placeholder in the user message>/notes.txt"; turn 2: echo the file back
-  edit    read "<placeholder>/notes.txt", replace its ticket number, then report (a three-round task)
+  basic   turn 1: read "Project Titan/notes.txt"; turn 2: echo the file back
+  edit    read "Project Titan/notes.txt", replace its ticket number, then report (a three-round task)
   bash    turn 1: run "echo ferry-approved-$((6*7))"; turn 2: echo the command output back
   long:N  read data/f00.txt ... data/f{N-1}.txt one per turn, then answer "READ N FILES"
   agent   client agent features, chosen by a keyword in the user message:
@@ -40,19 +40,15 @@ def decide(msgs):
     if MODE == "basic":
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
         if not tool_msgs:
-            user = [text_of(m) for m in msgs if m.get("role") == "user"][-1]
-            ph = re.search(r"\[FERRY-[A-Z2-7]{8}\]", user)
-            return ("tool", "read", {"path": (ph.group(0) if ph else "NOPLACEHOLDER") + "/notes.txt"})
+            return ("tool", "read", {"path": "Project Titan/notes.txt"})
         return ("text", "FILE SAYS: " + text_of(tool_msgs[-1])[:400])
     if MODE == "edit":  # a realistic three-round task: read, edit, then report
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
-        user = [text_of(m) for m in msgs if m.get("role") == "user"][-1]
-        ph = re.search(r"\[FERRY-[A-Z2-7]{8}\]", user)
-        path = (ph.group(0) if ph else "NOPLACEHOLDER") + "/notes.txt"
+        path = "Project Titan/notes.txt"
         if len(tool_msgs) == 0:
             return ("tool", "read", {"path": path})
         if len(tool_msgs) == 1:
-            ticket = re.findall(r"\[FERRY-[A-Z2-7]{8}\]", text_of(tool_msgs[0]))[-1]
+            ticket = re.findall(r"EMP-\d+", text_of(tool_msgs[0]))[-1]
             return ("tool", "edit", {"path": path, "edits": [{"oldText": f"ticket {ticket}", "newText": "ticket EMP-99999"}]})
         return ("text", "Done: the ticket number in notes.txt is now EMP-99999.")
     if MODE == "bash":

@@ -1,13 +1,9 @@
 // web_fetch and web_search.
 //
-// cfg.web = "client" (default): run on this computer, through the company proxy like a browser, so the company
-//   gateway's rules apply. A gateway warning page ("are you sure you want to visit this site?") is reported with the
-//   address to confirm in a browser; Ferry never clicks through it.
-// cfg.web = "server": the Ferry server fetches (only when its admin page has web access on).
-// cfg.web = "off": no web tools.
-import { basename } from "node:path";
+// They run on this computer, through the company proxy like a browser, so the company gateway's rules apply. A gateway
+// warning page ("are you sure you want to visit this site?") is reported with the address to confirm in a browser;
+// Ferry never clicks through it. cfg.web = "off": no web tools.
 import { Type } from "typebox";
-import { PROTOCOL, serverHeaders } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
 
 export { gatewayPage };
@@ -31,7 +27,7 @@ export function blockedSite(url, list) {
 	return "";
 }
 
-// ---------- HTML to text (same rules as the server's web.py) ----------
+// ---------- HTML to text ----------
 
 const ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 const unescape = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
@@ -164,23 +160,6 @@ export async function searchWeb(query, count = 8, signal, base = process.env.FER
 	return { results: parseBing(r.text).slice(0, count) };
 }
 
-// ---------- through the Ferry server ----------
-
-async function viaServer(cfg, path, body, signal) {
-	const res = await fetch(`${cfg.server}${path}`, {
-		method: "POST",
-		headers: serverHeaders(cfg, { "Content-Type": "application/json", "x-ferry-protocol": PROTOCOL,
-			"x-ferry-project": encodeURIComponent(process.env.FERRY_PROJECT ?? basename(process.cwd())) }),
-		body: JSON.stringify(body),
-		redirect: "manual",
-		signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
-	});
-	const json = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
-	if (!res.ok) throw new Error(json?.error?.message ?? `the Ferry server answered HTTP ${res.status}`);
-	if (!json) throw new Error("the Ferry server did not answer (a login page or proxy in between?)");
-	return json;
-}
-
 // ---------- the tools ----------
 
 const FetchParams = Type.Object({
@@ -192,19 +171,15 @@ const SearchParams = Type.Object({
 	count: Type.Optional(Type.Number({ description: "How many results, default 8" })),
 });
 
-/** Which way web access works for this run: "client", "server" or "" (none). */
-export function webMode(cfg) {
-	const want = cfg.web === undefined || cfg.web === true ? "client" : cfg.web;
-	if (want === "server") return cfg.serverWeb ? "server" : "";
-	return want === "client" ? "client" : "";
+/** Whether the web tools are on ("off" or false turns them off; "server" from before 0.26 counts as on). */
+export function webOn(cfg) {
+	return cfg.web !== "off" && cfg.web !== false;
 }
 
 export function createWeb(cfg) {
 	return (pi) => {
-		const mode = webMode(cfg);
-		if (!mode) return;
-		const where = mode === "client" ? "Runs on this computer through its normal network (company proxy and gateway rules apply)."
-			: "Runs on the Ferry server.";
+		if (!webOn(cfg)) return;
+		const where = "Runs on this computer through its normal network (company proxy and gateway rules apply).";
 		const notBlocked = (url) => {
 			const hit = blockedSite(url, cfg.blockedSites);
 			if (hit) throw new Error(`${hit} is on the user's blocked sites list: do not open it, by any tool. Tell the user if the task needs it.`);
@@ -226,8 +201,7 @@ export function createWeb(cfg) {
 			annotations: { readOnlyHint: true, openWorldHint: true },
 			async execute(_id, params, signal) {
 				notBlocked(params.url);
-				let r = mode === "client" ? await fetchPage(params.url, params.offset ?? 0, signal)
-					: await viaServer(cfg, "/v1/ferry/web/fetch", { url: params.url, offset: params.offset ?? 0 }, signal);
+				let r = await fetchPage(params.url, params.offset ?? 0, signal);
 				if (r.sparse && !params.offset) {
 					r = { ...r, text: `${r.text}\n\n[This page is probably built by JavaScript, so it reads almost empty here. ` +
 						"Tell the user; another source may have the same information.]" };
@@ -244,8 +218,7 @@ export function createWeb(cfg) {
 			annotations: { readOnlyHint: true, openWorldHint: true },
 			async execute(_id, params, signal) {
 				const count = Math.max(1, Math.min(Number(params.count) || 8, 20));
-				const r = mode === "client" ? await searchWeb(params.query, count, signal)
-					: await viaServer(cfg, "/v1/ferry/web/search", { query: params.query, count }, signal);
+				const r = await searchWeb(params.query, count, signal);
 				const text = r.results.length
 					? r.results.map((x, i) => `${i + 1}. ${x.title}\n   ${x.url}\n   ${x.snippet}`).join("\n\n")
 					: `No results for "${params.query}".`;

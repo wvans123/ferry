@@ -8,7 +8,7 @@ from ferry_server.config import load_default
 
 
 def make(tmp_path, monkeypatch):
-    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FERRY_SESSION_STORE", "FERRY_REDACT", "FERRY_TOKEN", "FERRY_SECRET"):
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "FERRY_SESSION_STORE", "FERRY_TOKEN", "FERRY_SECRET"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
     monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))

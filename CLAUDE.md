@@ -27,6 +27,8 @@ code map).
 
 | Removed | Version | Why |
 |---|---|---|
+| redaction (placeholders, word list, stream restoring) | 0.26 | off by default, never worked with Claude's own API, owner did not use it; /report keeps a small filter of its own |
+| server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path |
 | web_download tool | 0.24 | the agent downloads with curl like Cursor; commands get ferry's CA bundle and proxy |
 | web_render (Electron) and `ferry install-electron` | 0.24 | hardly needed, 100 MB download |
 | phone console `/m`, status reports, phone approvals | 0.24 | only showed titles; Bark notifications are enough |
@@ -35,6 +37,11 @@ code map).
 | auto permission mode (judge model) | 0.20, server part 0.25 | reason not recorded; Paperclip members use acceptEdits instead |
 
 ## How a change ships
+
+Every feature is a module (docs/MODULES.md): one file per side, one line to plug it in, its own settings, tests,
+F check and docs section. Add or remove a feature by adding or removing its module. Prefer a command-line tool plus a
+skill file (the agent calls it with bash) over a new tool definition.
+
 
 1. One module per change; test that module, then run everything before a release:
    `pytest server/tests`, `node --test "client/test/*.test.mjs"`, `python selftest/run.py`

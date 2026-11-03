@@ -29,7 +29,7 @@ export const DEFAULTS = {
 	memory: true, // remember things across conversations, stored in <FERRY_HOME>/memory
 	subagents: true, // the task tool: hand searches and side tasks to a subagent with a fresh context
 	bigOutputBytes: 8192, // longer command/search output is saved to a file; the model sees start, end and path. 0 = off
-	web: "client", // web_fetch / web_search: "client" (this computer's network), "server" (the Ferry server fetches), "off"
+	web: "client", // web_fetch / web_search on this computer's network; "off" = no web tools
 	goalBudget: "0", // token budget for /goal, e.g. "2m"; "0" = none (the turn limit still applies)
 	goalMaxTurns: 100, // /goal stops after this many turns and reports progress
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
@@ -63,8 +63,8 @@ export const SETTINGS = {
 	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
 		["low", "medium  (default)", "high", "xhigh"]],
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
-	web: ["string", "where web_fetch and web_search run",
-		["client  this computer (the company proxy and gateway rules apply)", "server  the Ferry server, if its admin page allows it", "off"]],
+	web: ["string", "web_fetch and web_search, on this computer's network (the company proxy and gateway rules apply)",
+		["client  on", "off"]],
 	blockedSites: ["list", "sites the agent may never open with web_fetch, subdomains included (e.g. your mail, chat and cloud drive)"],
 	browser: ["boolean", "let the agent drive a browser on this computer (Edge on Windows): open pages, click, type, read"],
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],

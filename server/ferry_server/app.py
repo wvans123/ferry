@@ -19,9 +19,8 @@ import json
 import os
 import secrets
 import time
-import uuid
-from urllib.parse import unquote, urlparse
-from collections import Counter, deque
+from urllib.parse import unquote
+from collections import deque
 from types import SimpleNamespace
 
 import httpx
@@ -42,9 +41,7 @@ from .responses import chat_lines, from_responses, responses_url, to_responses
 from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
                      restore_cache_marks, wants_cache_marks)
-from .redact import Redactor
 from .store import BaseMismatch, MissingBlobs, Store
-from .stream import restore_message, restore_sse
 
 
 def _text(content) -> str:
@@ -56,7 +53,7 @@ def _text(content) -> str:
 
 
 def details_of(call_id: str, payload: dict, project: str, model: str, purpose: str, size: int) -> dict:
-    """What the model is about to receive, after server rules and redaction. Kept in memory only."""
+    """What the model is about to receive, after the server rules. Kept in memory only."""
     msgs = payload.get("messages", [])
     system = "\n\n".join(_text(m.get("content")) for m in msgs if m.get("role") in ("system", "developer"))
     users = [m for m in msgs if m.get("role") == "user"]
@@ -66,10 +63,31 @@ def details_of(call_id: str, payload: dict, project: str, model: str, purpose: s
             "last_user": _text(users[-1].get("content"))[:20_000] if users else "", "tools": tools}
 
 
+def without_placeholder_note(rules: str) -> str:
+    """Rule files written before 0.26 still tell the model about redaction placeholders, which no longer exist."""
+    return "\n".join(l for l in rules.splitlines() if "[FERRY-...]" not in l).strip()
+
+
+async def pass_sse(lines, usage_out: dict):
+    """Relay an OpenAI-style event stream as it comes, noting the usage it reports."""
+    async for line in lines:
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data != "[DONE]":
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(chunk, dict) and chunk.get("usage"):
+                usage_out.update(chunk["usage"])
+        yield f"data: {data}\n\n".encode("utf-8")
+
+
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Ferry server", version=__version__)
-    # session store and redactor can be swapped at run time from the admin page (settings, word list)
-    live = SimpleNamespace(store=None, red=None, started=time.time(), details=deque(maxlen=20), pool=Pool(),
+    # the session store can be swapped at run time from the admin page (settings)
+    live = SimpleNamespace(store=None, started=time.time(), details=deque(maxlen=20), pool=Pool(),
                            no_marks=set(),  # models whose relay refused cache markers
                            fits={},         # model id -> biggest request (estimated tokens) it has answered
                            limits={})       # model id -> size it refused although configured for more (see fit.py)
@@ -113,7 +131,7 @@ def create_app(cfg: Config) -> FastAPI:
                 logged(502, model=model.id, error=str(e)[:200])
                 return JSONResponse({"error": {"message": f"writing the summary failed: {e}"}}, status_code=502)
             logged(200, model=mid, parts=n)
-            body, kind_ = openai_answer(live.red.unmask(text, user), model.model, False)
+            body, kind_ = openai_answer(text, model.model, False)
             return Response(body, media_type=kind_)
 
         async def gen():
@@ -134,7 +152,7 @@ def create_app(cfg: Config) -> FastAPI:
                     yield ("data: " + json.dumps({"error": {"message": msg}}) + "\n\n").encode()
                 return
             logged(200, model=mid, parts=n)
-            yield anthropic_answer(text, model.model) if kind == "anthropic" else openai_answer(live.red.unmask(text, user), model.model, True)[0]
+            yield anthropic_answer(text, model.model) if kind == "anthropic" else openai_answer(text, model.model, True)[0]
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -194,7 +212,6 @@ def create_app(cfg: Config) -> FastAPI:
         if store_too or live.store is None:
             live.store = Store(cfg.data_dir / "ferry.db" if cfg.session_store == "disk" else ":memory:",
                                cfg.session_ttl_days)
-        live.red = Redactor(cfg.dictionary if cfg.redact else None, cfg.secret, live.store)
 
     rebuild()
     live.devices = Devices((cfg.home or cfg.data_dir) / "devices.json")
@@ -318,7 +335,7 @@ def create_app(cfg: Config) -> FastAPI:
         if shared.get(d.id):
             auto["providers"] = len(shared[d.id])
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
-        return {"models": listed, "sessionStore": cfg.session_store, "web": cfg.web_enabled,
+        return {"models": listed, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])}
 
     @app.post("/v1/ferry/image")
@@ -342,42 +359,6 @@ def create_app(cfg: Config) -> FastAPI:
         write(audit_log, event="image", user=request.state.user, model=m.id, status=200, ms=int((time.time() - t) * 1000),
               images=len(out["images"]))
         return out
-
-    async def web_call(request: Request, kind: str):
-        from . import web
-
-        if not cfg.web_enabled:
-            return JSONResponse({"error": {"message": "web access is switched off on the Ferry server "
-                                           "(admin page > 设置 > 联网)"}}, status_code=403)
-        b = json.loads(await request.body() or b"{}")
-        started = time.time()
-        what = b.get("url", "") if kind == "fetch" else b.get("query", "")
-        row = dict(event="web", id=uuid.uuid4().hex[:12], user=request.state.user,
-                   project=unquote(request.headers.get("x-ferry-project", "")), kind=kind,
-                   host=(urlparse(what).hostname or what[:60]) if kind == "fetch" else cfg.web_engine)
-        try:
-            if kind == "fetch":
-                out = await web.fetch(str(what), allow=cfg.web_allow, proxy=cfg.web_proxy,
-                                      offset=max(0, int(b.get("offset") or 0)))
-            else:
-                out = await web.search(str(what), engine=cfg.web_engine, allow=cfg.web_allow, proxy=cfg.web_proxy,
-                                       count=max(1, min(int(b.get("count") or 8), 20)),
-                                       base=os.environ.get("FERRY_TEST_SEARCH_BASE", ""))
-        except (web.WebError, httpx.HTTPError) as e:
-            write(audit_log, **row, status=502, ms=int((time.time() - started) * 1000), error=str(e)[:200])
-            return JSONResponse({"error": {"message": f"{type(e).__name__}: {e}" if not isinstance(e, web.WebError) else str(e)}},
-                                status_code=502)
-        size = len(json.dumps(out, ensure_ascii=False).encode())
-        write(audit_log, **row, status=200, ms=int((time.time() - started) * 1000), upstream_bytes=size)
-        return out
-
-    @app.post("/v1/ferry/web/fetch")
-    async def web_fetch(request: Request):
-        return await web_call(request, "fetch")
-
-    @app.post("/v1/ferry/web/search")
-    async def web_search(request: Request):
-        return await web_call(request, "search")
 
     class Ticket:
         """One running model call of a user; released exactly once."""
@@ -478,16 +459,6 @@ def create_app(cfg: Config) -> FastAPI:
         ok, err = await send(cfg, str(b.get("title") or "Ferry"), str(b.get("body") or ""), str(b.get("kind") or ""))
         write(audit_log, event="notify", user=request.state.user, kind=str(b.get("kind") or ""), ok=ok)
         return {"ok": ok, **({"error": err} if err else {})}
-
-    @app.post("/v1/ferry/report")
-    async def report(request: Request):
-        """/report on the work computer: the agent's write-up of a problem, posted here as a GitHub issue."""
-        b = json.loads(await request.body() or b"{}")
-        rep = reports.build(cfg, b, request.state.user or "", getattr(request.state, "device_name", "") or "", __version__)
-        rep = await reports.post(cfg, rep, client)
-        write(audit_log, event="report", user=request.state.user, ok=bool(rep["issue"]), hidden=rep["hidden"])
-        return {"ok": bool(rep["issue"]), "id": rep["id"], "issue": rep["issue"], "hidden": rep["hidden"],
-                **({"error": rep["error"]} if rep["error"] else {})}
 
     # ---------- global memory, shared by all of a user's computers (off unless switched on) ----------
 
@@ -594,14 +565,12 @@ def create_app(cfg: Config) -> FastAPI:
 
         project = unquote(request.headers.get("x-ferry-project", ""))  # sent URL-encoded: folder names can be Chinese
         rules = load_rules(cfg.rules_dir, project)
-        if not cfg.redact:  # no placeholders will appear, so the note about them is noise
-            rules = "\n".join(l for l in rules.splitlines() if "[FERRY-...]" not in l).strip()
+        rules = without_placeholder_note(rules)
         if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
             extra = (cfg.rules_dir / "_summary.md").read_text(encoding="utf-8").strip()
             rules = f"{rules}\n\n{extra}".strip() if extra else rules
         apply_rules(payload, rules)
         user = request.state.user
-        hits: Counter = live.red.mask_payload(payload, user)
         trimmed, size = cap_upstream(payload, cfg.max_upstream_bytes)
         if cfg.max_upstream_bytes and size > cfg.max_upstream_bytes:
             write(audit_log, event="chat", user=user, project=project, model=model.id, status=413, trimmed=trimmed,
@@ -669,7 +638,7 @@ def create_app(cfg: Config) -> FastAPI:
                 live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
             audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
                          purpose=purpose, messages=len(payload.get("messages", [])), upstream_bytes=len(body),
-                         masked=dict(hits), trimmed=trimmed, **({"attempt": n + 1} if n else {}))
+                         trimmed=trimmed, **({"attempt": n + 1} if n else {}))
             headers = {"Content-Type": "application/json"}
             if model.api_key:
                 headers["Authorization"] = f"Bearer {model.api_key}"
@@ -750,14 +719,14 @@ def create_app(cfg: Config) -> FastAPI:
                 write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000),
                       tokens=tokens, cost=usage_cost(tokens, model.price))
                 done()
-                return JSONResponse(restore_message(answer, live.red, user))
+                return JSONResponse(answer)
             usage: dict = {}
 
             async def relay(upstream=r, model=model, audit=audit):
                 try:
                     lines = (chat_lines(upstream.aiter_lines(), model.model) if model.api == "openai-responses"
                              else upstream.aiter_lines())
-                    async for b in restore_sse(lines, live.red, usage, user):
+                    async for b in pass_sse(lines, usage):
                         yield b
                 finally:
                     live.pool.end(model.id)
@@ -814,7 +783,7 @@ def create_app(cfg: Config) -> FastAPI:
             return JSONResponse({"type": "error", "error": {"type": "authentication_error", "message":
                                  f"the Ferry server has no API key for model {model.id}: add it on the admin page"}}, status_code=503)
         project = unquote(request.headers.get("x-ferry-project", ""))
-        rules = "\n".join(l for l in load_rules(cfg.rules_dir, project).splitlines() if "[FERRY-...]" not in l).strip()
+        rules = without_placeholder_note(load_rules(cfg.rules_dir, project))
         if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
             rules = f"{rules}\n\n{(cfg.rules_dir / '_summary.md').read_text(encoding='utf-8').strip()}".strip()
         if rules:  # after the client's own (cached) system prompt
@@ -858,7 +827,7 @@ def create_app(cfg: Config) -> FastAPI:
             one.update(model.extra_params)
             body = json.dumps(one, ensure_ascii=False).encode("utf-8")
             audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id, purpose=purpose,
-                         messages=len(one.get("messages", [])), upstream_bytes=len(body), masked={}, trimmed=0,
+                         messages=len(one.get("messages", [])), upstream_bytes=len(body), trimmed=0,
                          **({"attempt": n + 1} if n else {}))
             headers = {"Content-Type": "application/json", "x-api-key": model.api_key,
                        "anthropic-version": request.headers.get("anthropic-version", "2023-06-01")}
@@ -943,4 +912,5 @@ def create_app(cfg: Config) -> FastAPI:
 
     from .admin import mount_admin
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
+    reports.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     return app

@@ -20,14 +20,14 @@
 ## 先了解：这一版在你电脑上是怎么跑的
 
 ```
-cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ──(≤ 900KB/次，敏感词已替换)──> 模型 API
-   读写文件、执行命令                        拼完整上下文、脱敏、压缩                  DeepSeek / Claude / OpenAI
+cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ─────────────────────────> 模型 API
+   读写文件、执行命令                        拼完整上下文、压缩                        DeepSeek / Claude / OpenAI
    保存对话记录                              从环境变量读 API Key
 ```
 
 - 你只运行 `ferry`。它会在后台自动启动一个 Ferry 服务端，窗口关掉时服务端一起退出。每个 cmd 窗口各用各的，互不影响。
 - 服务端从环境变量读取 Key，不用写任何配置文件：设了 `DEEPSEEK_API_KEY` 就用 DeepSeek，设了 `ANTHROPIC_API_KEY` 就多一个 Claude，设了 `OPENAI_API_KEY` 就多一个 OpenAI（见文末"换成 Claude 或 OpenAI"）。
-- 这种用法服务端和客户端在同一台电脑上，所以是这台电脑直接访问模型 API。脱敏和"单次请求不超过 1MB"照样生效。以后有了单独的服务器，只要在工作电脑上执行一次 `ferry login 服务器地址 令牌`，Key 和对话就都放到服务器那边，用法不变。
+- 这种用法服务端和客户端在同一台电脑上，所以是这台电脑直接访问模型 API。"单次请求不超过 1MB"照样生效。以后有了单独的服务器，只要在工作电脑上执行一次 `ferry login 服务器地址 令牌`，Key 和对话就都放到服务器那边，用法不变。
 
 ---
 
@@ -200,16 +200,6 @@ ferry
 - **同一台电脑、家里的局域网**：用 `http://` 就行。`ferry doctor` 会提示 plain http，可以忽略。
 - **经过公司网络或公网**：要加密。用 `http://` 时，令牌和代码内容都是明文，公司代理能直接看到、记录；而且很多公司代理只放行 HTTPS。加密不一定要买域名，可以用 Caddy 的自签证书，或者用加密的隧道（比如 frp 开启 TLS），等确定网络方案后再选。
 
-### 要不要脱敏
-
-不是必须的。默认只替换内网 IP 和邮箱（词表里的词默认为空），关掉的方法：
-
-```bat
-setx FERRY_REDACT 0
-```
-
-重新打开窗口后，启动的服务端会显示 `redaction: OFF`。用配置文件时写 `redact = false`（放在 `[server]` 下）。
-
 ## 可选：在这台电脑上跑自测
 
 想确认这台 Windows 上一切正常（不需要 Key，不访问外网），在解压出来的文件夹里运行：
@@ -230,9 +220,9 @@ python selftest\run.py
 | `%USERPROFILE%\.ferry\memory\` | 记忆：`user\` 是跟着你走的，`projects\<文件夹名>-<编号>\` 是每个项目的；都是 Markdown，可以直接改、删 |
 | `%USERPROFILE%\.ferry\outputs\` | 太长的命令输出全文（保留 7 天） |
 | `%USERPROFILE%\.ferry\agent\` | agent 设置 `settings.json`、所有项目通用的规则 `AGENTS.md`、`bin\` 里的 `fd.exe` 和 `rg.exe` |
-| `%USERPROFILE%\.ferry-server\` | 服务端数据：会话缓存、审计日志、规则 `rules\_global.md`、脱敏词表 `dictionary.toml` |
+| `%USERPROFILE%\.ferry-server\` | 服务端数据：会话缓存、审计日志、规则 `rules\_global.md` |
 
-脱敏词表 `%USERPROFILE%\.ferry-server\dictionary.toml` 里可以加你们公司的项目名、主机名等，保存后下次启动 ferry 生效。规则文件改完下一轮对话就生效。
+规则文件改完下一轮对话就生效。
 
 ## 卸载
 

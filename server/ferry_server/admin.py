@@ -14,7 +14,6 @@ import secrets
 import subprocess
 import sys
 import time
-import tomllib
 from collections import defaultdict
 from pathlib import Path
 
@@ -22,7 +21,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 import re
-import tempfile
 
 import httpx
 
@@ -31,8 +29,6 @@ from . import presets as presets_mod
 from .config import (Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
 from . import globalmem
 from . import report as reports
-from .redact import BUILTIN_PATTERNS, Redactor
-from .store import Store
 
 PAGE = Path(__file__).with_name("admin.html")
 PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded")
@@ -143,12 +139,11 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "uptime": int(time.time() - live.started), "port": cfg.port, "host": cfg.host,
             "home": str(cfg.home or cfg.data_dir), "public_url": cfg.public_url,
             "token": next(iter(cfg.users)) if cfg.home else "", "zero_config": bool(cfg.home),
-            "session_store": cfg.session_store, "redact": cfg.redact, "max_upstream_bytes": cfg.max_upstream_bytes,
+            "session_store": cfg.session_store, "max_upstream_bytes": cfg.max_upstream_bytes,
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
             "shared_memory": cfg.shared_memory,
             "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "github_repo": cfg.github_repo, "github_token": bool(reports.github_token(cfg)),
-            "web": {"enabled": cfg.web_enabled, "allow": cfg.web_allow, "engine": cfg.web_engine, "proxy": cfg.web_proxy},
-            "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
+            "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
             "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "expose": cfg.expose_models},
             "models": [{"id": m.id, "model": m.model, "base_url": m.base_url, "key_env": m.api_key_env,
@@ -171,7 +166,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         width = 60 if minutes <= 180 else 600
         buckets: dict[int, dict] = defaultdict(lambda: {"in": 0, "up": 0, "requests": 0, "chats": 0})
         totals = {"in": 0, "up": 0, "requests": 0, "chats": 0, "errors": 0, "tokens_in": 0, "tokens_out": 0,
-                  "masked": 0, "trimmed": 0, "kinds": {"model": 0, "upload": 0, "status": 0, "other": 0}}
+                  "trimmed": 0, "kinds": {"model": 0, "upload": 0, "status": 0, "other": 0}}
         for a in _tail_jsonl(access_log):
             ts = a.get("ts", 0)
             if ts < start:
@@ -202,10 +197,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             usage = a.get("usage") or {}
             totals["tokens_in"] += usage.get("prompt_tokens", 0) or 0
             totals["tokens_out"] += usage.get("completion_tokens", 0) or 0
-            totals["masked"] += sum((a.get("masked") or {}).values())
             totals["trimmed"] += a.get("trimmed", 0) or 0
             recent.append({k: a.get(k) for k in ("ts", "user", "project", "model", "purpose", "messages",
-                                                 "upstream_bytes", "masked", "trimmed", "status", "ms", "usage")})
+                                                 "upstream_bytes", "trimmed", "status", "ms", "usage")})
         series = [{"t": start + i * width, **buckets.get(i, {"in": 0, "up": 0, "requests": 0, "chats": 0})}
                   for i in range(int(minutes * 60 // width) + 1)]
         return {"width": width, "series": series, "totals": totals, "recent": recent[-40:][::-1]}
@@ -261,21 +255,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.public_url = str(b["public_url"]).strip().rstrip("/")
         if b.get("session_store") in ("disk", "memory", "none") and b["session_store"] != cfg.session_store:
             cfg.session_store, store_changed = b["session_store"], True
-        if "redact" in b:
-            cfg.redact = bool(b["redact"])
         if "max_upstream_bytes" in b:
             cfg.max_upstream_bytes = max(0, int(b["max_upstream_bytes"]))
-        if isinstance(b.get("web"), dict):
-            w = b["web"]
-            if "enabled" in w:
-                cfg.web_enabled = bool(w["enabled"])
-            if "allow" in w:
-                items = w["allow"] if isinstance(w["allow"], list) else str(w["allow"]).replace(",", "\n").splitlines()
-                cfg.web_allow = [x.strip().lower() for x in items if x.strip()]
-            if w.get("engine") in ("bing", "duckduckgo"):
-                cfg.web_engine = w["engine"]
-            if "proxy" in w:
-                cfg.web_proxy = str(w["proxy"]).strip()
         if "max_concurrent" in b:
             cfg.max_concurrent = max(1, min(50, int(b["max_concurrent"] or 6)))
         if "bark_url" in b:
@@ -304,7 +285,15 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def list_reports(request: Request):
         if not allowed(request):
             return denied()
-        return {"reports": reports.recent(cfg), "repo": cfg.github_repo, "token": bool(reports.github_token(cfg))}
+        return {"reports": reports.recent(cfg), "repo": cfg.github_repo, "token": bool(reports.github_token(cfg)),
+                "words": reports.words(cfg)}
+
+    @app.put("/admin/api/reports/words")
+    async def put_report_words(request: Request):
+        if not allowed(request, True):
+            return denied()
+        reports.save_words(cfg, str((await body(request)).get("text", "")))
+        return {"ok": True, "words": reports.words(cfg)}
 
     @app.post("/admin/api/reports/{rid}/send")
     async def resend_report(rid: str, request: Request):
@@ -328,8 +317,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         cfg.users[new] = "local"
         return status()
 
-    FILES = {"rules": lambda: (cfg.rules_dir / "_global.md") if cfg.rules_dir else None,
-             "dictionary": lambda: cfg.dictionary}
+    FILES = {"rules": lambda: (cfg.rules_dir / "_global.md") if cfg.rules_dir else None}
 
     # ---------- devices: one token per computer ----------
 
@@ -408,18 +396,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         if not f:
             return JSONResponse({"error": "not available in this mode"}, 400)
         text = (await body(request)).get("text", "")
-        if name == "dictionary":
-            try:
-                tomllib.loads(text)
-            except tomllib.TOMLDecodeError as e:
-                return JSONResponse({"error": f"word list not saved: {e}"}, 400)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(text, encoding="utf-8")
-        if name == "dictionary":
-            try:
-                rebuild(False)
-            except Exception as e:  # a bad regular expression
-                return JSONResponse({"error": f"saved, but a pattern is not valid: {e}"}, 400)
         return {"ok": True}
 
     @app.put("/admin/api/autostart")
@@ -654,86 +632,16 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             f.unlink(missing_ok=True)
         return {"ok": True}
 
-    # ---------- redaction (structured) ----------
-
-    def read_dictionary() -> dict:
-        f = cfg.dictionary
-        raw = tomllib.loads(f.read_text(encoding="utf-8")) if f and f.exists() else {}
-        pats = raw.get("patterns", [])
-        builtin_names = {n for n, _, _ in BUILTIN_PATTERNS}
-        return {"enabled": cfg.redact, "terms": [t for t in raw.get("terms", []) if str(t).strip()],
-                "builtins": [{"name": n, "label": label, "on": any(p.get("name") == n for p in pats)}
-                             for n, label, _ in BUILTIN_PATTERNS],
-                "custom": [p for p in pats if p.get("name") not in builtin_names]}
-
-    def dictionary_text(d: dict) -> str:
-        from .config import _toml_value
-        lines = ["# Ferry 脱敏词表，由管理页生成。命中的内容发给模型前换成 [FERRY-XXXXXXXX]，回来时再换回原文。",
-                 f"terms = {_toml_value([t.strip() for t in d.get('terms', []) if str(t).strip()])}"]
-        on = {b["name"] for b in d.get("builtins", []) if b.get("on")}
-        for n, _, rx in BUILTIN_PATTERNS:
-            if n in on:
-                lines += ["", "[[patterns]]", f"name = {_toml_value(n)}", f"regex = {_toml_value(rx)}"]
-        for p in d.get("custom", []):
-            if p.get("regex"):
-                re.compile(p["regex"])  # raises on a broken pattern
-                lines += ["", "[[patterns]]", f"name = {_toml_value(p.get('name') or 'custom')}",
-                          f"regex = {_toml_value(p['regex'])}"]
-        return "\n".join(lines) + "\n"
-
-    @app.get("/admin/api/redaction")
-    async def get_redaction(request: Request):
-        return read_dictionary() if allowed(request) else denied()
-
-    @app.put("/admin/api/redaction")
-    async def put_redaction(request: Request):
-        if not allowed(request, True):
-            return denied()
-        d = await body(request)
-        try:
-            text = dictionary_text(d)
-        except re.error as e:
-            return JSONResponse({"error": f"自定义规则写得不对：{e}"}, 400)
-        if cfg.dictionary:
-            cfg.dictionary.write_text(text, encoding="utf-8")
-        if "enabled" in d:
-            cfg.redact = bool(d["enabled"])
-            save_settings(cfg)
-        rebuild(False)
-        return read_dictionary()
-
-    @app.post("/admin/api/redaction/try")
-    async def try_redaction(request: Request):
-        """Show what a piece of text looks like after redaction, with the settings in the form (nothing saved)."""
-        if not allowed(request, True):
-            return denied()
-        d = await body(request)
-        try:
-            text = dictionary_text(d)
-        except re.error as e:
-            return JSONResponse({"error": f"自定义规则写得不对：{e}"}, 400)
-        with tempfile.TemporaryDirectory() as t:
-            f = Path(t) / "d.toml"
-            f.write_text(text, encoding="utf-8")
-            from collections import Counter
-            red = Redactor(f, cfg.secret, Store(":memory:"))
-            hits: Counter = Counter()
-            out = red.mask(d.get("sample", ""), hits, "preview")
-        return {"masked": out, "hits": dict(hits)}
-
     # ---------- call records ----------
 
     @app.get("/admin/api/calls")
     async def calls(request: Request, limit: int = 200):
         if not allowed(request):
             return denied()
-        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") in ("chat", "web")][-max(1, min(limit, 1000)):][::-1]
-        for a in rows:
-            if a.get("event") == "web":  # a page read or a search for the agent: shown with purpose "web"
-                a.update(purpose="web", model=f"{a.get('kind', '')} {a.get('host', '')}".strip())
+        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") == "chat"][-max(1, min(limit, 1000)):][::-1]
         have = {d["id"] for d in live.details}
         out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
-                                      "masked", "trimmed", "status", "ms", "usage")} for a in rows]
+                                      "trimmed", "status", "ms", "usage")} for a in rows]
         for o in out:
             o["has_details"] = o.get("id") in have
         return {"calls": out, "record_details": cfg.record_details}
