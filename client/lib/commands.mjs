@@ -10,7 +10,6 @@
 //   <FERRY_HOME>/skills/   <project>/.ferry/skills/   <project>/.claude/skills/
 // Also here: a desktop notification when a long request finishes.
 import { steerState } from "./steer.mjs";
-import { watchGateway } from "./gateway.mjs";
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -18,8 +17,6 @@ import { fileURLToPath } from "node:url";
 import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, loadConfig, parseTokens, saveConfig } from "./config.mjs";
 import { MODE_LABEL, ruleFiles } from "./permissions.mjs";
 import { ruleFilesInUse } from "./prompt.mjs";
-
-let gatewayWatch; // one watch per ferry window (a /new or /resume starts a session again)
 
 export const HELP = `Ferry commands (type / to pick one; Tab completes)
 
@@ -136,12 +133,8 @@ export function createCommands(cfg, deps) {
 		// the server says a model's account is cooling down after "too many requests" (and who answers meanwhile)
 		pi.on("session_start", (_e, ctx) => {
 			if (!ctx.hasUI) return;
-			// the company gateway's confirmation runs out after a while: look now and then, open its page right away
+			// a request that meets the company gateway mid-work: say so while ferry waits for the confirmation
 			cfg.onGateway = (text) => ctx.ui.setStatus("ferry-gateway", text);
-			const every = Number(cfg.gatewayCheck ?? 10);
-			if (cfg.mode === "remote" && every > 0 && !gatewayWatch) {
-				gatewayWatch = watchGateway(cfg, { everyMs: every * 60000, onState: cfg.onGateway });
-			}
 			cfg.onRoute = (notes) => {
 				const n = notes?.[0];
 				ctx.ui.setStatus("ferry-route", n ? `${n.model} is rate-limited: ${n.seconds}s to go, ` +

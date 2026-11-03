@@ -209,6 +209,9 @@ export async function install(version, clientOnly = !!process.env.FERRY_CLIENT_O
 		// %LOCALAPPDATA% is expanded by cmd, so a non-ASCII user name never ends up inside the .cmd file
 		const launcher = cmdDir ? `${cmdDir}\\launcher.mjs` : join(dir, "launcher.mjs");
 		writeFileSync(join(bin, "ferry.cmd"), `@node "${launcher}" %*\r\n`, "utf8");
+		// Git Bash (the agent's shell, and "!ferry check" inside ferry) does not run .cmd files by their bare name
+		const shLauncher = cmdDir ? "$LOCALAPPDATA/Ferry/launcher.mjs" : join(dir, "launcher.mjs").replace(/\\/g, "/");
+		writeFileSync(join(bin, "ferry"), `#!/bin/sh\nexec node "${shLauncher}" "$@"\n`, "utf8");
 	} else {
 		writeFileSync(join(bin, "ferry"), `#!/bin/sh\nexec node "${join(dir, "launcher.mjs")}" "$@"\n`, { mode: 0o755 });
 	}

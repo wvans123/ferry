@@ -64,36 +64,6 @@ export async function waitForServer(cfg, waitMs = 180000, signal) {
 
 export const GATEWAY_NOTE = "The company gateway wants a confirmation: it is open in your browser. Confirm there; Ferry goes on by itself.";
 
-/**
- * While ferry is open, look every few minutes whether the company gateway wants its confirmation again, and open
- * its page right away: confirming between requests instead of in the middle of the agent's work. onState(text)
- * shows a note (undefined clears it). Returns a function that stops the watch.
- */
-export function watchGateway(cfg, { everyMs = 10 * 60000, onState = () => {} } = {}) {
-	let stopped = false;
-	let timer;
-	const round = async () => {
-		if (stopped) return;
-		const page = await probeGateway(cfg);
-		if (page) {
-			openGatewayPage(page);
-			onState(GATEWAY_NOTE);
-			await waitForServer(cfg, 10 * 60000);
-			onState(undefined);
-		}
-		if (!stopped) {
-			timer = setTimeout(round, everyMs);
-			timer.unref?.();
-		}
-	};
-	timer = setTimeout(round, 1000);
-	timer.unref?.();
-	return () => {
-		stopped = true;
-		clearTimeout(timer);
-	};
-}
-
 /** The gateway page a response points at, or "". r: { status, location, body } as from getJson. */
 export function gatewayOf(r) {
 	if (r.status >= 300 && r.status < 400 && gatewayPage(r.location)) return r.location;
