@@ -1,5 +1,4 @@
 """A unit test fails; find the bug and fix the code, not the test."""
-import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -43,7 +42,8 @@ def setup(work: Path) -> None:
 
 
 def check(work: Path, answer: str) -> tuple[bool, str]:
-    if hashlib.sha256((work / "test_pricing.py").read_bytes()).hexdigest() != hashlib.sha256(TEST.encode()).hexdigest():
+    # read as text: on Windows the file was written with CRLF line ends, which is not a change
+    if (work / "test_pricing.py").read_text(encoding="utf-8").replace("\r\n", "\n") != TEST:
         return False, "the test file was changed"
     r = subprocess.run([sys.executable, "-m", "unittest", "-q"], cwd=work, capture_output=True, text=True, timeout=60)
     return r.returncode == 0, "tests pass" if r.returncode == 0 else "tests still fail: " + r.stderr.strip().splitlines()[-1]

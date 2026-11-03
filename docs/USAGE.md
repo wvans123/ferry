@@ -145,8 +145,18 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 
 - `web_search`（Bing）和 `web_fetch`（读网页）在工作电脑上执行，走公司代理，受公司网关管，每个网站第一次会问你。
 - 下载文件（比如 3GPP 的规范和文稿）和在 Cursor 里一样直接交代：agent 用 `web_fetch` 读 https://www.3gpp.org/ftp/ 下的目录页找到文件，用 `curl -L -o` 下载、解压，再用 `office_read` 读。命令也走公司代理，并且和 ferry 用同一份证书（`%USERPROFILE%\.ferry\ca-bundle.pem`，公司检查 HTTPS 用的证书也在里面）。下完它会确认拿到的不是网关的确认页。
-- 不许打开的网站：`ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`。这些网站和它们的子域名 `web_fetch` 都不打开，跳转过去的也拦下。
-- 浏览器：`ferry config set browser true` 之后，agent 能操作电脑上的 Edge，打开网页、点击、填表、读页面。
+- 不许打开的网站：`ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`。这些网站和它们的子域名，`web_fetch`、浏览器和命令（比如 curl）都不打开，`web_fetch` 跳转过去的也拦下。
+
+### 浏览器
+
+web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的内容，也不能登录、点击。碰到这类网页，agent 会用电脑上的 Edge（没有 Edge 就用 Chrome）：打开网页、读脚本跑完后的内容、点击、填表、截图。
+
+- 用的是 Vercel 开源的 [agent-browser](https://github.com/vercel-labs/agent-browser)，随 Ferry 一起装好。agent 用命令调用它（`agent-browser open 网址`、`snapshot -i`、`click @e3`……），不需要另外装东西。
+- 默认打开浏览器窗口，你能看到它在做什么。不想看到窗口：`ferry config set browserHeadless true`。
+- 它用自己的浏览器资料夹（`%USERPROFILE%\.ferry\browser-profile`），和你平时用的 Edge 分开。要登录的网站，agent 会请你在它打开的窗口里登录一次，以后就记住了。
+- 只看页面（`snapshot`、`get`、`screenshot`）不问你；打开网页、点击、填表要先确认，选"以后都允许"就是 `bash(agent-browser*)`。
+- 走公司代理，用这台电脑信任的证书。碰到公司网关的确认页，agent 会告诉你，不会替你点过去。
+- ferry 退出时把浏览器关掉。不想让 agent 用浏览器：`ferry config set browser false`。用别的浏览器：`ferry config set browserPath C:\路径\chrome.exe`。
 
 ### Office 文件
 
@@ -216,7 +226,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `thinking` | `medium` | Claude 和 GPT 想多久再回答：`low` / `medium` / `high` / `xhigh`。越高越适合难题，也越慢越贵 |
 | `memory` | `true` | 跨对话的记忆 |
 | `web` | `client` | 联网工具（`web_fetch`、`web_search`）：`client` 在这台电脑上执行，`off` 关掉 |
-| `browser` | `false` | 让 agent 操作本机浏览器（Edge / Chrome） |
+| `browser` | `true` | 让 agent 操作本机浏览器（Edge / Chrome），见[浏览器](#浏览器) |
 | `goalMaxTurns` / `goalBudget` | `100` / `0` | `/goal` 最多轮数和 token 预算（如 `2m`，0 表示不限） |
 | `notify` | `true` | 长请求结束时响铃加通知 |
 | `phoneNotify` | `true` | 让服务端推手机通知（服务端要先在管理页设好 Bark） |

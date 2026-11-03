@@ -16,7 +16,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 规矩：
 
 - 模块之间不互相调用内部函数。要共享的东西放进 `cfg`，或者通过 pi 的事件；公用的小工具（读设置、发请求头）放在 `config.mjs`。
-- 能用命令行工具加一份技能说明（`client/skills/<名字>/SKILL.md`）解决的，就不要写成新工具：agent 用 bash 调用，Ferry 只负责把程序带上、把设置（代理、证书、浏览器路径）传进去。Claude Code 和 Cursor 都是这么接外部能力的，也不会让每次请求多带一堆工具定义。
+- 能用命令行工具加一份技能说明（`SKILL.md`）解决的，就不要写成新工具：agent 用 bash 调用，Ferry 只负责把程序带上、把设置（代理、证书、浏览器路径）传进去。浏览器模块就是这样：程序放进 pi 的 bin 文件夹（每条命令的 PATH 上都有），技能只在浏览器打开时列出。Claude Code 和 Cursor 都是这么接外部能力的，也不会让每次请求多带一堆工具定义。
 - 删一个模块：删它的代码、接入的那一行、它的设置、测试、F 检查和文档那一节，在 CLAUDE.md 的"故意删掉的"表里记一行原因。
 
 ## 现在的模块
@@ -49,7 +49,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
 | 提问 | `ask_user` | `client/lib/ask.mjs` | — | F65 |
 | 联网 | `web_fetch`、`web_search`、网站黑名单 | `client/lib/web.mjs` | `web`、`blockedSites` | F35、F57、F64 |
-| 浏览器 | 操作本机 Edge（现在用 Playwright MCP） | `client/lib/browser.mjs` | `browser`（默认关） | F36 |
+| 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
 | Office | 读写 Word、Excel、PowerPoint、PDF | `client/lib/office.mjs`、`client/skills/office/` | — | F50 |
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |

@@ -40,6 +40,7 @@ python evals\run.py
 | `word_tracked` | 用修订方式改 Word 里的一个数字，别的不动 |
 | `word_report` | 按笔记写 Word 报告，三个小节、数字不丢 |
 | `excel_summary` | 按地区汇总 Excel，写 summary.md，说出最高的地区 |
+| `browser_page` | 用浏览器打开脚本生成内容的页面，填表、点按钮，读出结果（agent-browser 加电脑上的 Edge） |
 | `gpp_download` | 从 3GPP 网站找到并下载 TS 23.501，解压，读出 5.15 节标题（要上网） |
 
 ## 加一个任务

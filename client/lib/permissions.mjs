@@ -126,6 +126,10 @@ export function isReadOnlySegment(seg) {
 	}
 	if (cmd === "npm" || cmd === "pnpm" || cmd === "yarn") return ["ls", "list", "outdated", "view", "why"].includes(args[0]);
 	if (cmd === "pip" || cmd === "pip3") return ["list", "show", "freeze"].includes(args[0]);
+	if (cmd === "agent-browser") { // looking at the open page; opening, clicking and typing still ask
+		if (args[0] === "tab") return args.length === 1 || args[1] === "list";
+		return ["snapshot", "get", "is", "screenshot", "skills", "session", "console", "errors", "diff", "--version", "--help"].includes(args[0]);
+	}
 	return false;
 }
 

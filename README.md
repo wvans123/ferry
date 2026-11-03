@@ -9,7 +9,7 @@ A Claude-Code-style coding agent for locked-down Windows PCs. The agent runs on 
 ```
 C:\my-project> ferry
 
-  Ferry v0.26.0  server ferry.example.com
+  Ferry v0.27.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
   memory: 3 (/memory)  ·  subagents on  ·  /help for commands (/goal /tasks /cost /rewind)
 
@@ -115,11 +115,12 @@ agent 自己会用的能力：
 - 多步的活先列待办清单，做一步勾一步；大的搜索交给子 agent，几十个文件可以批量派给多个子 agent。
 - 后台跑开发服务器、长时间的测试。
 - 在工作电脑上搜索、读网页，用 curl 下载文件（比如 3GPP 的规范和文稿），走公司代理和证书。
+- 用电脑上的 Edge 打开靠 JavaScript 生成内容的网页，点击、填表、登录后操作。
 - 读写 Word（含修订和批注）、Excel、PowerPoint、PDF，不需要装 Office。
 - 看图片，画图片。
 - 拿不准时弹出选项问你。
 - 跨对话的记忆：这个项目的、你个人的，以及所有电脑共用的。
-- 能接 MCP 服务器、操作本机浏览器，也能组成 [agent 团队](docs/TEAM.md)。
+- 能接 MCP 服务器，也能组成 [agent 团队](docs/TEAM.md)。
 
 全部按键、命令、设置和排错见 [使用手册](docs/USAGE.md)。
 
@@ -192,4 +193,4 @@ docs/        使用手册、部署指南、设计文档
 
 ## 致谢
 
-[pi](https://github.com/earendil-works/pi)（MIT）· [Playwright MCP](https://github.com/microsoft/playwright-mcp) · [Paperclip](https://github.com/paperclipai/paperclip) · [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd) · [FastAPI](https://fastapi.tiangolo.com/) · [HTTPX](https://www.python-httpx.org/) · [undici](https://github.com/nodejs/undici)
+[pi](https://github.com/earendil-works/pi)（MIT）· [agent-browser](https://github.com/vercel-labs/agent-browser) · [Paperclip](https://github.com/paperclipai/paperclip) · [ripgrep](https://github.com/BurntSushi/ripgrep) · [fd](https://github.com/sharkdp/fd) · [FastAPI](https://fastapi.tiangolo.com/) · [HTTPX](https://www.python-httpx.org/) · [undici](https://github.com/nodejs/undici)

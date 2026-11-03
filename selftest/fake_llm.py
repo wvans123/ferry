@@ -180,12 +180,12 @@ def decide_agent(msgs):
             return ("tool", "task", {"agent": "explore", "description": "look at the data folder",
                                      "prompt": "List the data folder and read the start of f03.txt."})
         return ("text", "MAIN GOT: " + text_of(tools[-1])[:300])
-    if "BROWSERTEST" in first:
+    if "BROWSERTEST" in first:  # agent-browser through bash: a page built by JavaScript, a form, a button
         if not tools:
-            return ("tool", "mcp__browser__browser_navigate", {"url": "http://127.0.0.1:9100/page.html"})
+            return ("tool", "bash", {"command": "agent-browser open http://127.0.0.1:9100/js.html && agent-browser snapshot -i"})
         if len(tools) == 1:
-            return ("tool", "mcp__browser__browser_snapshot", {})
-        return ("text", "BROWSER: " + ("pelican-42" if "pelican-42" in text_of(tools[-1]) else text_of(tools[-1])[:200]))
+            return ("tool", "bash", {"command": "agent-browser fill @e1 Ferry && agent-browser click @e2 && agent-browser get text body"})
+        return ("text", "BROWSER: " + text_of(tools[-1])[:300].replace("\n", " "))
     if "PASTTEST" in first:  # the user asks about another conversation
         if not tools:
             return ("tool", "past_conversations", {"action": "search", "query": "DIYCMD"})
@@ -447,6 +447,12 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if self.path == "/js.html":  # nothing to read until a script runs; a button answers what is typed
+            return self.send_html("<!doctype html><html><head><title>JS page</title></head><body><p id='x'>loading</p>"
+                                  "<input placeholder='Your name' id='n'><button onclick=\"document.getElementById('o')"
+                                  ".textContent='Hello '+document.getElementById('n').value\">Greet</button><p id='o'></p>"
+                                  "<script>document.getElementById('x').textContent='The secret word is '+['peli','can-42'].join('')"
+                                  "</script></body></html>")
         if self.path == "/page.html":
             return self.send_html("<html><head><title>Ferry page</title><script>var x=1;</script></head><body>"
                                   "<h1>Ferry</h1><p>The secret word is <b>pelican-42</b>.</p>"

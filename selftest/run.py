@@ -905,9 +905,15 @@ def check_web_browser(root: Path, work: Path) -> None:
         extra = ["--no-sandbox"] if is_root or os.environ.get("CI") else []  # CI and root: no Chrome sandbox
         (s.home / "config.json").write_text(json.dumps({"browser": True, "browserHeadless": True,
                                                         "browserPath": browser, "browserArgs": extra}), encoding="utf-8")
-        c2, o2 = s.ferry("-p", "BROWSERTEST: open the page", timeout=300)
-        check("F36 浏览器", c2 == 0 and "BROWSER: pelican-42" in o2,
-              f"agent 用本机浏览器（{Path(browser).name}）打开测试页面，读到页面内容" if "pelican-42" in o2 else o2[-400:])
+        c2, o2 = s.ferry("-p", "BROWSERTEST: open the page", timeout=300, env_extra={"FERRY_PERMISSION_MODE": "bypass"})
+        skill = "agent-browser" in system_text(jsonl(s.upstream)[-1])
+        time.sleep(1)
+        left = (subprocess.run(["pgrep", "-f", str(s.home / "browser-profile")], capture_output=True).returncode == 0
+                if shutil.which("pgrep") else False)
+        check("F36 浏览器", c2 == 0 and "pelican-42" in o2 and "Hello Ferry" in o2 and skill and not left,
+              f"agent 用 agent-browser 驱动本机浏览器（{Path(browser).name}）：读到脚本生成的内容，填表、点按钮；"
+              "系统提示里有浏览器技能；ferry 退出后浏览器关掉" if "Hello Ferry" in o2 else
+              f"skill={skill} left={left} " + o2[-400:])
     finally:
         s.close()
 

@@ -48,20 +48,11 @@ DeepSeek 想做的是"一个一直在线的 agent"：你在群聊、GitHub 里�
 
 暂不做：邮件、聊天软件作为事件来源。
 
-## 下一个模块：浏览器换成 agent-browser（待确认）
+## 浏览器换成 agent-browser（0.27 做了）
 
-web_fetch 和浏览器的区别：web_fetch 只发一个 HTTP 请求，把网页的 HTML 转成文字，读不到靠 JavaScript 生成的内容，不能登录、点击、填表。浏览器是在电脑上真开一个 Edge，页面跑完脚本再读，能点、能填、能截图，也能用你已经登录的账号。
+web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的内容，不能登录、点击、填表；浏览器是在电脑上真开一个 Edge。0.27 把原来的 Playwright MCP（二十来个工具定义每次请求都带上，每次看页面几千 token，默认关）换成了 Vercel 的 [agent-browser](https://github.com/vercel-labs/agent-browser)（Apache-2.0）：一个命令行程序，agent 用 bash 调用，配一份技能说明，不加工具定义，默认打开。在 Linux 上用 Chrome 测过：读脚本生成的内容、填表、点按钮、截图、退出时关掉浏览器都正常。
 
-Ferry 现在的浏览器模块用微软的 Playwright MCP（默认关）。它的问题是：二十来个工具的定义每次请求都要带上；每次看页面返回整棵无障碍树，动辄几千 token；安装包里多了大约 19 MB。
-
-打算换成 Vercel 的 [agent-browser](https://github.com/vercel-labs/agent-browser)（Apache-2.0）：
-
-- 一个命令行程序，agent 用 bash 调用：`agent-browser open <网址>`、`snapshot -i`（只列可操作的元素，每个带一个 `@e1` 这样的编号）、`click @e3`、`fill @e5 "内容"`、`get text`、`screenshot`。官方说一次快照 200～400 token。
-- 不加新的工具定义，配一份技能说明（`client/skills/browser/SKILL.md`）教 agent 怎么用，和 Claude Code、Codex 里的用法一样。
-- 有 Windows x64 的原生程序；`--executable-path` 指向电脑上的 Edge，不用下载 Chrome；`--proxy` 走公司代理；`caCert` 用 ferry 的证书；`--profile` 可以保留登录状态；`--headed` 让你看到它在操作。
-- Ferry 要做的：安装包带上 Windows 的程序，启动时把 Edge 路径、代理、证书写进它的配置，权限规则里把只读的子命令（snapshot、get、screenshot）算作只读，其他照常询问。
-
-还没在 Windows 和公司代理下试过，要先在你的电脑上验证再替换。
+还要在 Windows 上确认：GitHub 的 Windows 测试机上有 Edge，自测 F36 会用它跑一遍；公司代理和网关下的表现，要在工作电脑上试。
 
 ## 看过、暂时不做的
 
