@@ -29,7 +29,7 @@ Anthropic 和 OpenAI 的 API 不对中国大陆和香港提供服务。要用这
 | 调用记录 | 每次调用的项目、模型、大小、token、耗时，可以点开看详情 |
 | 用量和费用 | 按天、项目、模型汇总，能看到每个模型的缓存命中 |
 | 设备和记忆 | 给每台电脑一个令牌；全局记忆（所有电脑共用） |
-| 设置 | 外网地址、服务端存不存对话、请求上限、并发、手机通知（Bark）、联网代办、开机启动、换令牌 |
+| 设置 | 外网地址、服务端存不存对话、请求上限、并发、手机通知（Bark）、问题报告（GitHub）、联网代办、开机启动、换令牌 |
 
 API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4 位。
 
@@ -80,5 +80,20 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
 | `FERRY_REDACT` | `1` 打开脱敏（默认关闭） |
 | `FERRY_WEB` | `1` 允许服务端替工作电脑联网（默认关闭） |
+| `FERRY_GITHUB_TOKEN` / `FERRY_GITHUB_REPO` | 问题报告用的 GitHub 令牌和仓库（优先于管理页） |
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
+
+## 问题报告
+
+工作电脑上的 `/report`（见[使用手册](USAGE.md#报告问题)）把问题报告发到服务端，由服务端在 GitHub 上开 issue。工作电脑只和服务端说话，所以公司电脑上不了 GitHub 也能报。
+
+设置一次就行：
+
+1. 在 GitHub 上建一个 fine-grained personal access token：Settings → Developer settings → Fine-grained tokens，Repository access 只选 `wvans123/ferry`，Permissions 里只给 Issues 读写。
+2. 管理页 → 设置 → 问题报告，填仓库（默认 `wvans123/ferry`）和这个令牌，保存。令牌存在数据目录的 `github-token` 文件里，管理页不再显示它。
+
+发出前，服务端会隐去这些内容（不管脱敏开没开）：敏感词表里的词和自定义规则、内网 IP、邮箱、手机号、Key、路径里的用户名（`C:\Users\<user>\...`）。每份报告都存在数据目录的 `data/reports/` 里，管理页列出最近 30 份：发成功的带 issue 链接，没发出的写着原因，可以再发一次。
+
+公开仓库的 issue 谁都能看。不想公开，就建一个私有仓库专门收报告，把仓库名填成它。
+

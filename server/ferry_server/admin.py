@@ -30,17 +30,11 @@ from . import PROTOCOL, __version__
 from . import presets as presets_mod
 from .config import (Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
 from . import globalmem
-from .redact import Redactor
+from . import report as reports
+from .redact import BUILTIN_PATTERNS, Redactor
 from .store import Store
 
 PAGE = Path(__file__).with_name("admin.html")
-BUILTIN_PATTERNS = [  # name, label, regex
-    ("private-ipv4", "内网 IP 地址",
-     r"\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b"),
-    ("email", "邮箱地址", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
-    ("phone-cn", "手机号", r"(?<!\d)1[3-9]\d{9}(?!\d)"),
-    ("api-key", "API Key 和令牌（sk-、ghp_ 等开头的长串）", r"\b(?:sk|pk|rk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{16,}\b"),
-]
 PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded")
 STARTUP_LNK = "Ferry server.lnk"
 
@@ -152,7 +146,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "session_store": cfg.session_store, "redact": cfg.redact, "max_upstream_bytes": cfg.max_upstream_bytes,
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
             "shared_memory": cfg.shared_memory,
-            "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "judge_model": cfg.judge_model,
+            "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "github_repo": cfg.github_repo, "github_token": bool(reports.github_token(cfg)),
             "web": {"enabled": cfg.web_enabled, "allow": cfg.web_allow, "engine": cfg.web_engine, "proxy": cfg.web_proxy},
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")), "redact": bool(env.get("FERRY_REDACT")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
@@ -286,8 +280,10 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.max_concurrent = max(1, min(50, int(b["max_concurrent"] or 6)))
         if "bark_url" in b:
             cfg.bark_url = str(b["bark_url"]).strip().rstrip("/")
-        if "judge_model" in b:
-            cfg.judge_model = str(b["judge_model"]).strip()
+        if "github_repo" in b and re.fullmatch(r"[\w.-]+/[\w.-]+", str(b["github_repo"]).strip()):
+            cfg.github_repo = str(b["github_repo"]).strip()
+        if "github_token" in b:
+            reports.save_github_token(cfg, str(b["github_token"] or ""))
         if "record_details" in b:
             cfg.record_details = bool(b["record_details"])
             if not cfg.record_details:
@@ -303,6 +299,22 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         from .notify import send
         ok, err = await send(cfg, "Ferry", "测试通知：手机能收到就说明设置好了。", "test")
         return {"ok": ok, "error": err}
+
+    @app.get("/admin/api/reports")
+    async def list_reports(request: Request):
+        if not allowed(request):
+            return denied()
+        return {"reports": reports.recent(cfg), "repo": cfg.github_repo, "token": bool(reports.github_token(cfg))}
+
+    @app.post("/admin/api/reports/{rid}/send")
+    async def resend_report(rid: str, request: Request):
+        if not allowed(request, True):
+            return denied()
+        rep = reports.load(cfg, rid)
+        if not rep:
+            return JSONResponse({"error": "no such report"}, 404)
+        rep = await reports.post(cfg, rep)
+        return {"ok": bool(rep["issue"]), "issue": rep["issue"], "error": rep["error"]}
 
     @app.post("/admin/api/token/rotate")
     async def rotate(request: Request):

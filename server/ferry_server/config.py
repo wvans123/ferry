@@ -94,7 +94,7 @@ class Config:
     max_upstream_bytes: int = 0  # 0 = no cap; otherwise old tool outputs are dropped to stay under it
     max_concurrent: int = 6      # model calls one user may have running at once; more wait their turn
     bark_url: str = ""           # Bark push address (https://api.day.app/<key>): notifications to an iPhone
-    judge_model: str = ""        # model that judges uncertain actions in the client's auto mode ("" = the summary/default model)
+    github_repo: str = "wvans123/ferry"  # where /report opens issues (the token is in <home>/github-token)
     shared_memory: bool = False  # global memory on the server, shared by all of a user's computers
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
@@ -149,7 +149,7 @@ def load(path: str | os.PathLike) -> Config:
         web_proxy=s.get("web_proxy", ""),
         max_concurrent=int(s.get("max_concurrent", 6)),
         bark_url=os.environ.get("FERRY_BARK_URL") or s.get("bark_url", ""),
-        judge_model=s.get("judge_model", ""),
+        github_repo=os.environ.get("FERRY_GITHUB_REPO") or s.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(s.get("shared_memory", False)),
     )
     if len(cfg.secret) < 16:
@@ -511,7 +511,7 @@ def load_default() -> Config:
         max_upstream_bytes=int(env("FERRY_MAX_UPSTREAM_BYTES") or saved.get("max_upstream_bytes", 0)),
         max_concurrent=int(saved.get("max_concurrent", 6)),
         bark_url=env("FERRY_BARK_URL") or saved.get("bark_url", ""),
-        judge_model=saved.get("judge_model", ""),
+        github_repo=env("FERRY_GITHUB_REPO") or saved.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(saved.get("shared_memory", False)),
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
@@ -551,5 +551,5 @@ def save_settings(cfg: Config) -> None:
         f"web_proxy = {json.dumps(cfg.web_proxy)}\n"
         f"max_concurrent = {int(cfg.max_concurrent)}\n"
         f"bark_url = {json.dumps(cfg.bark_url)}\n"
-        f"judge_model = {json.dumps(cfg.judge_model)}\n"
+        f"github_repo = {json.dumps(cfg.github_repo)}\n"
         f"shared_memory = {'true' if cfg.shared_memory else 'false'}\n", encoding="utf-8")

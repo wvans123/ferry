@@ -224,33 +224,46 @@ def test_one_user_has_at_most_max_concurrent_model_calls(tmp_path, monkeypatch):
     assert state["max"] == 2
 
 
-def test_judge_and_notify(tmp_path, monkeypatch):
-    sent = []
+def test_report_becomes_a_scrubbed_issue_and_notify(tmp_path, monkeypatch):
+    sent, issues = [], []
 
     def handler(req: httpx.Request):
         if req.url.host == "api.day.app":
             sent.append(json.loads(req.content))
             return httpx.Response(200, json={"code": 200})
-        text = json.loads(req.content)["messages"][-1]["content"]
-        return answer("ALLOW: runs the tests" if "npm test" in text else "ASK: deletes files")
+        if req.url.host == "api.github.com":
+            issues.append((str(req.url), req.headers["authorization"], json.loads(req.content)))
+            return httpx.Response(201, json={"html_url": "https://github.com/wvans123/ferry/issues/7"})
+        return answer()
 
+    monkeypatch.delenv("FERRY_GITHUB_TOKEN", raising=False)
     cfg, app = make(tmp_path, monkeypatch, handler)
     token = (tmp_path / "token").read_text().strip()
     hdr = {"Authorization": f"Bearer {token}"}
+    rep = {"title": "web_fetch fails behind 10.1.2.3", "facts": {"ferry": "0.25.0", "os": "win32"},
+           "body": "Reading C:\\Users\\zhang.san\\proj\\a.docx failed; mail me at zhang@corp.com"}
 
     async def go():
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-            a = (await c.post("/v1/ferry/judge", headers=hdr, json={"tool": "bash", "input": {"command": "npm test"}, "cwd": "D:/p"})).json()
-            b = (await c.post("/v1/ferry/judge", headers=hdr, json={"tool": "bash", "input": {"command": "rm -rf build"}, "cwd": "D:/p"})).json()
+            r0 = (await c.post("/v1/ferry/report", headers=hdr, json=rep)).json()
+            monkeypatch.setenv("FERRY_GITHUB_TOKEN", "github_pat_test")
+            r1 = (await c.post("/v1/ferry/report", headers=hdr, json=rep)).json()
             n0 = (await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "goal done"})).json()
             cfg.bark_url = "https://api.day.app/KEY"
             n1 = (await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "goal done"})).json()
-            return a, b, n0, n1
+            return r0, r1, n0, n1
 
     import ferry_server.notify as nt
     monkeypatch.setattr(nt.httpx, "AsyncClient", lambda **kw: REAL(transport=httpx.MockTransport(handler), **kw))
-    a, b, n0, n1 = asyncio.run(go())
-    assert a["verdict"] == "allow" and b["verdict"] == "ask"
+    r0, r1, n0, n1 = asyncio.run(go())
+    # without a token the report is kept on the server and the client is told why it did not become an issue
+    assert r0["ok"] is False and "GitHub token" in r0["error"] and (tmp_path / "data" / "reports" / f"{r0['id']}.json").exists()
+    assert r1["ok"] is True and r1["issue"].endswith("/issues/7") and r1["hidden"] == 3
+    url, auth, issue = issues[0]
+    assert url == "https://api.github.com/repos/wvans123/ferry/issues" and auth == "Bearer github_pat_test"
+    assert issue["title"] == "[report] web_fetch fails behind [hidden]"
+    text = issue["title"] + issue["body"]
+    assert "zhang" not in text and "10.1.2.3" not in text and "C:\\Users\\<user>\\proj" in text and "0.25.0" in text
     assert n0["ok"] is False and n1["ok"] is True and sent[0]["body"] == "goal done"
 
 

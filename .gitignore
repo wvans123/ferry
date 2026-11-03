@@ -9,3 +9,4 @@ dictionary.toml
 dist/
 build/
 vendor/
+evals/runs/
