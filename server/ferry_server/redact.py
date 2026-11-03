@@ -17,6 +17,14 @@ from pathlib import Path
 
 from .store import Store
 
+BUILTIN_PATTERNS = [  # name, label, regex
+    ("private-ipv4", "内网 IP 地址",
+     r"\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b"),
+    ("email", "邮箱地址", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    ("phone-cn", "手机号", r"(?<!\d)1[3-9]\d{9}(?!\d)"),
+    ("api-key", "API Key 和令牌（sk-、ghp_ 等开头的长串）", r"\b(?:sk|pk|rk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{16,}\b"),
+]
+
 PREFIX = "[FERRY-"
 PH_RE = re.compile(r"\[FERRY-[A-Z2-7]{8}\]")
 PH_LEN = len(PREFIX) + 8 + 1

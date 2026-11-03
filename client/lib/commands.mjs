@@ -1,7 +1,8 @@
 // Slash commands and do-it-yourself resources.
 //
 // Ferry keeps the "/" list short. From pi: /new /resume /name /session /compact /model /quit and /mcp.
-// Ferry's own: /help /goal /tasks /rewind /memory /skills /context /cost /status /config (goal, tasks, rewind and memory in their own files).
+// Ferry's own: /help /goal /tasks /rewind /memory /skills /context /cost /status /config /report (goal, tasks, rewind,
+// memory and report in their own files).
 // Your own commands, as Markdown files (the file name is the command; $ARGUMENTS, $1, ${1:-default} take what
 // you type after it):
 //   <FERRY_HOME>/commands/*.md          everywhere
@@ -31,6 +32,7 @@ Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (fo
 Information    /context [size]  how full the context is; with a size (400k, 1m, auto) change it
                /cost  tokens and money       /status  server, model, settings, and a quick check
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
+Problems       /report [what went wrong]  the agent writes a report for the Ferry developers; your server posts it
 
 Keys           Shift+Tab   permission mode: ask first > auto-edit > plan > allow all
                Esc  stop the agent        Ctrl+C  clear the input (twice: quit)       Ctrl+D  quit      ?  this help

@@ -244,6 +244,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，打开确认页、等确认后自动重发（最多等 3 分钟）；`ferry check` 手动查 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 斜杠命令和自定义 | pi 自带命令里用不上的，启动时从它的命令表里拿掉（只是不列出）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户 | `client/lib/trim.mjs`、`client/lib/commands.mjs` |
+| 问题报告 | 工作电脑只能连服务端：`/report` 让对话里的 agent 写报告（它最清楚出了什么事），用户在终端看过全文再发；只自动附上版本和工具次数。服务端不管脱敏开没开都隐去词表、内网 IP、邮箱、手机号、Key、路径里的用户名，存一份，再用自己的 GitHub 令牌开 issue | `client/lib/report.mjs`、`server/ferry_server/report.py` |
 | 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/rewind` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
 | 钩子 | `afterEdit` 在工具结果出来后运行，失败输出追加到工具结果里交给模型；项目的钩子文件按内容哈希征得同意，改了要重新同意 | `client/lib/hooks.mjs` |
 | /goal | 目标存成会话里的一条记录（恢复对话时还在）；agent 每次要停下时（pi 的 `agent_before_settle`），如果目标还在进行，就补一条"对照目标继续"的消息并要求再跑一轮；agent 用 `goal_update` 报告完成或卡住；token 预算和轮数上限到了就要求它写进度报告 | `client/lib/goal.mjs` |

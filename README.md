@@ -9,7 +9,7 @@ A Claude-Code-style coding agent for locked-down Windows PCs. The agent runs on 
 ```
 C:\my-project> ferry
 
-  Ferry v0.24.0  server ferry.example.com
+  Ferry v0.25.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
   memory: 3 (/memory)  ·  subagents on  ·  /help for commands (/goal /tasks /cost /rewind)
 
@@ -127,6 +127,8 @@ agent 自己会用的能力：
 
 先运行 `ferry doctor`。它逐项检查网络、令牌、模型和搜索工具，并告诉你下一步做什么。常见的报错和办法见 [使用手册 · 出问题了怎么办](docs/USAGE.md#出问题了怎么办)。
 
+是 Ferry 自己的毛病，就在出问题的对话里输入 `/report 哪里不对`：agent 写一份不含你工作内容的报告，你看过同意后，由你的服务端发到 GitHub issue（[报告问题](docs/USAGE.md#报告问题)）。
+
 ## 安全须知
 
 - 服务端能看到对话原文（`session_store = "none"` 时处理完就丢），所以服务端必须是你信得过的机器，并且只用 HTTPS 访问。
@@ -150,6 +152,7 @@ agent 自己会用的能力：
 | [CONTEXT-AND-MEMORY.md](docs/CONTEXT-AND-MEMORY.md) | 上下文和记忆的方案，以及和 Cursor、Claude Code、Codex 的对比 |
 | [ROADMAP.md](docs/ROADMAP.md) | 接下来做什么、离商业产品还差什么 |
 | [GOAL.md](GOAL.md) | 验收标准：端到端自测的每一项和最近一次结果 |
+| [evals/](evals/README.md) | 用真模型跑一组日常任务，发版前比较做对了几个、花了多少 |
 
 ## 开发
 
@@ -160,6 +163,7 @@ pip install -e server pytest
 pytest server/tests                     # 服务端单元测试
 node --test "client/test/*.test.mjs"    # 客户端单元测试
 python selftest/run.py                  # 端到端：假模型 + 服务端 + 客户端 + 假代理 + 假网关，不需要 Key
+python evals/run.py                     # 真模型跑日常任务（要 DEEPSEEK_API_KEY），见 evals/README.md
 node client/bin/ferry.mjs               # 直接从源码运行
 ```
 
@@ -176,6 +180,7 @@ client/      ferry 命令行（Node.js）
   test/      客户端单元测试
 server/      ferry-server（Python / FastAPI）：会话缓存、提示词组装、脱敏、模型适配、管理页
 selftest/    端到端自测
+evals/       真实任务评测
 examples/    自己扩展用的例子：命令、技能、子 agent、钩子、权限、MCP
 deploy/      部署：Mac 开机自启、Linux systemd、Caddy
 scripts/     打包 Windows 离线安装包、跟进 pi 版本

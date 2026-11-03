@@ -32,7 +32,7 @@ code map).
 | phone console `/m`, status reports, phone approvals | 0.24 | only showed titles; Bark notifications are enough |
 | guessing vision support from the model name | 0.24 | every model takes pictures unless `vision = false` |
 | gateway check on a 10-minute timer | 0.22.4 | the page opens only when a request is blocked, or on `ferry check` |
-| auto permission mode (judge model) | 0.20 | reason not recorded; Paperclip members use acceptEdits instead |
+| auto permission mode (judge model) | 0.20, server part 0.25 | reason not recorded; Paperclip members use acceptEdits instead |
 
 ## How a change ships
 
@@ -48,6 +48,14 @@ code map).
    ("最近一次结果") and add a `## vX.Y` table to docs/AGENT-GOAL.md (问题 / 改了什么 / 自测).
 5. User docs: README.md is the short entry page; details go in docs/USAGE.md (users) and
    docs/SERVER.md (server). Do not let README grow back into a manual.
+
+6. Before a release that changes how the agent works, the owner runs `python evals/run.py` on their Windows PC
+   (real DeepSeek) and pushes the result file in evals/results/; compare it with the previous one. Keep
+   `python evals/run.py --verify` passing when tasks change.
+
+Work comes from real problems: `/report` in ferry turns one into a GitHub issue (posted by the owner's Ferry
+server, label-free, title starts with `[report]`). Take one issue per branch / PR. A real failure that can be
+reproduced with made-up content becomes a new task in evals/tasks/.
 
 Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `integrations`
 (docs/ROADMAP.md).

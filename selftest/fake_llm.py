@@ -35,8 +35,6 @@ def decide(msgs):
         return ("text", "OK")
     if msgs and text_of(msgs[-1]).strip().lower().startswith("respond with hello"):  # Paperclip's check of a new agent
         return ("text", "hello")
-    if msgs and "You check one action" in text_of(msgs[0]):  # auto mode's judge
-        return ("text", "ASK: it deletes files" if "rm " in text_of(msgs[-1]) else "ALLOW: it only creates a file in the project")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if MODE == "basic":

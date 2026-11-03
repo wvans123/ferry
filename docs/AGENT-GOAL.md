@@ -344,3 +344,11 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | web_render 用不上 | 删掉：web_render、`ferry install-electron`、render / electronPath / renderWaitMs 设置 | F57 改成只查网站黑名单 |
 | 模型都能看图，不需要标 | 默认每个模型都能看图（`vision` 默认 true）；只认文字的模型写 `vision = false`（预设里的 deepseek-v4-pro 已标好）。去掉按名字猜的规则 | 服务端单元测试 |
 | 手机控制台只看得到标题，没用 | 删掉：/m 页面、状态上报、手机上批准、管理页里的那一栏，以及 phoneConsole / remoteApprove 设置。手机上只收 Bark：5 分钟以上的活做完，或者**因为出错停下**（新增，带一句原因），目标完成或卡住，确认框等你太久 | F58 删除 |
+
+## v0.25
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 公司电脑上不了 GitHub，问题只能事后凭记忆说 | `/report [哪里不对]`：对话里的 agent 写问题报告（被要求不写工作内容），用户在终端看过全文选 Send；报告只发到自己的 Ferry 服务端，服务端隐去词表、内网 IP、邮箱、手机号、Key 和路径里的用户名，存进 `data/reports/`，再用 `github-token` 开 issue。没令牌或连不上 GitHub 时留在服务端，管理页可以再发；连不上服务端时存在工作电脑，下次一起发。自动附上的只有版本号和工具使用次数 | 服务端和客户端单元测试 |
+| 自测用假模型，看不出 agent 实际干得好不好 | `evals/`：7 个有标准答案的日常任务（修 bug、跨文件改名、在项目里找答案、按修订改 Word、按笔记写 Word、汇总 Excel、下载并读 3GPP 规范），用真模型（默认 DEEPSEEK_API_KEY）跑，记下通过、耗时、模型调用次数、token、费用，和上一次比较；`--verify` 用标准答案检查判分本身 | `evals/run.py --verify` |
+| auto 模式在 0.20 去掉了，服务端的判断接口还在 | 删掉 `/v1/ferry/judge`、`judge_model` 设置和管理页里那个隐藏的下拉框 | — |
