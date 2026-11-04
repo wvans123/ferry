@@ -57,7 +57,7 @@
 
 `ferry update` 装在哪就更新在哪：
 
-- 用安装包装的，从 GitHub 下载新的安装包。打不开 GitHub 时，在别的电脑下载 `ferry-windows-*.zip` 拷过来，运行 `ferry update 文件.zip`。
+- 用安装包装的，从 GitHub 下载新版本。依赖没变时（大多数版本）只下载几百 KB 的小包 `ferry-app-*.zip`，依赖沿用已装的那份；依赖变了才下载完整的 `ferry-windows-*.zip`（几十 MB）。打不开 GitHub 时，在别的电脑下载拷过来，运行 `ferry update 文件.zip`：先试小包，它会说依赖对不对得上，对不上再拷完整包。
 - 用 git clone 装的，自动执行 `git pull`、`npm ci` 和重新安装。想改用安装包：`ferry update --release`。
 - 这台电脑上装着服务端的话，一起升级：装过服务端的每个 Python 都换成新版（桌面图标用的 Python 不是 PATH 上第一个也能找到），正在运行的旧版服务端会自动换成新版重启。输出里 `server` 开头的几行写着每一步。
 - 有新版本时，ferry 启动时会提醒你。

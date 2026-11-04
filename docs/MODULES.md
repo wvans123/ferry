@@ -32,7 +32,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 权限 | 四种模式、规则、危险命令、禁止目录 | `client/lib/permissions.mjs`、`guard.mjs` | F15、F32 |
 | 网络 | 公司代理、证书、网关确认页 | `client/lib/config.mjs`、`gateway.mjs` | F16、F27、F37、F62 |
 | 终端界面 | 斜杠命令、插话、标题、头部 | `client/lib/commands.mjs`、`steer.mjs`、`title.mjs`、`brand.mjs`、`trim.mjs` | F38、F53 |
-| 安装和更新 | 离线安装包、`ferry update`、fd 和 rg | `client/lib/setup.mjs`、`toolbins.mjs` | F22、F24 |
+| 安装和更新 | 离线安装包、小更新包、`ferry update`（也升级本机服务端）、fd 和 rg | `client/lib/setup.mjs`、`toolbins.mjs` | F22、F24 |
 | 管理页 | 服务端的本机网页 | `server/ferry_server/admin.py`、`admin.html` | 服务端单元测试 |
 | 设备 | 每台电脑一个令牌 | `server/ferry_server/devices.py` | F55 |
 

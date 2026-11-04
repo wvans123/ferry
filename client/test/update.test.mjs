@@ -63,3 +63,38 @@ test("an older server still running is replaced by the new one", { timeout: 6000
 	}
 	assert.equal(await restartLocalServer(VERSION, py, port), "");
 });
+
+test("a small package takes the dependencies over from the installed version, by links", async () => {
+	const { completeSmallPackage, linkTree } = await import("../lib/setup.mjs");
+	const { existsSync, mkdirSync, readdirSync, statSync } = await import("node:fs");
+	const deps = { version: "1.0.0", node: "n1", python: "p1", tools: "t1" };
+	const make = (dir, files) => {
+		for (const [f, text] of Object.entries(files)) {
+			mkdirSync(join(dir, f, ".."), { recursive: true });
+			writeFileSync(join(dir, f), text);
+		}
+	};
+	const installed = join(home, "installed");
+	make(installed, { "deps.json": JSON.stringify(deps), "node_modules/a/index.js": "a", "vendor/win32-x64/rg.exe": "rg",
+		"wheels/fastapi-1.whl": "w", "wheels/ferry_server-1.0.0-py3-none-any.whl": "old" });
+	const small = join(home, "small");
+	make(small, { "deps.json": JSON.stringify({ ...deps, version: "1.0.1" }), "small-package.json": "{}",
+		"client/bin/ferry.mjs": "", "wheels/ferry_server-1.0.1-py3-none-any.whl": "new" });
+	assert.equal(completeSmallPackage(small, installed), true);
+	assert.equal(statSync(join(small, "node_modules/a/index.js")).ino, statSync(join(installed, "node_modules/a/index.js")).ino);
+	assert.ok(existsSync(join(small, "vendor/win32-x64/rg.exe")));
+	assert.deepEqual(readdirSync(join(small, "wheels")).sort(), ["fastapi-1.whl", "ferry_server-1.0.1-py3-none-any.whl"]);
+	assert.equal(existsSync(join(small, "small-package.json")), false);
+
+	// other dependencies: refused, the full package is needed
+	const other = join(home, "other");
+	make(other, { "deps.json": JSON.stringify({ ...deps, node: "n2" }), "small-package.json": "{}" });
+	assert.throws(() => completeSmallPackage(other, installed), /use the full ferry-windows zip/);
+	// a full package is left as it is
+	const full = join(home, "full");
+	make(full, { "deps.json": JSON.stringify(deps), "node_modules/b.js": "b" });
+	assert.equal(completeSmallPackage(full, installed), false);
+	// linking twice is harmless
+	linkTree(join(installed, "node_modules"), join(full, "node_modules"));
+	assert.ok(existsSync(join(full, "node_modules/a/index.js")) && existsSync(join(full, "node_modules/b.js")));
+});

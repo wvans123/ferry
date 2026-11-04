@@ -2,14 +2,19 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+	copyFileSync,
 	cpSync,
 	existsSync,
+	linkSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	openSync,
 	readdirSync,
 	readFileSync,
+	readlinkSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 	writeSync,
 } from "node:fs";
@@ -167,6 +172,67 @@ export async function startLocalServer(cfg, healthy) {
 
 // ---------- install / update ----------
 
+const DEP_DIRS = ["node_modules", "vendor", "wheels"]; // big, and the same from one version to the next most of the time
+
+/**
+ * Copy a folder by hard links where the drive allows (instant, no extra space; nothing in these folders is ever
+ * changed in place), else by copying. Used for the dependencies a new version takes over from the installed one.
+ */
+export function linkTree(src, dst) {
+	mkdirSync(dst, { recursive: true });
+	for (const name of readdirSync(src)) {
+		const from = join(src, name);
+		const to = join(dst, name);
+		const st = lstatSync(from);
+		if (st.isDirectory()) linkTree(from, to);
+		else if (st.isSymbolicLink()) {
+			try {
+				symlinkSync(readlinkSync(from), to);
+			} catch {
+				// a link that cannot be made (Windows without the right): skip it, npm's .bin links are not needed
+			}
+		} else if (!existsSync(to)) {
+			try {
+				linkSync(from, to);
+			} catch {
+				copyFileSync(from, to);
+			}
+		}
+	}
+}
+
+/** deps.json of an installed copy or an unpacked package: what its dependencies are made of (scripts/build_bundle.py). */
+export function readDeps(dir) {
+	try {
+		return JSON.parse(readFileSync(join(dir, "deps.json"), "utf8"));
+	} catch {
+		return null;
+	}
+}
+
+export const sameDeps = (a, b) => !!a && !!b && ["node", "python", "tools"].every((k) => a[k] && a[k] === b[k]);
+
+/**
+ * A small package (Ferry's own code only) unpacked at root: take the dependencies over from the installed copy, which
+ * must have the same ones. Returns false when root is a full package.
+ */
+export function completeSmallPackage(root, installed = APP_ROOT) {
+	if (!existsSync(join(root, "small-package.json"))) return false;
+	const theirs = readDeps(root);
+	const mine = readDeps(installed);
+	if (!sameDeps(mine, theirs)) {
+		throw new Error(`this is a small update package for a Ferry with the same dependencies as ${theirs?.version ?? "it"}, ` +
+			`but this Ferry (${mine?.version ?? "an older install"}) has others: use the full ferry-windows zip`);
+	}
+	const own = existsSync(join(root, "wheels")) ? new Set(readdirSync(join(root, "wheels"))) : new Set();
+	for (const d of DEP_DIRS) if (existsSync(join(installed, d))) linkTree(join(installed, d), join(root, d));
+	for (const w of existsSync(join(root, "wheels")) ? readdirSync(join(root, "wheels")) : []) {
+		if (w.startsWith("ferry_server-") && !own.has(w)) rmSync(join(root, "wheels", w)); // the old server: not again
+	}
+	rmSync(join(root, "small-package.json"));
+	return true;
+}
+
 /** Where installed versions live: %LOCALAPPDATA%\Ferry on Windows, ~/.local/share/ferry elsewhere. */
 function installBase() {
 	if (process.env.FERRY_INSTALL_DIR) return { dir: process.env.FERRY_INSTALL_DIR, cmdDir: null };
@@ -205,7 +271,8 @@ export async function install(version, clientOnly = !!process.env.FERRY_CLIENT_O
 		mkdirSync(dest, { recursive: true });
 		for (const name of readdirSync(APP_ROOT)) {
 			if (name.startsWith(".") || ["data", "dist", "__pycache__"].includes(name)) continue;
-			cpSync(join(APP_ROOT, name), join(dest, name), { recursive: true });
+			if (DEP_DIRS.includes(name)) linkTree(join(APP_ROOT, name), join(dest, name));
+			else cpSync(join(APP_ROOT, name), join(dest, name), { recursive: true });
 		}
 	}
 	say(`  files     ${dest}`);
@@ -391,9 +458,20 @@ export async function update(version, repo, zipArg) {
 				console.log(`Ferry ${version} is the latest version.`);
 				return;
 			}
-			const asset = (rel.assets ?? []).find((a) => /^ferry-windows-.*\.zip$/.test(a.name));
+			const full = (rel.assets ?? []).find((a) => /^ferry-windows-.*\.zip$/.test(a.name));
+			const app = (rel.assets ?? []).find((a) => /^ferry-app-.*\.zip$/.test(a.name));
+			const depsAsset = (rel.assets ?? []).find((a) => /^ferry-deps-.*\.json$/.test(a.name));
+			// the dependencies did not change (most releases): Ferry's own code is enough, the rest stays as installed
+			let small = false;
+			if (app && depsAsset && readDeps(APP_ROOT)) {
+				const theirs = await fetch(depsAsset.browser_download_url, { headers: { "User-Agent": `ferry/${version}` },
+					signal: AbortSignal.timeout(20000) }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+				small = sameDeps(readDeps(APP_ROOT), theirs);
+			}
+			const asset = small ? app : full;
 			if (!asset) throw new Error(`release ${latest} has no ferry-windows-*.zip`);
-			console.log(`Downloading ${asset.name} (${Math.round(asset.size / 1e6)} MB)`);
+			console.log(small ? `Downloading ${asset.name} (${Math.max(1, Math.round(asset.size / 1e3))} KB: Ferry's own code; ` +
+				"its dependencies have not changed and stay as they are)" : `Downloading ${asset.name} (${Math.round(asset.size / 1e6)} MB)`);
 			const d = await fetch(asset.browser_download_url, { headers: { "User-Agent": `ferry/${version}` }, signal: AbortSignal.timeout(600000) });
 			if (!d.ok) throw new Error(`download failed: HTTP ${d.status}`);
 			zip = join(tmp, asset.name);
@@ -409,6 +487,7 @@ export async function update(version, repo, zipArg) {
 		if (x.status !== 0) throw new Error(`could not unpack ${zip}`);
 		const root = [out, ...readdirSync(out).map((n) => join(out, n))].find((d) => existsSync(join(d, "client", "bin", "ferry.mjs")));
 		if (!root) throw new Error(`${zip} does not look like a Ferry package`);
+		if (completeSmallPackage(root)) console.log("Small package: the dependencies are taken over from the installed version.");
 		const r = spawnSync(process.execPath, [join(root, "client", "bin", "ferry.mjs"), "install"], { stdio: "inherit", env });
 		if (r.status !== 0 && installedVersion(env) === packageVersion(root)) {
 			// the install got done, and something failed or crashed at the very end (seen with Node on Windows):

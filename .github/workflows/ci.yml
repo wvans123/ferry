@@ -74,5 +74,5 @@ jobs:
       - name: publish
         if: steps.v.outputs.new == 'true'
         run: |
-          gh release create "v${{ steps.v.outputs.version }}" dist/ferry-windows-*.zip \
+          gh release create "v${{ steps.v.outputs.version }}" dist/ferry-windows-*.zip dist/ferry-app-*.zip dist/ferry-deps-*.json \
             --target "$GITHUB_SHA" --title "Ferry v${{ steps.v.outputs.version }}" --generate-notes

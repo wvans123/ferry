@@ -65,7 +65,7 @@
 | F63 | 系统提示干净 | 提示里句子不被换行截断；只放项目自己的 AGENTS.md，上层文件夹里的不放进去 |
 | F64 | 下载文件 | agent 用命令（curl）把 zip 下载到项目里、解压，接着读里面的文件 |
 | F65 | 选项式提问 | ask_user 在没有终端时不卡住：告诉 agent 按推荐的选项继续 |
-| F24 | 安装和更新 | `ferry install` 后命令可用；`ferry update` 从（模拟的）GitHub 发布页下载新版本并切换；再次更新提示已是最新；保留新旧两个版本 |
+| F24 | 安装和更新 | `ferry install` 后命令可用，输出里有服务端那一步；`ferry update` 从（模拟的）GitHub 发布页下载新版本并切换；再次更新提示已是最新；保留新旧两个版本；下一版依赖没变时只下载小包 |
 
 另外手动验证过的交互界面（模拟终端）：
 
@@ -75,7 +75,7 @@
 
 ## 最近一次结果
 
-2026-11-04，v0.27.1，Linux，Node 22，Python 3.13，pi 1.4.0，Chrome（F36 用 agent-browser）：服务端单元测试 38/38，客户端单元测试 42/42，端到端 62/62 通过；`evals/run.py --verify` 8/8。
+2026-11-04，v0.28.0，Linux，Node 22，Python 3.13，pi 1.4.0，Chrome（F36 用 agent-browser）：服务端单元测试 40/40，客户端单元测试 43/43，端到端 62/62 通过；`evals/run.py --verify` 8/8。
 
 真模型评测第一次（v0.26.0，Windows，DeepSeek 默认模型）：7 个任务过了 6 个，共 518k token；没过的 fix_bug 是判分把 Windows 的换行当成了改动，0.27 已修。
 

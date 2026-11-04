@@ -190,6 +190,39 @@ def create_app(cfg: Config) -> FastAPI:
         return JSONResponse({"error": {"message": msg, "type": "ferry_reroute", "code": "ferry_reroute"}}, status_code=422,
                             headers={"x-ferry-reroute": fb.id})
 
+    def api_changed(request, kind: str, m):
+        """The client asked m in the other API's format: m's provider was switched (admin page: 接口格式) while the
+        client kept its model list. A client that can ask in either format (x-ferry-reroute) is told to send this turn
+        again in m's format and to remember it; an older one gets a plain error."""
+        side = "anthropic" if m.api == "anthropic" else "openai"
+        if request.headers.get("x-ferry-reroute") == "1":
+            msg = f"ferry-reroute:{m.id}@{side} {m.id} now speaks the {'Anthropic' if side == 'anthropic' else 'OpenAI'} API"
+            write(audit_log, event="api_changed", user=getattr(request.state, "user", ""), model=m.id, api=side)
+            body = ({"type": "error", "error": {"type": "ferry_reroute", "message": msg}} if kind == "anthropic"
+                    else {"error": {"message": msg, "type": "ferry_reroute", "code": "ferry_reroute"}})
+            return JSONResponse(body, status_code=422, headers={"x-ferry-reroute": m.id})
+        msg = (f"model {m.id} uses the {'Anthropic' if side == 'anthropic' else 'OpenAI'} API now; "
+               "update the Ferry client (ferry update) and start ferry again")
+        return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": msg}} if kind == "anthropic"
+                            else {"error": {"message": msg}}, status_code=400)
+
+    def gave_up(model, last_err, started: float, kind: str) -> Response:
+        """The provider's error once the server has stopped asking. A busy or failing provider (5xx, 429, cannot
+        reach it) becomes HTTP 424 with a message that names no status code and no retry words: the client's engine
+        (pi) would otherwise send the whole request again three times, each time starting the server's own retries
+        over (the same request reaching the model several times, and minutes without an answer). Other errors (a bad
+        request, a wrong key) go back as the provider sent them."""
+        status = last_err[0]
+        if status not in TRANSIENT_STATUSES and status != 502:
+            return Response(last_err[1], status_code=status, media_type=last_err[2])
+        why = "kept refusing (HTTP 4xx, its usage limit)" if status == 429 else "kept failing (HTTP 5xx)"
+        msg = (f"Ferry gave up: {model.id} did not answer. Its provider {why} for {int(time.time() - started)} s, and the "
+               "Ferry server already asked again several times. Send your message once more in a while, or pick "
+               "another model with /model. The server's call records have the details.")
+        body = ({"type": "error", "error": {"type": "ferry_gave_up", "message": msg}} if kind == "anthropic"
+                else {"error": {"message": msg, "type": "ferry_gave_up", "code": "ferry_gave_up"}})
+        return JSONResponse(body, status_code=424)
+
     def cooling_notes() -> list[dict]:
         """Accounts cooling down now, for the client's status line (sent with each commit answer)."""
         out = []
@@ -560,8 +593,7 @@ def create_app(cfg: Config) -> FastAPI:
             purpose = "agent"
         model = route(payload.get("model", ""), purpose)
         if model.api == "anthropic":
-            return JSONResponse({"error": {"message": f"model {model.id} uses the Anthropic API; update the Ferry client "
-                                                      "(ferry update) to talk to it"}}, status_code=400)
+            return api_changed(request, "openai", model)
 
         project = unquote(request.headers.get("x-ferry-project", ""))  # sent URL-encoded: folder names can be Chinese
         rules = load_rules(cfg.rules_dir, project)
@@ -620,7 +652,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         last_err: tuple[int, bytes, str] = (502, b'{"error":{"message":"no provider answered"}}', "application/json")
         refused_marks = False
-        waited, again = 0.0, 0  # time spent waiting for a busy provider, and how many times we asked it again
+        again = 0  # how many times the same provider was asked again
         attempts = []
         for model in tries:  # with cache markers first where they help; the same without if the relay refuses them
             if wants_cache_marks(model) and model.id not in live.no_marks:
@@ -659,10 +691,10 @@ def create_app(cfg: Config) -> FastAPI:
                 last_err = (502, json.dumps({"error": {"message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
                 if more:
                     continue
-                if waited < RETRY_WAIT_S:  # the only provider: once more after a short wait
+                if time.time() - started + retry_delay(None, again) < RETRY_WAIT_S:  # the only provider: once more after a short wait
                     d = retry_delay(None, again)
                     await asyncio.sleep(d)
-                    waited, again = waited + d, again + 1
+                    again += 1
                     tries.append((model, marks))
                     continue
                 break
@@ -694,13 +726,13 @@ def create_app(cfg: Config) -> FastAPI:
                     live.pool.failed(model.id, r.status_code)
                     continue
                 big = too_big(model, r.status_code, tokens_est)
-                if not more and r.status_code in TRANSIENT_STATUSES and waited < RETRY_WAIT_S and not (big and again):
+                if not more and r.status_code in TRANSIENT_STATUSES and time.time() - started + retry_delay(r.headers, again) < RETRY_WAIT_S and not (big and again):
                     # the only (or last) provider is busy: wait as it asks (Retry-After) or a little, then once more,
                     # instead of handing the error to the client, which would ask again at once
                     d = retry_delay(r.headers, again)
                     write(audit_log, event="upstream_wait", model=model.id, status=r.status_code, seconds=d)
                     await asyncio.sleep(d)
-                    waited, again = waited + d, again + 1
+                    again += 1
                     tries.append((model, marks))
                     continue
                 if not more and big:  # refused because it is too big: the client summarises its history and goes on
@@ -737,7 +769,7 @@ def create_app(cfg: Config) -> FastAPI:
 
             return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(r.aclose))
         done()
-        return Response(last_err[1], status_code=last_err[0], media_type=last_err[2])
+        return gave_up(model, last_err, started, "openai")
 
     @app.post("/anthropic/v1/messages")
     async def anthropic_messages(request: Request):
@@ -766,8 +798,7 @@ def create_app(cfg: Config) -> FastAPI:
             purpose = "agent"
         model = route(payload.get("model", ""), purpose)
         if model.api != "anthropic":
-            return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
-                                                            "message": f"model {model.id} is not an Anthropic model"}}, status_code=400)
+            return api_changed(request, "anthropic", model)
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
         fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
@@ -816,7 +847,7 @@ def create_app(cfg: Config) -> FastAPI:
         last_err: tuple[int, bytes, str] = (502, b'{"type":"error","error":{"type":"api_error","message":"no provider answered"}}',
                                             "application/json")
         tries = list(tries)
-        waited, again = 0.0, 0
+        again = 0
         for n, model in enumerate(tries):
             one = dict(payload)
             one["model"] = model.model
@@ -846,10 +877,10 @@ def create_app(cfg: Config) -> FastAPI:
                             "message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
                 if more:
                     continue
-                if waited < RETRY_WAIT_S:
+                if time.time() - started + retry_delay(None, again) < RETRY_WAIT_S:
                     d = retry_delay(None, again)
                     await asyncio.sleep(d)
-                    waited, again = waited + d, again + 1
+                    again += 1
                     tries.append(model)
                     continue
                 break
@@ -876,11 +907,11 @@ def create_app(cfg: Config) -> FastAPI:
                     live.pool.failed(model.id, upstream.status_code)
                     continue
                 big = too_big(model, upstream.status_code, tokens_est)
-                if not more and upstream.status_code in TRANSIENT_STATUSES and waited < RETRY_WAIT_S and not (big and again):
+                if not more and upstream.status_code in TRANSIENT_STATUSES and time.time() - started + retry_delay(upstream.headers, again) < RETRY_WAIT_S and not (big and again):
                     d = retry_delay(upstream.headers, again)
                     write(audit_log, event="upstream_wait", model=model.id, status=upstream.status_code, seconds=d)
                     await asyncio.sleep(d)
-                    waited, again = waited + d, again + 1
+                    again += 1
                     tries.append(model)
                     continue
                 if not more and big:
@@ -908,7 +939,7 @@ def create_app(cfg: Config) -> FastAPI:
 
             return StreamingResponse(relay(), media_type="text/event-stream", background=BackgroundTask(upstream.aclose))
         done()
-        return Response(last_err[1], status_code=last_err[0], media_type=last_err[2])
+        return gave_up(model, last_err, started, "anthropic")
 
     from .admin import mount_admin
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)

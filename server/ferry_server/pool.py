@@ -20,7 +20,8 @@ RETRY_STATUSES = {401, 402, 403, 404, 408, 409, 429, 500, 502, 503, 504, 520, 52
 # A limit or a hiccup (not a key or model problem): worth asking the same provider again after a short wait when no
 # other provider has the model. Relays such as kiro answer 502 within milliseconds when they are busy.
 TRANSIENT_STATUSES = {408, 429, 500, 502, 503, 504, 520, 521, 522, 524, 529}
-RETRY_WAIT_S = 150    # the most a request waits in total (cool-downs included) before the error goes back to the client
+RETRY_WAIT_S = 90     # the most a request takes in total (attempts, waits, cool-downs) before the error goes back;
+                      # Cloudflare and other proxies give up on a request that has sent nothing for 100-120 s
 SHORT_PAUSE = 60      # seconds a provider is skipped after a limit / overload / outage
 LONG_PAUSE = 300      # ... after a key or model problem (401, 402, 403, 404)
 
