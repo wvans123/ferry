@@ -17,7 +17,7 @@ import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FERRY_HOME, saveConfig } from "./config.mjs";
+import { FERRY_HOME, loadConfig, saveConfig } from "./config.mjs";
 import { downloadMissing, installBundled, toolStatus } from "./toolbins.mjs";
 
 export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -45,6 +45,71 @@ export function findPython(cfg, withServer = true) {
 		if (runPy(py, code).status === 0) return py;
 	}
 	return null;
+}
+
+/**
+ * Every Python 3.11+ on this computer that can be found, each once (by its own path): FERRY_PYTHON, the one saved
+ * in the settings, python / py -3 / python3 on the PATH, and on Windows every Python the launcher knows (py -0p).
+ * A desktop icon may start the server with another Python than the one first on the PATH; this finds that one too.
+ */
+export function allPythons(cfg = {}) {
+	const cands = pythonCandidates(cfg);
+	if (WIN) {
+		const r = spawnSync("py", ["-0p"], { encoding: "utf8", timeout: 15000, windowsHide: true });
+		for (const line of (r.stdout ?? "").split(/\r?\n/)) {
+			const m = /([A-Za-z]:\\.*?pythonw?\.exe)\s*$/i.exec(line);
+			if (m) cands.push([m[1]]);
+		}
+	}
+	const seen = new Set();
+	const out = [];
+	for (const py of cands) {
+		const r = runPy(py, "import os, sys; print(sys.executable); print(os.path.realpath(sys.executable)); " +
+			"print(sys.version_info >= (3, 11))");
+		const [exe = "", real = "", ok = ""] = r.status === 0 ? r.stdout.trim().split(/\r?\n/) : [];
+		if (ok.trim() !== "True" || !exe || seen.has(real.trim().toLowerCase())) continue;
+		seen.add(real.trim().toLowerCase());
+		out.push(exe.trim());
+	}
+	return out;
+}
+
+/** The Ferry server version installed in this Python ("" for none), and whether it is a normal install (in
+ * site-packages) rather than one run from a source folder (pip install -e, a developer's checkout). */
+export function serverIn(exe) {
+	const r = runPy([exe], "import ferry_server; print(ferry_server.__version__); print(ferry_server.__file__)");
+	if (r.status !== 0) return { version: "", installed: false };
+	const [version = "", file = ""] = r.stdout.trim().split(/\r?\n/);
+	return { version: version.trim(), installed: /[\\/](site|dist)-packages[\\/]/i.test(file) };
+}
+
+async function serverHealth(port) {
+	try {
+		const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1500) });
+		return r.ok ? await r.json() : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * After an upgrade: a Ferry server of an older version still running on this computer is replaced by the new one,
+ * started the way the desktop icon does (pythonw -m ferry_server --background stops the old one with the admin key).
+ * Returns a line for the install output, or "" when no server runs here.
+ */
+export async function restartLocalServer(version, exe, port = process.env.FERRY_PORT ?? 8787) {
+	const h = await serverHealth(port);
+	if (!h?.version) return "";
+	if (h.version === version) return `running ${version} on port ${port}`;
+	const w = WIN ? join(dirname(exe), "pythonw.exe") : exe;
+	const child = spawn(existsSync(w) ? w : exe, ["-m", "ferry_server", "--background"],
+		{ detached: true, stdio: "ignore", windowsHide: true, env: { ...process.env, FERRY_PORT: String(port) } });
+	child.unref();
+	for (let i = 0; i < 60; i++) {
+		await sleep(500);
+		if ((await serverHealth(port))?.version === version) return `restarted: ${h.version} -> ${version} on port ${port}`;
+	}
+	return `a Ferry server ${h.version} still runs on port ${port}: stop it on its admin page (设置 > 停止服务端), then start it again`;
 }
 
 // ---------- a private Ferry server for this ferry process ----------
@@ -158,26 +223,40 @@ export async function install(version, clientOnly = !!process.env.FERRY_CLIENT_O
 		? `  tools     ${missing.join(" and ")} missing: file search is slower. Use the release zip (it includes them).`
 		: "  tools     fd and rg ready");
 
-	// the server half, into the Python that is already there
-	const py = clientOnly ? null : findPython({}, false);
-	if (clientOnly) {
-		say("  server    skipped (--client-only): use a server on another machine with ferry login");
-	} else if (!py) {
-		say("  server    SKIPPED: no Python 3.11+ found (python / py -3). Install Python from python.org with\n" +
+	// the server half, into the Python that is already there: every Python that has a Ferry server gets the new one
+	// (a desktop icon may use another Python than the first on the PATH); none yet: the first Python 3.11+
+	const wheels = join(dest, "wheels");
+	const carries = existsSync(wheels) || existsSync(join(dest, "server", "pyproject.toml"));
+	const pythons = carries ? allPythons(loadConfig()) : [];
+	const had = pythons.map((exe) => ({ exe, ...serverIn(exe) }));
+	// servers installed the normal way are upgraded (also on a --client-only install, where a server was added by
+	// hand); one run from a source folder is a developer's and left alone; no server yet: the first Python, unless
+	// --client-only
+	const targets = had.some((p) => p.installed) ? had.filter((p) => p.installed) : clientOnly ? [] : had.slice(0, 1);
+	for (const p of had.filter((x) => x.version && !x.installed)) say(`  server    ${p.version} in ${p.exe} runs from a source folder: left alone`);
+	if (!carries) {
+		say("  server    not in this package");
+	} else if (!targets.length) {
+		say(clientOnly ? "  server    skipped (--client-only): use a server on another machine with ferry login"
+			: "  server    SKIPPED: no Python 3.11+ found (python / py -3). Install Python from python.org with\n" +
 			"            \"Add python.exe to PATH\" ticked, then run ferry install again. Until then you can only use\n" +
 			"            a server on another machine (ferry login).");
 	} else {
-		const wheels = join(dest, "wheels");
 		const args = existsSync(wheels)
 			? ["-m", "pip", "install", "--disable-pip-version-check", "--no-index", "--find-links", wheels, "--upgrade", "ferry-server"]
 			: ["-m", "pip", "install", "--disable-pip-version-check", "--upgrade", join(dest, "server")];
-		say(`  server    ${py.join(" ")} ${args.join(" ")}`);
-		const r = spawnSync(py[0], [...py.slice(1), ...args], { stdio: "inherit", windowsHide: true });
-		if (r.status !== 0) {
-			say("  server    FAILED (see pip output above)");
-			process.exitCode = 1;
-		} else {
-			saveConfig({ python: py });
+		const done = [];
+		for (const t of targets) {
+			const r = spawnSync(t.exe, args, { stdio: ["ignore", "ignore", "inherit"], windowsHide: true });
+			const now = serverIn(t.exe).version;
+			if (r.status === 0 && now) done.push(t.exe);
+			say(`  server    ${r.status === 0 ? `${t.version ? `${t.version} -> ` : ""}${now}` : "FAILED (see pip output above)"}  in ${t.exe}`);
+			if (r.status !== 0) process.exitCode = 1;
+		}
+		if (done.length) {
+			saveConfig({ python: [done[0]] });
+			const line = await restartLocalServer(version, done[0]);
+			if (line) say(`  server    ${line}`);
 		}
 	}
 
@@ -340,9 +419,10 @@ export async function update(version, repo, zipArg) {
 		}
 		if (r.status === 0) {
 			console.log(`\nUpdated from ${version}. Restart any open ferry windows.`);
-			const h = await fetch("http://127.0.0.1:8787/health", { signal: AbortSignal.timeout(1500) }).then((x) => x.json()).catch(() => null);
-			if (h?.version) console.log(`A Ferry server ${h.version} is running on this computer: restart it to use the new version ` +
-				"(admin page > 停止服务端, then the Ferry Server icon).");
+			const h = await serverHealth(process.env.FERRY_PORT ?? 8787);
+			const now = packageVersion(root);
+			if (h?.version && h.version !== now) console.log(`A Ferry server ${h.version} is still running on this computer: ` +
+				"stop it (admin page > 设置 > 停止服务端) and start it again with the Ferry Server icon.");
 		}
 		if (r.status !== 0) throw new Error("install step failed");
 	} finally {

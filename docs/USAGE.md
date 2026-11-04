@@ -59,7 +59,7 @@
 
 - 用安装包装的，从 GitHub 下载新的安装包。打不开 GitHub 时，在别的电脑下载 `ferry-windows-*.zip` 拷过来，运行 `ferry update 文件.zip`。
 - 用 git clone 装的，自动执行 `git pull`、`npm ci` 和重新安装。想改用安装包：`ferry update --release`。
-- 本机也跑着服务端时一起升级，升级后要重启服务端。
+- 这台电脑上装着服务端的话，一起升级：装过服务端的每个 Python 都换成新版（桌面图标用的 Python 不是 PATH 上第一个也能找到），正在运行的旧版服务端会自动换成新版重启。输出里 `server` 开头的几行写着每一步。
 - 有新版本时，ferry 启动时会提醒你。
 
 ## 斜杠命令

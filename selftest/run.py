@@ -1009,7 +1009,7 @@ def check_install_update(root: Path) -> None:
         c4, v2 = run([*shim, "--version"])
         c5, o5 = run([*shim, "update"])
         versions = sorted(p.name for p in (inst / "versions").iterdir()) if (inst / "versions").exists() else []
-        ok = (c1 == 0 and c2 == 0 and v1.strip() == pkg["version"] and c3 == 0 and "Updated from" in o3
+        ok = (c1 == 0 and c2 == 0 and v1.strip() == pkg["version"] and "  server    " in o1 and c3 == 0 and "Updated from" in o3
               and c4 == 0 and v2.strip() == "99.0.0" and c5 == 0 and "is the latest version" in o5
               and versions == sorted([pkg["version"], "99.0.0"]))
         check("F24 安装与一键更新", ok, f"ferry install 后版本 {v1.strip()}；ferry update 从发布页下载新包后版本 "

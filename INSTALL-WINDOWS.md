@@ -160,7 +160,7 @@ ferry
 ferry update
 ```
 
-它会访问 GitHub 发布页，有新版本就下载、安装，旧版本保留一个以便回退；已经是最新就提示 `is the latest version`。更新后重开正在运行的 ferry 窗口。
+它会访问 GitHub 发布页，有新版本就下载、安装，旧版本保留一个以便回退；已经是最新就提示 `is the latest version`。这台电脑上装着服务端的话一起升级，正在运行的服务端自动换成新版。更新后重开正在运行的 ferry 窗口。
 
 工作电脑访问不了 GitHub 时：在别的电脑上从发布页下载 `ferry-windows-x.y.z.zip`，拷过来后执行
 

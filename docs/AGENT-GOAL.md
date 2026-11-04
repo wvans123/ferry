@@ -369,3 +369,9 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | 网站黑名单只管 web_fetch | `blockedSites` 也管命令：命令里出现的网址、`agent-browser open` 的网站在黑名单上就拦下（curl 也一样） | 客户端单元测试 |
 | 第一次真模型评测（Windows，DeepSeek）6/7：fix_bug 判"测试文件被改了" | 判分的问题：Windows 上 Python 写文件用 CRLF，按字节比较就不一样。改成按文本比较。另加一个评测任务 `browser_page`（用浏览器读脚本生成的页面、填表） | `evals/run.py --verify` 8/8 |
 
+## v0.27.1：ferry update 也把服务端换好
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 家里的 Windows 上 `ferry update` 到 0.27.0，桌面图标打开的服务端还是 0.24.0 | 原来只把新版服务端装进 PATH 上第一个 Python（`--client-only` 装的干脆跳过），正在运行的旧服务端也不重启。现在：找出这台电脑上所有 Python 3.11+（PATH 上的、设置里记的、Windows 上 `py -0p` 列出的，按实际文件去重），装过服务端的每一个都升级（`--client-only` 装的也一样，只要服务端是正常装的；从源码文件夹运行的开发环境不动）；还在跑旧版的服务端用 `pythonw -m ferry_server --background` 换成新版（它用管理钥匙让旧的停下）。输出里每一步都有一行 `server` | 客户端单元测试（找 Python、区分正常安装和源码文件夹、把正在跑的旧服务端换成新版）；F24 检查输出里有 server 一行 |
+

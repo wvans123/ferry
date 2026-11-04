@@ -75,7 +75,7 @@
 
 ## 最近一次结果
 
-2026-11-03，v0.27.0，Linux，Node 22，Python 3.13，pi 1.4.0，Chrome（F36 用 agent-browser）：服务端单元测试 38/38，客户端单元测试 39/39，端到端 62/62 通过；`evals/run.py --verify` 8/8。
+2026-11-04，v0.27.1，Linux，Node 22，Python 3.13，pi 1.4.0，Chrome（F36 用 agent-browser）：服务端单元测试 38/38，客户端单元测试 42/42，端到端 62/62 通过；`evals/run.py --verify` 8/8。
 
 真模型评测第一次（v0.26.0，Windows，DeepSeek 默认模型）：7 个任务过了 6 个，共 518k token；没过的 fix_bug 是判分把 Windows 的换行当成了改动，0.27 已修。
 

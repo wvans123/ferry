@@ -55,7 +55,7 @@
 | 要做的事 | 怎么做 |
 |---|---|
 | 看状态、流量、调用记录 | 双击 Ferry Server 图标 |
-| 升级 | 下载新的 zip，解压，`python -m pip install --no-index --find-links wheels --upgrade ferry-server`，在管理页"停止"后再双击图标 |
+| 升级 | `ferry update`：这台电脑上装过服务端的每个 Python 都换成新版，正在运行的服务端自动换成新版重启。没装 ferry 命令的话：下载新的 zip，解压，`python -m pip install --no-index --find-links wheels --upgrade ferry-server`，在管理页"停止"后再双击图标 |
 | 令牌泄露了 | 管理页 → 设置 → 换一个新令牌，工作电脑重新 `ferry login` |
 | 工作电脑报 502 / 530 | 这台电脑睡眠了，或服务端、cloudflared 没在运行 |
 | 数据在哪 | `FERRY_SERVER_HOME`（默认 `%USERPROFILE%\.ferry-server`）：`token`、`secrets.toml`（API Key）、`models.toml`、`server.toml`、`rules\`、`data\`（会话、日志） |
