@@ -300,12 +300,12 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	/** Ask `to` instead of `from` for the next `seconds`. A fallback the server does not list (routing.expose off)
 	 * is known from here on by its API, with the size of the model it stands in for. */
 	function switchTo(from, to, api, seconds) {
+		const side = api === "anthropic" ? "anthropic" : "openai";
 		if (!byId.has(to)) {
 			const was = byId.get(from) ?? {};
-			byId.set(to, { id: to, api: api === "anthropic" ? "anthropic" : "openai", contextWindow: was.contextWindow,
-				maxTokens: was.maxTokens, vision: was.vision });
-		}
-		switched.set(from, { to, until: Date.now() + Number(seconds || 0) * 1000 });
+			byId.set(to, { id: to, api: side, contextWindow: was.contextWindow, maxTokens: was.maxTokens, vision: was.vision });
+		} else byId.set(to, { ...byId.get(to), api: side }); // the server knows best which API a model speaks now
+		if (from !== to) switched.set(from, { to, until: Date.now() + Number(seconds || 0) * 1000 });
 	}
 
 	/** pi's model object for another of the server's models (same provider; that model's id, size, abilities). */

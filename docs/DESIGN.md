@@ -238,7 +238,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | Claude 原生接口 | 客户端按服务端说的接口类型，用 pi 自带的 Anthropic 提供方（思考、图片、缓存标记都由它处理）；同步前把每轮都会移动的缓存标记取下、服务端再放回，所以照样只传新增部分；服务端把请求转给 Anthropic，并从事件流里记下用量 | `client/lib/sync.mjs`、`server/ferry_server/app.py` |
 | 费用 | 价格写在服务端的模型配置里（预设已填好 Claude 和 GPT），随模型列表下发给客户端，pi 自己累计；服务端按每次调用的用量另算一份，管理页汇总 | `server/ferry_server/usage.py` |
 | 公司代理和证书 | 客户端所有请求统一走代理（环境变量或配置项），支持 NO_PROXY；同时信任系统证书和 `caFile`，并写成 `ca-bundle.pem` 交给 agent 执行的命令（curl、git、Python、Node） | `client/lib/config.mjs` |
-| 好装、好更新 | 离线安装包 + `ferry install`；`ferry update` 从 GitHub 发布页取最新版；没登录远程服务端时自动在本机启动服务端 | `client/lib/setup.mjs` |
+| 好装、好更新 | 离线安装包 + `ferry install`；`ferry update` 从 GitHub 发布页取最新版。每次发版有三个文件：完整包、只含 Ferry 自己代码的小包（几百 KB）、依赖指纹 `ferry-deps-*.json`（node_modules、服务端依赖、fd/rg 各一个哈希）。指纹和已装版本的 `deps.json` 一样时只下小包，依赖用硬链接从已装版本接过来（不占额外空间），否则下完整包。服务端装在每个装过它的 Python 里，正在跑的旧版自动换成新版；没登录远程服务端时自动在本机启动服务端 | `client/lib/setup.mjs`、`scripts/build_bundle.py` |
 | 不重复造轮子 | Agent 循环、工具和终端界面直接用开源的 [pi](https://github.com/earendil-works/pi)（MIT），通过它公开的 `main()` 和扩展接口嵌入，不 fork 内核 | `client/bin/ferry.mjs` |
 
 

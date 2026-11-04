@@ -299,6 +299,42 @@ def test_a_busy_only_provider_is_asked_again_and_limited_to_its_slots(tmp_path, 
     assert asyncio.run(many()) == [200] * 4 and state["max"] == 1
 
 
+def test_a_provider_that_keeps_failing_ends_in_one_clear_answer_the_client_does_not_retry(tmp_path, monkeypatch):
+    import re
+    calls = []
+
+    async def handler(req: httpx.Request):
+        if req.url.host == "b.example.com":
+            calls.append(1)
+            await asyncio.sleep(0.05)
+            return httpx.Response(502, json={"error": {"message": "upstream overloaded, server error 502"}})
+        return answer()
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0.2)
+    monkeypatch.setattr(app_mod, "RETRY_WAIT_S", 1.0)
+    token = (tmp_path / "token").read_text().strip()
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
+
+    import time
+    t = time.time()
+    r = asyncio.run(go())
+    took = time.time() - t
+    assert r.status_code == 424 and r.json()["error"]["code"] == "ferry_gave_up"
+    assert 2 <= len(calls) <= 6 and took < 2.5  # asked again within the budget, then stopped
+    msg = r.json()["error"]["message"]
+    assert "other" in msg and "5xx" in msg
+    # nothing in it makes the client's engine (pi) send the request again: no status codes, no retry words
+    pi_retry = re.compile(r"overloaded|rate.?limit|too many requests|(?<![a-z0-9])(?:429|500|502|503|504|520|524)(?![a-z0-9])|"
+                          r"service.?unavailable|server.?error|internal.?error|timed? out|timeout|terminated|"
+                          r"try your request again|please retry|retry delay", re.I)
+    assert not pi_retry.search(f"424 {msg}"), pi_retry.search(f"424 {msg}")
+
+
 def test_too_many_requests_cools_the_account_down_and_the_fallback_answers(tmp_path, monkeypatch):
     seen = []
 
@@ -413,3 +449,24 @@ def test_an_older_client_waits_out_the_cool_down_instead(tmp_path, monkeypatch):
 
     r = asyncio.run(ask())
     assert r.status_code == 200 and "later" in r.text and calls == ["c.example.com", "c.example.com"]
+
+
+def test_a_model_switched_to_the_other_api_tells_the_client_to_resend_in_its_format(tmp_path, monkeypatch):
+    cfg, app = make(tmp_path, monkeypatch, lambda req: answer())
+    token = (tmp_path / "token").read_text().strip()
+    cfg.models["other"].api = "anthropic"  # switched on the admin page while the client kept its model list
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            body = {"model": "other", "messages": [{"role": "user", "content": "hi"}]}
+            new = await c.post("/v1/chat/completions", headers={**hdr, "x-ferry-reroute": "1"}, json=body)
+            old = await c.post("/v1/chat/completions", headers=hdr, json=body)
+            back = await c.post("/anthropic/v1/messages", headers={**hdr, "x-ferry-reroute": "1"},
+                                json={"model": "gpt", "max_tokens": 10, "messages": [{"role": "user", "content": "hi"}]})
+            return new, old, back
+
+    new, old, back = asyncio.run(go())
+    assert new.status_code == 422 and new.json()["error"]["message"].startswith("ferry-reroute:other@anthropic ")
+    assert old.status_code == 400 and "ferry update" in old.json()["error"]["message"]
+    assert back.status_code == 422 and back.json()["error"]["message"].startswith("ferry-reroute:gpt@openai ")

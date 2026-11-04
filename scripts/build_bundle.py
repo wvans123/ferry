@@ -11,6 +11,7 @@ usage: python scripts/build_bundle.py [--platform win|native] [--skip-wheels] [-
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -67,6 +68,28 @@ def fetch_tools(dest: Path, platform: str) -> None:
     print(f"tools: fd and rg in vendor/{key}")
 
 
+def fingerprint(stage: Path, pyproject: dict) -> dict:
+    """What the parts that change rarely are made of. ferry update compares this with the installed copy's deps.json:
+    the same, and the small package (Ferry's own code) is enough; the dependencies are taken from the installed copy."""
+    def h(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    lock = json.loads((stage / "package-lock.json").read_text(encoding="utf-8"))
+    node = "\n".join(sorted(f"{k}@{v.get('version', '')}" for k, v in lock.get("packages", {}).items() if k))
+    vendor = stage / "vendor"
+    tools = "\n".join(sorted(f"{p.relative_to(vendor).as_posix()}:{p.stat().st_size}" for p in vendor.rglob("*") if p.is_file())) \
+        if vendor.exists() else ""
+    return {"node": h(node), "python": h("\n".join(sorted(pyproject["project"]["dependencies"]))), "tools": h(tools)}
+
+
+def write_zip(out: Path, stage: Path, keep=lambda rel: True) -> None:
+    out.unlink(missing_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for f in sorted(stage.rglob("*")):
+            if f.is_file() and keep(f.relative_to(stage)):
+                z.write(f, f.relative_to(stage.parent).as_posix())
+    print(f"{out} ({out.stat().st_size / 1e6:.1f} MB)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--platform", choices=["win", "native"], default="win")
@@ -112,14 +135,15 @@ def main() -> int:
                                 "--python-version", pyver, "-d", wheels, *deps], check=True)
         print(f"{len(list(wheels.glob('*.whl')))} wheels")
 
-    out = dist / f"ferry-windows-{version}.zip"
-    out.unlink(missing_ok=True)
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for f in sorted(stage.rglob("*")):
-            if f.is_file():
-                z.write(f, f.relative_to(dist).as_posix())
+    deps = {"version": version, **fingerprint(stage, pyproject)}
+    (stage / "deps.json").write_text(json.dumps(deps, indent=1), encoding="utf-8")
+    (dist / f"ferry-deps-{version}.json").write_text(json.dumps(deps, indent=1), encoding="utf-8")
+    write_zip(dist / f"ferry-windows-{version}.zip", stage)
+    (stage / "small-package.json").write_text(json.dumps(deps, indent=1), encoding="utf-8")  # only in the small one
+    # the small package: Ferry's own code and its server wheel, without node_modules, fd/rg and the other wheels
+    write_zip(dist / f"ferry-app-{version}.zip", stage, lambda rel: rel.parts[0] not in ("node_modules", "vendor")
+              and not (rel.parts[0] == "wheels" and not rel.name.startswith("ferry_server-")))
     shutil.rmtree(stage)
-    print(f"{out} ({out.stat().st_size / 1e6:.1f} MB)")
     return 0
 
 

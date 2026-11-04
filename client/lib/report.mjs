@@ -3,14 +3,54 @@
 // server (which has the internet and a GitHub token) scrubs it once more and opens a GitHub issue. Only counts and
 // versions are added automatically; nothing from your files. A report that cannot reach the server is kept in
 // <FERRY_HOME>/reports and sent with the next one.
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { release } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import { FERRY_HOME, serverHeaders } from "./config.mjs";
 
 const PENDING = join(FERRY_HOME, "reports");
 const SEND = "Send";
+const OPEN = "Open the full text first (you can change it there)";
+const SKIP = "Don't send";
+const PREVIEW_LINES = 8;
+const FACTS_MARK = "<!-- Ferry adds these when sending (versions and counts only):";
+
+/** The draft file the user can read in full and change before sending. */
+export function writeDraft(report, file) {
+	mkdirSync(dirname(file), { recursive: true });
+	const facts = Object.entries(report.facts).map(([k, v]) => `${k}: ${v}`).join("\n");
+	writeFileSync(file, `# ${report.title}\n\n${report.body}\n\n${FACTS_MARK}\n${facts}\n-->\n`, "utf8");
+}
+
+/** Title and body back from the draft, as the user left it. */
+export function readDraft(file, report) {
+	const text = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+	const main = text.split(FACTS_MARK)[0].trim();
+	const m = /^#\s*(.*)\n?([\s\S]*)$/.exec(main);
+	return { ...report, title: (m ? m[1] : report.title).trim(), body: (m ? m[2] : main).trim() };
+}
+
+/** A short preview for the question: the title, the first lines, how much more there is. */
+export function preview(report, file) {
+	const lines = report.body.split(/\r?\n/);
+	const shown = lines.slice(0, PREVIEW_LINES).map((l) => (l.length > 110 ? `${l.slice(0, 107)}...` : l));
+	const more = lines.length - shown.length;
+	return `${report.title}\n\n${shown.join("\n")}${more > 0 ? `\n... ${more} more line(s)` : ""}\n\n` +
+		`Full text (${lines.length} lines): ${file}`;
+}
+
+function openFile(file) {
+	const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", file]]
+		: process.platform === "darwin" ? ["open", [file]] : ["xdg-open", [file]];
+	try {
+		spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 export const REPORT_PROMPT = (note) => "Write a problem report about Ferry itself (the agent tool you are running in), " +
 	"not about my project, and send it with the report_problem tool. It becomes a public GitHub issue, so leave out " +
@@ -70,7 +110,7 @@ export async function sendReport(cfg, report) {
 	return lines.join("\n");
 }
 
-export function createReport(cfg, version, piVersion) {
+export function createReport(cfg, version, piVersion, { open = openFile } = {}) {
 	return (pi) => {
 		pi.registerTool({
 			name: "report_problem",
@@ -90,14 +130,28 @@ export function createReport(cfg, version, piVersion) {
 					server: cfg.mode === "local" ? "on this computer" : "remote", model: ctx?.model?.id ?? "",
 					"tools used": toolCounts(ctx?.sessionManager?.getBranch?.()),
 				};
-				const report = { title: String(params.title ?? "").trim(), body: String(params.body ?? "").trim(), facts };
+				let report = { title: String(params.title ?? "").trim(), body: String(params.body ?? "").trim(), facts };
 				const text = (t) => ({ content: [{ type: "text", text: t }], details: undefined });
 				if (!ctx?.hasUI) return text("Not sent: the user has to read and approve a report in the terminal first.");
-				const shown = `${report.title}\n\n${report.body}\n\n${Object.entries(facts).map(([k, v]) => `${k}: ${v}`).join("\n")}`;
-				const pick = await ctx.ui.select("Send this report? Your Ferry server posts it as a public GitHub issue " +
-					`(after hiding words from its list, private addresses, e-mails and keys).\n\n${shown}`, [SEND, "Don't send"]);
-				if (pick !== SEND) return text("The user did not send the report. Ask what to change, or leave it.");
-				return text(await sendReport(cfg, report));
+				// the full text goes to a file: a long report does not fit the question, and the user may change it
+				const file = join(PENDING, "drafts", `report-${Date.now()}.md`);
+				writeDraft(report, file);
+				let opened = false;
+				for (;;) {
+					report = readDraft(file, report);
+					const pick = await ctx.ui.select("Send this report? Your Ferry server posts it as a public GitHub issue " +
+						"(after hiding words from its list, private addresses, e-mails and keys). " +
+						`${opened ? "It is sent as the file reads now." : ""}\n\n${preview(report, file)}`,
+						opened ? [SEND, SKIP] : [SEND, OPEN, SKIP]);
+					if (pick === OPEN) {
+						if (!open(file)) ctx.ui.notify(`Open it yourself: ${file}`, "info");
+						opened = true;
+						continue;
+					}
+					rmSync(file, { force: true });
+					if (pick !== SEND) return text("The user did not send the report. Ask what to change, or leave it.");
+					return text(await sendReport(cfg, report));
+				}
 			},
 		});
 		pi.registerCommand("report", {

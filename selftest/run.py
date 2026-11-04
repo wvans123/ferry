@@ -978,15 +978,26 @@ def check_install_update(root: Path) -> None:
                            timeout=600, stdin=subprocess.DEVNULL, shell=False)
         return p.returncode, p.stdout + p.stderr
 
-    # a newer release: same client, version 99.0.0
-    zpath = root / "ferry-windows-99.0.0.zip"
+    # a newer release: same client, version 99.0.0 (a full package); then 99.0.1 with the same dependencies,
+    # published as a small package as well, which is what the update should take
     pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    with zipfile.ZipFile(zpath, "w") as z:
-        z.writestr("ferry-99.0.0/package.json", json.dumps({**pkg, "version": "99.0.0"}))
-        for f in (ROOT / "client").rglob("*"):
-            if f.is_file():
-                z.write(f, "ferry-99.0.0/" + f.relative_to(ROOT).as_posix())
-    files = {"/latest": b"", "/zip": zpath.read_bytes()}
+    deps = {"node": "n-test", "python": "p-test", "tools": "t-test"}
+
+    def package(version: str, small: bool) -> Path:
+        zp = root / f"ferry-{'app' if small else 'windows'}-{version}.zip"
+        with zipfile.ZipFile(zp, "w") as z:
+            z.writestr(f"ferry-{version}/package.json", json.dumps({**pkg, "version": version}))
+            z.writestr(f"ferry-{version}/deps.json", json.dumps({"version": version, **deps}))
+            if small:
+                z.writestr(f"ferry-{version}/small-package.json", "{}")
+            for f in (ROOT / "client").rglob("*"):
+                if f.is_file():
+                    z.write(f, f"ferry-{version}/" + f.relative_to(ROOT).as_posix())
+        return zp
+
+    zpath = package("99.0.0", False)
+    files = {"/latest": b"", "/zip": zpath.read_bytes(), "/full2": package("99.0.1", False).read_bytes(),
+             "/app2": package("99.0.1", True).read_bytes(), "/deps2": json.dumps({"version": "99.0.1", **deps}).encode()}
 
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1009,13 +1020,21 @@ def check_install_update(root: Path) -> None:
         c4, v2 = run([*shim, "--version"])
         c5, o5 = run([*shim, "update"])
         versions = sorted(p.name for p in (inst / "versions").iterdir()) if (inst / "versions").exists() else []
+        # 99.0.1: the same dependencies, so only the small package is downloaded
+        asset = lambda name, path: {"name": name, "size": len(files[path]), "browser_download_url": f"http://127.0.0.1:9200{path}"}
+        files["/latest"] = json.dumps({"tag_name": "v99.0.1", "assets": [
+            asset("ferry-windows-99.0.1.zip", "/full2"), asset("ferry-app-99.0.1.zip", "/app2"),
+            asset("ferry-deps-99.0.1.json", "/deps2")]}).encode()
+        c6, o6 = run([*shim, "update"])
+        c7, v3 = run([*shim, "--version"])
+        small_ok = c6 == 0 and "Downloading ferry-app-99.0.1.zip" in o6 and "Small package" in o6 and v3.strip() == "99.0.1"
         ok = (c1 == 0 and c2 == 0 and v1.strip() == pkg["version"] and "  server    " in o1 and c3 == 0 and "Updated from" in o3
               and c4 == 0 and v2.strip() == "99.0.0" and c5 == 0 and "is the latest version" in o5
-              and versions == sorted([pkg["version"], "99.0.0"]))
+              and versions == sorted([pkg["version"], "99.0.0"]) and small_ok)
         check("F24 安装与一键更新", ok, f"ferry install 后版本 {v1.strip()}；ferry update 从发布页下载新包后版本 "
-              f"{v2.strip()}；再次 update 提示已是最新；保留版本 {versions}")
+              f"{v2.strip()}；再次 update 提示已是最新；保留版本 {versions}；依赖没变时只下载小包，更新到 {v3.strip()}")
         if not ok:
-            print("\n".join(["--- install", o1, "--- update", o3, "--- update again", o5]))
+            print("\n".join(["--- install", o1, "--- update", o3, "--- update again", o5, "--- small update", o6]))
     finally:
         srv.shutdown()
         shutil.rmtree(inst, ignore_errors=True)
