@@ -115,15 +115,19 @@ def load(cfg: Config, rid: str) -> dict | None:
     return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
 
 
-def recent(cfg: Config, n: int = 30) -> list[dict]:
-    out = []
-    for f in sorted(_dir(cfg).glob("*.json"), reverse=True)[:n]:
+def recent(cfg: Config, n: int = 30) -> tuple[list[dict], int]:
+    """(the latest reports that did not reach GitHub, how many did). Sent ones are on GitHub; only the others need you."""
+    out, sent = [], 0
+    for f in sorted(_dir(cfg).glob("*.json"), reverse=True):
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        out.append({k: r.get(k, "") for k in ("id", "title", "user", "issue", "error", "created")})
-    return out
+        if r.get("issue"):
+            sent += 1
+        elif len(out) < n:
+            out.append({k: r.get(k, "") for k in ("id", "title", "user", "issue", "error", "created")})
+    return out, sent
 
 
 def build(cfg: Config, b: dict, user: str, device: str, server_version: str) -> dict:

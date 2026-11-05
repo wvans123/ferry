@@ -115,7 +115,7 @@ agent 读公开的网页（`web_fetch`）时，工作电脑只把地址发过来
 1. 在 GitHub 上建一个 fine-grained personal access token：Settings → Developer settings → Fine-grained tokens，Repository access 只选 `wvans123/ferry`，Permissions 里只给 Issues 读写。
 2. 管理页 → 设置 → 问题报告，填仓库（默认 `wvans123/ferry`）和这个令牌，保存。令牌存在数据目录的 `github-token` 文件里，管理页不再显示它。
 
-发出前，服务端会隐去这些内容：问题报告卡片里列的词（公司名、产品名、项目代号、主机名，一行一个）、内网 IP、邮箱、手机号、Key、路径里的用户名（`C:\Users\<user>\...`）。每份报告都存在数据目录的 `data/reports/` 里，管理页列出最近 30 份：发成功的带 issue 链接，没发出的写着原因，可以再发一次。
+发出前，服务端会隐去这些内容：问题报告卡片里列的词（公司名、产品名、项目代号、主机名，一行一个）、内网 IP、邮箱、手机号、Key、路径里的用户名（`C:\Users\<user>\...`）。每份报告都存在数据目录的 `data/reports/` 里。管理页只列出没发出去的（写着原因，可以再发一次）；已经发到 GitHub 的只显示一共几份，和一个到 GitHub 上看的链接。
 
 公开仓库的 issue 谁都能看。不想公开，就建一个私有仓库专门收报告，把仓库名填成它。
 

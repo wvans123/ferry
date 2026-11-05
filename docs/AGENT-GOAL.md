@@ -425,3 +425,4 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | 工作电脑传的网页太多 | 公开网页改由服务端读（`POST /v1/ferry/read`）：有 DeepSeek Key 时用它的读网页 API（Markdown，不少脚本生成的网页也能读），否则服务端自己下载；带问题时只拿回回答。工作电脑只发地址。内网、私有地址、`localSites`、服务端读不到的、PDF/Office 文件仍在工作电脑上读；服务端不读私有网络地址（含跳转） | 客户端和服务端单元测试 |
 | `ferry browser login` 要单独敲命令、登完还要关窗口，很别扭 | 要登录时 agent 运行 `ferry browser login 地址`：同一个浏览器和资料夹按普通方式打开（带调试端口），只看页面地址等你登录好，再把 agent-browser 连上这个窗口，agent 直接接着做；`ferry browser hide` 或 ferry 退出时关掉窗口，回到后台，登录还在 | 客户端单元测试 |
 | npm audit 报 undici 有高危漏洞 | undici 从 8.10.2 升到 8.12.3（修了 8 个漏洞，包括证书校验被绕过和几种拒绝服务），并让 pi 和 openai SDK 共用这一份；`npm audit` 0 个漏洞。Node 要求写明 22.19 以上（undici 8 本来就要） | 全部测试 |
+| 管理页的问题报告列表太长 | 只列出没发出去的报告（可以再发一次）；已经发到 GitHub 的只显示一共几份和一个到 GitHub 上看的链接 | 服务端单元测试 |
