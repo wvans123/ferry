@@ -14,7 +14,7 @@
     "client/ferry.cmd"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.5.0",
@@ -23,7 +23,7 @@
     "agent-browser": "0.41.1",
     "fflate": "0.8.3",
     "typebox": "1.3.27",
-    "undici": "8.10.2",
+    "undici": "8.12.3",
     "unpdf": "1.9.1"
   },
   "license": "MIT",
@@ -33,7 +33,8 @@
     "@earendil-works/pi-codemode": "1.5.0",
     "@earendil-works/pi-mcp": "1.5.0",
     "@earendil-works/pi-tui": "1.5.0",
-    "@earendil-works/pi-coding-agent": "1.5.0"
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "undici": "$undici"
   },
   "repository": {
     "type": "git",
