@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { serverHeaders } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
+import { wrapExternal } from "./external.mjs";
 
 export { gatewayPage };
 
@@ -379,7 +380,7 @@ export function createWeb(cfg) {
 			const more = r.next_offset != null
 				? `\n\n[Page continues: ${r.chars - r.next_offset} more characters. Call web_fetch with offset ${r.next_offset}.]` : "";
 			return {
-				content: [{ type: "text", text: `${r.title ? `# ${r.title}\n` : ""}${r.url}\n\n${r.text}${more}` }],
+				content: [{ type: "text", text: wrapExternal(r.url, `${r.title ? `# ${r.title}\n` : ""}${r.url}\n\n${r.text}${more}`) }],
 				details: { url: r.url, status: r.status, chars: r.chars },
 			};
 		};
@@ -402,8 +403,7 @@ export function createWeb(cfg) {
 					try {
 						const r = await readByServer(cfg, params.url, prompt0, Number(params.offset) || 0, signal);
 						if (r?.answer) {
-							return { content: [{ type: "text", text: `${r.title ? `# ${r.title}\n` : ""}${r.url}\n\n${r.answer}\n\n` +
-								`[Answered from the page by ${r.model}. For exact wording, code or tables, call web_fetch without prompt.]` }],
+							return { content: [{ type: "text", text: wrapExternal(r.url, `${r.title ? `# ${r.title}\n` : ""}${r.url}\n\n${r.answer}`) + `\n\n[Answered from the page by ${r.model}. For exact wording, code or tables, call web_fetch without prompt.]` }],
 								details: { url: r.url, chars: r.chars, answeredBy: r.model, readBy: "server" } };
 						}
 						if (r && typeof r.text === "string") return show({ ...r, readBy: "server" });
@@ -427,8 +427,7 @@ export function createWeb(cfg) {
 						const out = await readOnServer(cfg, page, prompt, signal);
 						if (out) {
 							const more = page.text.length > READ_CHARS ? ` Only the first ${READ_CHARS} of its ${page.text.length} characters were read.` : "";
-							return { content: [{ type: "text", text: `${page.title ? `# ${page.title}\n` : ""}${page.url}\n\n${out.answer}\n\n` +
-								`[Answered from the page by ${out.model}.${more} For exact wording, code or tables, call web_fetch without prompt.]` }],
+							return { content: [{ type: "text", text: wrapExternal(page.url, `${page.title ? `# ${page.title}\n` : ""}${page.url}\n\n${out.answer}`) + `\n\n[Answered from the page by ${out.model}.${more} For exact wording, code or tables, call web_fetch without prompt.]` }],
 								details: { url: page.url, status: page.status, chars: page.text.length, answeredBy: out.model } };
 						}
 						note = "[The Ferry server cannot read pages for you, so this is the page's text; look for the answer to your question in it.]\n\n";
@@ -477,7 +476,7 @@ export function createWeb(cfg) {
 				const text = r.results.length
 					? r.results.map((x, i) => `${i + 1}. ${x.title}${x.date ? ` (${String(x.date).slice(0, 10)})` : ""}\n   ${x.url}\n   ${String(x.snippet ?? "").slice(0, 600)}`).join("\n\n")
 					: `No results for "${params.query}". Try other words.`;
-				return { content: [{ type: "text", text: text + note }], details: { count: r.results.length, engine: r.engine ?? "bing" } };
+				return { content: [{ type: "text", text: wrapExternal(`web_search: ${params.query}`, text) + note }], details: { count: r.results.length, engine: r.engine ?? "bing" } };
 			},
 		});
 	};
