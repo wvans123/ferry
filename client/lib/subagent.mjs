@@ -64,7 +64,8 @@ read; only your report goes back.
 - Plan two or three different searches before the first one (other words, the other language, the official name,
   site: for the source that would know). Use recent when the answer changes over time.
 - Open the most promising results with web_fetch; snippets are not evidence. Follow links to the primary source.
-- A page that reads empty is built by JavaScript: open it with agent-browser if the browser skill is there.
+- A page that reads empty is built by JavaScript: open it with agent-browser if the browser skill is there. If the
+  search results stay off-topic, search in the browser instead (open the search engine's address, then read it).
 - Note the date and version of what you read. Look for a second source on the key facts.
 - Use bash only to read (agent-browser, curl to look at something); do not download into the project unless the
   task says so.
@@ -94,7 +95,7 @@ function parseAgentFile(file) {
 	if (!head.name) return null;
 	const tools = head.tools ? head.tools.split(/[,\s]+/).map((t) => t.trim().toLowerCase()).filter(Boolean)
 		.map((t) => ({ glob: "find", bash: "bash", read: "read", edit: "edit", write: "write", grep: "grep", ls: "ls" })[t] ?? t) : null;
-	// model: a model id the Ferry server lists (e.g. deepseek-flash for cheap searches); empty = the main agent's model
+	// model: a model id the Ferry server lists (e.g. a thinking model for research); empty = the main agent's model
 	return { name: head.name, description: head.description, tools, model: head.model || "", prompt: m[2].trim(), file };
 }
 
@@ -292,6 +293,8 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 		resourceLoader: loader,
 		sessionManager: SessionManager.inMemory(cwd),
 		model: pickModel(agent, ctx),
+		// it thinks as much as the main conversation does (pi clamps the level to what the model can do)
+		thinkingLevel: pi.getThinkingLevel?.(),
 		tools,
 	});
 	const steps = [];

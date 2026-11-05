@@ -39,11 +39,12 @@ export function steerNote({ doing, waitedFor, partial, request }, skipped = 0, t
 		`At that moment you were ${at}${todo ? `, on the to-do item "${todo}"` : ""}. ` +
 		(partial ? `What you had written so far (stopped, so it is not in the conversation): "${partial}". ` : "") +
 		(skipped ? `${skipped} tool call(s) you had started were not run. ` : "") +
-		"Take the message as a change of course: where it conflicts with your earlier plan, it wins; the rest of the " +
-		"request still stands unless the message says otherwise. " +
-		"Before more tool calls, say in a sentence or two what you now understand the user wants and what you will do differently. " +
-		"If the user says something you did was wrong, say what was wrong and which of your changes need undoing, then fix them. " +
-		"Update the to-do list if the plan changed. If the message only adds a detail, take it into account and carry on.]";
+		"Read the message together with that request; it is one of these: " +
+		"a question (answer it in a few sentences, then carry on with the task); " +
+		"a correction of direction (say in a sentence or two what you now understand and what you will do differently; if " +
+		"something you did was wrong, say which of your changes need undoing and fix them; update the to-do list); " +
+		"or something the user forgot to say (take it in, adjust what is affected, including work already done, and carry on). " +
+		"Where it conflicts with your earlier plan, it wins; the rest of the request still stands unless it says otherwise.]";
 }
 
 const SKIPPED = "Not run: the user interrupted with new instructions (they follow).";

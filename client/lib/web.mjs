@@ -269,6 +269,8 @@ export function createWeb(cfg) {
 				if (!r) {
 					r = await searchWeb(params.query, count, signal);
 					if (recent) note += `\n\n[Bing's page cannot limit results to the last ${recent}: check the dates yourself.]`;
+					if (cfg.browser !== false) note += "\n\n[These come from Bing's page as a program sees it. If they are off-topic, " +
+						"search in the browser (agent-browser) instead.]";
 				}
 				const text = r.results.length
 					? r.results.map((x, i) => `${i + 1}. ${x.title}${x.date ? ` (${String(x.date).slice(0, 10)})` : ""}\n   ${x.url}\n   ${String(x.snippet ?? "").slice(0, 600)}`).join("\n\n")

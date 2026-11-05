@@ -65,9 +65,9 @@ test("a research subagent is built in; a short agent file only changes its model
 	const r = discoverAgents(process.env.FERRY_HOME).find((a) => a.name === "research");
 	assert.ok(r && r.tools.includes("web_search") && r.tools.includes("web_fetch") && !r.tools.includes("edit"));
 	mkdirSync(join(process.env.FERRY_HOME, "agents"), { recursive: true });
-	writeFileSync(join(process.env.FERRY_HOME, "agents", "research.md"), "---\nname: research\nmodel: deepseek-flash\n---\n");
+	writeFileSync(join(process.env.FERRY_HOME, "agents", "research.md"), "---\nname: research\nmodel: deepseek-think\n---\n");
 	const mine = discoverAgents(process.env.FERRY_HOME).find((a) => a.name === "research");
-	assert.equal(mine.model, "deepseek-flash");
+	assert.equal(mine.model, "deepseek-think");
 	assert.equal(mine.prompt, r.prompt);
 	assert.deepEqual(mine.tools, r.tools);
 });

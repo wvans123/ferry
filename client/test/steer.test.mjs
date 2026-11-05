@@ -8,7 +8,9 @@ test("the note tells the agent it was interrupted, what it was doing, and to re-
 	assert.match(n, /running bash \(npm test\); it was allowed to finish/);
 	assert.match(n, /to-do item "fix the parser"/);
 	assert.match(n, /1 tool call\(s\) you had started were not run/);
-	assert.match(n, /what was wrong and which of your changes need undoing/);
+	assert.match(n, /which of your changes need undoing/);
+	assert.match(n, /a question \(answer it in a few sentences, then carry on/);
+	assert.match(n, /something the user forgot to say/);
 	const m = steerNote({ doing: "writing your next step", partial: "First, I will delete" }, 0, "");
 	assert.match(m, /What you had written so far .*"First, I will delete"/);
 	assert.doesNotMatch(m, /tool call\(s\)/);
