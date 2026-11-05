@@ -162,6 +162,15 @@ def decide_agent(msgs):
         return ("text", "GSAVED: " + text_of(tools[-1]))
     if "GMEMTEST-RECALL" in first:
         return ("text", "GINDEX HAS prefers-tea" if "[prefers-tea](prefers-tea.md)" in system else "NO GLOBAL MEMORY")
+    if "MEMTEST-OVERWRITE" in first:  # save under a name that exists: first without, then with replace
+        if len(tools) == 0:
+            return ("tool", "memory", {"action": "save", "scope": "project", "name": "test-db", "content": "Use the real database. Port 5433."})
+        if len(tools) == 1:
+            return ("tool", "memory", {"action": "save", "scope": "project", "name": "test-db", "content": "Use mocks for everything."})
+        if len(tools) == 2:
+            return ("tool", "memory", {"action": "save", "scope": "project", "name": "test-db", "replace": True,
+                                       "content": "Real database on port 5433; mocks for the mailer."})
+        return ("text", "OVERWRITE-DONE: " + text_of(tools[1])[:260])
     if "MEMTEST-SAVE" in first:
         if not tools:
             return ("tool", "memory", {"action": "save", "scope": "project", "name": "test-db",

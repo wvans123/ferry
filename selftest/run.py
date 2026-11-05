@@ -255,6 +255,21 @@ PNG_1PX = __import__("base64").b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
 
+def check_memory_overwrite(root: Path, work: Path) -> None:
+    """Saving a memory under an existing name does not silently replace it."""
+    s = Stack(root, work, "agent")
+    try:
+        code, out = s.ferry("-p", "MEMTEST-OVERWRITE: save the database note three times")
+        files = list((s.home / "memory" / "projects").glob("*/test-db.md"))
+        final = files[0].read_text(encoding="utf-8") if files else ""
+        ok = (code == 0 and "nothing was saved" in out and "Port 5433" in out and len(files) == 1
+              and "mailer" in final and "Use mocks for everything" not in final)
+        check("F78 记忆不会被同名覆盖", ok, "同名再存一条不同内容：旧内容原样保留并返回给 agent，让它合并后加 replace 再存；带 replace 才覆盖"
+              if ok else f"code={code} files={len(files)} final={final!r} out={out[-300:]!r}")
+    finally:
+        s.close()
+
+
 def check_claude_goal_jobs(root: Path, work: Path) -> None:
     """Claude through the Anthropic Messages API (sync, prompt-cache markers, pictures, cost), /goal, background jobs."""
     (work / "pic.png").write_bytes(PNG_1PX)
@@ -1392,7 +1407,7 @@ STEPS = [
     (part_basic, ""), (part_long, ""), (part_nostore, ""), (part_drop, ""),
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
-    (check_agent_features, "agent"), (check_web_browser, "web"), (check_gateway, "gateway"),
+    (check_agent_features, "agent"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),

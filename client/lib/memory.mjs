@@ -103,7 +103,7 @@ async function serverJson(cfg, method, path, body) {
 	const res = await fetch(`${cfg.server}${path}`, { method, redirect: "manual", signal: AbortSignal.timeout(8000),
 		headers: serverHeaders(cfg, body ? { "Content-Type": "application/json" } : {}), body: body ? JSON.stringify(body) : undefined });
 	const json = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
-	if (!res.ok || !json) throw new Error(json?.error?.message ?? `the Ferry server answered HTTP ${res.status}`);
+	if (!res.ok || !json) throw Object.assign(new Error(json?.error?.message ?? `the Ferry server answered HTTP ${res.status}`), { status: res.status });
 	return json;
 }
 
@@ -139,6 +139,16 @@ async function runGlobal(cfg, params) {
 	if (params.action === "save") {
 		const content = String(params.content ?? "").trim();
 		if (!content) throw new Error("content is required");
+		if (!params.replace) {
+			let old = null;
+			try {
+				old = (await serverJson(cfg, "GET", path)).content;
+			} catch (e) {
+				if (e.status !== 404) throw new Error(`could not check whether memory ${name} exists: ${e.message}; try again`);
+			}
+			if (typeof old === "string" && old.trim() === content) return text(`Memory "${name}" already has this content; nothing to do.`);
+			if (typeof old === "string" && old.trim()) return text(exists("global", name, old));
+		}
 		const r = await serverJson(cfg, "PUT", path, { description: String(params.description ?? "").trim(), content });
 		await refreshGlobal(cfg, true);
 		return text(`Saved global memory "${r.name}" (on the Ferry server, for all your computers).`);
@@ -178,7 +188,7 @@ ${project || "(empty)"}${team}`;
 
 const Params = Type.Object({
 	action: StringEnum(["save", "read", "delete", "list"], {
-		description: "save: create or replace a memory; read: show one memory (or the index without name); delete; list: both indexes",
+		description: "save: create a memory (an existing name needs replace: true); read: show one memory (or the index without name); delete; list: both indexes",
 	}),
 	scope: Type.Optional(StringEnum(["user", "project", "role", "global"], {
 		description: "user: every project on this computer; project: this folder only (in a team: shared by all members); " +
@@ -186,7 +196,13 @@ const Params = Type.Object({
 	name: Type.Optional(Type.String({ description: "Short file name, e.g. test-database or prefers-chinese-replies" })),
 	description: Type.Optional(Type.String({ description: "save: one line for the index, saying when this memory is useful" })),
 	content: Type.Optional(Type.String({ description: "save: the memory itself, in Markdown. Keep it short." })),
+	replace: Type.Optional(Type.Boolean({ description: "save: true to overwrite an existing memory of this name (merge the old content into the new first)" })),
 });
+
+/** What a save answers when the name is taken and the content differs: nothing is written. */
+const exists = (scope, name, old) => `A ${scope} memory named "${name}" already exists and your content is different, so nothing was saved. ` +
+	"Its current content:\n\n" + `${old.trim()}\n\n` +
+	'Merge what is still true in it into your new content and save again with replace: true, or save under another name.';
 
 function runMemory(params, cwd) {
 	const scope = params.scope === "user" ? "user" : params.scope === "role" && teamMember() ? "role" : "project";
@@ -215,9 +231,15 @@ function runMemory(params, cwd) {
 		const description = String(params.description ?? "").trim() || content.split("\n")[0].slice(0, 120);
 		if (!content) throw new Error("content is required");
 		if (Buffer.byteLength(content) > MEMORY_MAX_BYTES) throw new Error("A memory must be under 16 KB: keep only what matters later");
+		const file = join(dir, `${name}.md`);
+		if (existsSync(file) && !params.replace) {
+			const old = readFileSync(file, "utf8");
+			if (old.trim() === content) return text(`Memory "${name}" already has this content; nothing to do.`);
+			return text(exists(scope, name, old));
+		}
 		mkdirSync(dir, { recursive: true });
 		if (scope === "project") writeFileSync(join(dir, ".folder"), cwd, "utf8"); // which folder this is, for people
-		writeFileSync(join(dir, `${name}.md`), `${content}\n`, "utf8");
+		writeFileSync(file, `${content}\n`, "utf8");
 		writeIndexLine(dir, name, description);
 		return text(`Saved ${scope} memory "${name}".`);
 	}
@@ -250,6 +272,7 @@ export function createMemory(cfg) {
 			name: "memory",
 			label: "Memory",
 			description: "Read and write your memory that lasts across conversations (user scope and project scope). " +
+				"Saving under a name that exists does not overwrite it: you get the old content back, then save again with replace: true. " +
 				"Only the indexes are in your instructions; read a memory before relying on it.",
 			promptSnippet: "Save, read and delete memories that last across conversations",
 			parameters: Params,
@@ -282,7 +305,7 @@ export function createMemory(cfg) {
 					text = text.replace(/^\S+\s+/, "");
 				}
 				const name = slug(text.split(/\s+/).slice(0, 6).join("-")) || `note-${Date.now()}`;
-				const params = { action: "save", scope, name, description: text.slice(0, 120), content: text };
+				const params = { action: "save", scope, name, description: text.slice(0, 120), content: text, replace: true };
 				try {
 					const r = scope === "global" ? await runGlobal(cfg, params) : runMemory(params, cwd);
 					tell(ctx, r.content[0].text, "info");
