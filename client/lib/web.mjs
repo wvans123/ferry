@@ -227,7 +227,7 @@ export async function searchServer(cfg, query, count = 8, recent = "", signal, s
 		body: JSON.stringify({ query, count, recent, allowed_domains: sites.allowed ?? [], blocked_domains: sites.blocked ?? [] }),
 	});
 	let res = await ask();
-	if ([502, 503, 504].includes(res.status)) {  // a tunnel or gateway hiccup usually clears in a second: ask once more
+	if ([502, 503, 504].includes(res.status) && !res.headers.get("content-type")?.includes("json")) {  // a tunnel or gateway page (not the server's own JSON error) usually clears in a second: ask once more
 		await new Promise((done) => setTimeout(done, Number(process.env.FERRY_SEARCH_RETRY_MS ?? 1500)));
 		if (signal?.aborted) throw signal.reason;
 		res = await ask();

@@ -70,6 +70,14 @@ test("an error the server wrote itself is not retried and keeps its text", async
 	});
 });
 
+test("a JSON 502 with the server's own error is not retried", async () => {
+	const bad = () => new Response(JSON.stringify({ error: "tavily answered HTTP 500: boom" }), { status: 502, headers: { "content-type": "application/json" } });
+	await withFetch([bad], async (calls) => {
+		await assert.rejects(searchServer(cfg, "6G"), (e) => !e.nonJson && /tavily answered HTTP 500: boom/.test(e.message));
+		assert.equal(calls.length, 1);
+	});
+});
+
 test("Bing's page is asked with strict SafeSearch", async () => {
 	await withFetch([new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } })], async (calls) => {
 		await searchWeb("6G IMS", 8, undefined, "http://bing.test");
