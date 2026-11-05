@@ -68,6 +68,21 @@ reproduced with made-up content becomes a new task in evals/tasks/.
 Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `integrations`
 (docs/ROADMAP.md).
 
+## Where things stand (2026-11-05, end of the cloud session that built 0.25 to 0.31)
+
+- Released: 0.30.0 (main). Ready but not merged: 0.31.0 on `claude/lucid-cori-4u8ucg` (server reads public pages,
+  one-window browser login, undici 8.12.3). All tests pass there; the owner merges through a PR.
+- Web, as it is now: search and public pages are done by the server (DeepSeek's Search/Fetch APIs with the
+  server's DeepSeek key when it has one; else a search API, a model's own search, or Bing on the PC). Intranet and
+  private addresses, `localSites`, files, and pages the server cannot reach are read on the PC; logins and site
+  operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
+- Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses
+  automated sign-in), waits for the sign-in, then connects agent-browser; private-data commands always ask.
+- pi 1.5.0. Note: pi's Claude effort messages are turned off in sync.mjs modelDef (relays dropped them, #9).
+- Not verified on a real machine yet: Google sign-in through `ferry browser login`; the model-native search and
+  DeepSeek Fetch paths against the real APIs (unit tests use mocks). evals/run.py has not been run since 0.26.
+- Candidate next work is listed in docs/ROADMAP.md ("下一步候选").
+
 ## Where earlier context is
 
 - git log (detailed commit bodies) and docs/AGENT-GOAL.md (every version: problem, change, test).
