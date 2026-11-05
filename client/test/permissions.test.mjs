@@ -195,8 +195,9 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	mkdirSync(join(proj, "new", "deep"), { recursive: true });
 	writeFileSync(join(proj, "new", "deep", "a.txt"), "x");
 	assert.equal(v("rm -rf new").action, "allow");
-	assert.equal(v(`rm ${join(proj, "new", "deep", "a.txt")}`).action, "allow"); // absolute paths are paths, not /switches
-	assert.equal(v(`rm ${join(proj, "old.txt")}`).action, "ask");
+	const fwd = (p) => p.replaceAll("\\", "/"); // a bash command takes C:/x on Windows (a backslash is an escape there)
+	assert.equal(v(`rm ${fwd(join(proj, "new", "deep", "a.txt"))}`).action, "allow"); // absolute paths are paths, not /switches
+	assert.equal(v(`rm ${fwd(join(proj, "old.txt"))}`).action, "ask");
 	assert.equal(v("del /s /q old.txt").action, "ask");
 	assert.deepEqual(P.deleteTargets("rm /c/x/new.txt"), ["/c/x/new.txt"]);
 	assert.deepEqual(P.deleteTargets("del /s /q old"), ["old"]);
