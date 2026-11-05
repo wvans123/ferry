@@ -2,7 +2,7 @@
 
 This file is the project's memory. Every Claude session (cloud, desktop, local) reads it at start, so
 anything a later session must know goes here, not only in a chat. Keep it short and current; history
-lives in git log and docs/AGENT-GOAL.md.
+lives in merged PRs and git log.
 
 ## What Ferry is
 
@@ -44,22 +44,34 @@ F check and docs section. Add or remove a feature by adding or removing its modu
 skill file (the agent calls it with bash) over a new tool definition.
 
 
-1. One module per change; test that module, then run everything before a release:
-   `pytest server/tests`, `node --test "client/test/*.test.mjs"`, `python selftest/run.py`
-   (end-to-end with a fake model, fake proxy and fake gateway; no keys needed; takes several minutes).
-2. A user-visible behaviour gets an end-to-end check in selftest/run.py with the next free F number,
-   listed in GOAL.md.
-3. Release = bump the version in package.json, package-lock.json, server/pyproject.toml and
-   server/ferry_server/__init__.py. CI on main tests on Linux and Windows and publishes the offline
-   Windows package; `ferry update` picks it up.
-4. Commit title `Ferry x.y.z: what changed for the user`, body as short bullets. Update GOAL.md
-   ("最近一次结果") and add a `## vX.Y` table to docs/AGENT-GOAL.md (问题 / 改了什么 / 自测).
-5. User docs: README.md is the short entry page; details go in docs/USAGE.md (users) and
-   docs/SERVER.md (server). Do not let README grow back into a manual.
+Keep each change small and cheap: tokens go into reading big files and waiting for tests, so do neither more than
+the change needs.
 
-6. Before a release that changes how the agent works, the owner runs `python evals/run.py` on their Windows PC
+1. One issue or one module per change. Start a fresh branch from the current main (`claude/<short-name>`); never
+   keep adding to an old branch. One branch, one PR, one small version; squash-merge it and delete the branch.
+2. Read only what the module needs: its own files, the one line that plugs it in, docs/MODULES.md. Do not read the
+   big shared files whole (selftest/run.py, server/ferry_server/admin.html, app.py, client/bin/ferry.mjs,
+   package-lock.json): grep for the spot you change and read that range.
+3. Test locally only what changed: the module's unit tests (`pytest server/tests/test_<name>.py`,
+   `node --test client/test/<name>.test.mjs`) and its end-to-end checks, `python selftest/run.py --only F66,F67`
+   (`--list` shows which step holds which F; one step takes seconds). The full run (all unit tests and the whole
+   self-test on Linux and Windows, several minutes) is CI's job on the pull request: wait for it and read the result,
+   do not repeat it locally.
+4. A user-visible behaviour gets an end-to-end check in selftest/run.py with the next free F number, listed in GOAL.md.
+5. Release = `python scripts/bump.py x.y.z` (package.json, package-lock.json, server/pyproject.toml,
+   server/ferry_server/__init__.py). Merging the PR to main publishes it: CI skips tests that already passed on
+   the PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes
+   release v<version>; `ferry update` picks it up.
+6. PR and commit title `Ferry x.y.z: what changed for the user`. The PR description holds the version's record:
+   a table 问题 / 改了什么 / 自测 (versions up to 0.30 are in docs/history/). Update GOAL.md's "最近一次结果" line.
+7. User docs: README.md is the short entry page; details go in docs/USAGE.md (users) and
+   docs/SERVER.md (server). Do not let README grow back into a manual.
+8. Before a release that changes how the agent works, the owner runs `python evals/run.py` on their Windows PC
    (real DeepSeek) and pushes the result file in evals/results/; compare it with the previous one. Keep
    `python evals/run.py --verify` passing when tasks change.
+
+How the owner splits the work: one main session plans and reviews; each module is built in its own session
+(complex modules with Opus, simple ones with Sonnet), tests run with Haiku; the main session accepts and merges.
 
 Work comes from real problems: `/report` in ferry turns one into a GitHub issue (posted by the owner's Ferry
 server, label-free, title starts with `[report]`). Take one issue per branch / PR. A real failure that can be
@@ -70,6 +82,7 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
 
 ## Where earlier context is
 
-- git log (detailed commit bodies) and docs/AGENT-GOAL.md (every version: problem, change, test).
+- Merged PRs and git log (every version: problem, change, test); docs/history/ for versions up to 0.30.
+- docs/AGENT-GOAL.md: the agent's goal list.
 - docs/ROADMAP.md: plan and what is still missing.
 - Earlier conversations were Claude Cowork cloud sessions; the commit trailers link to them.

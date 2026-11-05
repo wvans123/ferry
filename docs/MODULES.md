@@ -10,7 +10,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 接入 | `client/bin/ferry.mjs` 的 `extensionFactories` 里一行 | `app.py` 末尾一行 `<名字>.mount(...)` |
 | 设置 | 写在 `client/lib/config.mjs` 的 `DEFAULTS` 和 `SETTINGS` 里；能关的给一个开关 | 写在 `config.py` 的 `Config` 里；管理页上要改的，在 `admin.py` / `admin.html` 加一块 |
 | 测试 | `client/test/<名字>.test.mjs` | `server/tests/test_<名字>.py` |
-| 端到端 | 用户能看到的行为，在 `selftest/run.py` 加一项检查（下一个空着的 F 编号），列进 GOAL.md | 同左 |
+| 端到端 | 用户能看到的行为，在 `selftest/run.py` 加一项检查（下一个空着的 F 编号），列进 GOAL.md；本地用 `--only F编号` 只跑它 | 同左 |
 | 文档 | `docs/USAGE.md` 里一节 | `docs/SERVER.md` 里一节 |
 
 规矩：
