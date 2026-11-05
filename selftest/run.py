@@ -948,6 +948,68 @@ def check_web_browser(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_search_502(root: Path, work: Path) -> None:
+    """A tunnel in front of the server answers the search call with a Cloudflare 502 page, twice."""
+    import http.client
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    hits = {"search": 0}
+
+    class Tunnel(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def log_message(self, *a):
+            pass
+
+        def go(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if self.path.startswith("/v1/ferry/search"):
+                hits["search"] += 1
+                page = b"<html><head><title>502 Bad Gateway</title></head><body>cloudflare</body></html>"
+                self.send_response(502)
+                for k, v in (("Content-Type", "text/html"), ("Server", "cloudflare"), ("CF-RAY", "test123-HKG"), ("Content-Length", str(len(page)))):
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(page)
+                return
+            conn = http.client.HTTPConnection("127.0.0.1", 8787, timeout=600)
+            conn.request(self.command, self.path, body or None, {k: v for k, v in self.headers.items() if k.lower() != "host"})
+            r = conn.getresponse()
+            self.send_response(r.status)
+            for k, v in r.getheaders():
+                if k.lower() not in ("transfer-encoding", "connection", "content-length"):
+                    self.send_header(k, v)
+            self.end_headers()
+            while chunk := r.read1(65536):
+                self.wfile.write(chunk)
+                self.wfile.flush()
+
+        do_GET = do_POST = do_PUT = do_DELETE = go
+
+    pages = {"FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100", "FERRY_SEARCH_RETRY_MS": "50"}
+    api = {"FERRY_SEARCH": "tavily", "FERRY_SEARCH_KEY": "tvly-test", "FERRY_SEARCH_API_TAVILY": "http://127.0.0.1:9100/tavily"}
+    s = Stack(root, work, "agent", server_env={**pages, **api})
+    tunnel = ThreadingHTTPServer(("127.0.0.1", 8788), Tunnel)
+    threading.Thread(target=tunnel.serve_forever, daemon=True).start()
+    try:
+        c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra={**pages, "FERRY_SERVER": "http://127.0.0.1:8788"})
+        rows = jsonl(s.upstream)
+        seen = json.dumps(rows[-1], ensure_ascii=False)
+        bing = [r for r in rows if "bing_path" in r]
+        ok73 = (c1 == 0 and hits["search"] == 2 and "not from the search engine" in seen and "not JSON" in seen
+                and "Cloudflare (cf-ray test123-HKG)" in seen and "these results are Bing's page" in seen)
+        check("F73 搜索遇到网关 502", ok73, "服务端前面的隧道对搜索返回两次 502 网页：客户端重试一次，再退回 Bing；"
+              "提示里说明回复不是 JSON、来自 Cloudflare（带 cf-ray），不是搜索引擎" if ok73 else
+              f"code={c1} search_hits={hits['search']} {seen[-500:]}")
+        ok74 = bool(bing) and all("adlt=strict" in r["bing_path"] and "ADLT=STRICT" in r["bing_cookie"] for r in bing)
+        check("F74 Bing 严格安全搜索", ok74, "退回 Bing 时，请求带 adlt=strict 和 SRCHHPGUSR=ADLT=STRICT，"
+              "搜 6G 不会出成人内容" if ok74 else f"bing requests: {bing}")
+    finally:
+        tunnel.shutdown()
+        tunnel.server_close()
+        s.close()
+
+
 def check_v018(root: Path, work: Path) -> None:
     """One token per computer, global memory shared by them, the blocked sites list."""
     s = Stack(root, work, "agent")
@@ -1335,7 +1397,7 @@ STEPS = [
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"),
-    (check_install_update, "install"),
+    (check_install_update, "install"), (check_search_502, "search502"),
 ]
 
 

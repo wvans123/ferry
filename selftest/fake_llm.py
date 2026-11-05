@@ -432,6 +432,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):  # the provider's model list, for the admin page's "fetch models"
         if self.path.startswith("/search"):  # a Bing-like results page, for web_search
+            with open(LOG, "a", encoding="utf-8") as f:  # so a test can see what the client asked Bing for
+                f.write(json.dumps({"bing_path": self.path, "bing_cookie": self.headers.get("Cookie", "")}) + "\n")
             return self.send_html('<ol><li class="b_algo"><h2><a href="http://127.0.0.1:9100/page.html">Ferry test page</a>'
                                   '</h2><div class="b_caption"><p>A page about ferries.</p></div></li></ol>')
         if self.path == "/gated":  # a site the company gateway wants confirmed first
