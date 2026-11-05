@@ -72,18 +72,47 @@ test("blocked sites hold for commands too: the browser and curl", () => {
 	assert.equal(fn({ toolName: "read", input: { path: "mail.corp.com" } }), undefined);
 });
 
-test("ferry browser login opens the agent's browser and profile without automation, after closing the agent's one", async () => {
-	const { browserLogin } = await import("../lib/browser.mjs");
+test("ferry browser login: an ordinary window, the agent connects once the user has signed in", async () => {
+	const { browserLogin, browserHide } = await import("../lib/browser.mjs");
 	const { EventEmitter } = await import("node:events");
-	let closed = false;
-	let ran = null;
-	const r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", {
-		close: () => { closed = true; },
-		spawn: (exe, args) => { ran = { exe, args }; const c = new EventEmitter(); setTimeout(() => c.emit("exit", 0), 10); return c; },
-	});
-	assert.ok(closed, "the agent's browser is closed first (one browser per profile)");
-	assert.equal(ran.exe, process.env.AGENT_BROWSER_EXECUTABLE_PATH || process.execPath);
-	assert.ok(ran.args[0].startsWith("--user-data-dir=") && ran.args[0].endsWith(r.profile));
-	assert.ok(!ran.args.some((a) => /remote-debugging|enable-automation/.test(a)), "not driven by a program");
-	assert.equal(ran.args.at(-1), "https://accounts.google.com");
+	const http = await import("node:http");
+	// a stand-in browser: its debugging port lists the pages the user goes through
+	const fakeBrowser = (pagesSeen) => (exe, args) => {
+		const port = Number(args.find((a) => a.startsWith("--remote-debugging-port=")).split("=")[1]);
+		let n = 0;
+		const s = http.createServer((req, res) => {
+			const url = pagesSeen[Math.min(n++, pagesSeen.length - 1)];
+			if (url === "closed") { s.close(); s.closeAllConnections(); return res.destroy(); }
+			res.end(JSON.stringify([{ type: "page", url }, { type: "service_worker", url: "https://x/sw.js" }]));
+		});
+		s.listen(port, "127.0.0.1");
+		const child = new EventEmitter();
+		child.pid = 0;
+		child.ran = { exe, args, server: s };
+		fakeBrowser.last = child;
+		return child;
+	};
+	const runs = [];
+	const run = (a) => runs.push(a.join(" "));
+	let r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 20,
+		spawn: fakeBrowser(["https://accounts.google.com/signin", "https://accounts.google.com/challenge/pwd",
+			"https://myaccount.google.com/", "https://myaccount.google.com/"]) });
+	fakeBrowser.last.ran.server.close();
+	assert.equal(r.state, "signed-in");
+	assert.deepEqual(runs, ["close --all", `connect ${r.port}`], "the agent's browser closed first, connected only after the sign-in");
+	assert.ok(r.args[0].startsWith("--user-data-dir=") && r.args.includes(`--remote-debugging-port=${r.port}`));
+	assert.ok(!r.args.some((a) => /enable-automation|headless/.test(a)), "an ordinary window");
+	// a site that was signed in already
+	runs.length = 0;
+	r = await browserLogin({ browserPath: process.execPath }, "https://app.example.com", { run, every: 20,
+		spawn: fakeBrowser(["https://app.example.com/home"]) });
+	fakeBrowser.last.ran.server.close();
+	assert.equal(r.state, "already");
+	// the user closes the window: nothing to connect to, the sign-in stays in the profile
+	runs.length = 0;
+	r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 20,
+		spawn: fakeBrowser(["https://accounts.google.com/signin", "closed"]) });
+	assert.equal(r.state, "closed");
+	assert.ok(!runs.some((x) => x.startsWith("connect")));
+	assert.equal(browserHide({ run }), false, "nothing left open");
 });

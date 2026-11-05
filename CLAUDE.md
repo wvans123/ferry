@@ -29,7 +29,7 @@ code map).
 |---|---|---|
 | Playwright MCP browser (`@playwright/mcp`) | 0.27 | replaced by agent-browser: a CLI the agent calls with bash plus a skill, no tool definitions, compact snapshots |
 | redaction (placeholders, word list, stream restoring) | 0.26 | off by default, never worked with Claude's own API, owner did not use it; /report keeps a small filter of its own |
-| server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. (0.29/0.30 search on the server is different: only the query or the page's text goes there, pages are still fetched on the PC) |
+| server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. Brought back in 0.30 at the owner's request in another form: search and public pages on the server (only the address goes up), intranet/private addresses still on the PC |
 | web_download tool | 0.24 | the agent downloads with curl like Cursor; commands get ferry's CA bundle and proxy |
 | web_render (Electron) and `ferry install-electron` | 0.24 | hardly needed, 100 MB download |
 | phone console `/m`, status reports, phone approvals | 0.24 | only showed titles; Bark notifications are enough |
