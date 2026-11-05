@@ -90,6 +90,9 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
   operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
 - Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses
   automated sign-in), waits for the sign-in, then connects agent-browser; private-data commands always ask.
+- Models (0.32): each server provider is its own pi provider, so /model shows `kiro/claude-opus-5.5`; "ferry" holds
+  `auto` and pooled models. Same-named models are pooled only between providers with `share = true` (0.29's
+  `separate` is gone). Client lookups go through `findFerryModel` / `FERRY_PROVIDERS` in config.mjs.
 - pi 1.5.0. Note: pi's Claude effort messages are turned off in sync.mjs modelDef (relays dropped them, #9).
 - Not verified on a real machine yet: Google sign-in through `ferry browser login`; the model-native search and
   DeepSeek Fetch paths against the real APIs (unit tests use mocks). evals/run.py has not been run since 0.26.

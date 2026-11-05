@@ -258,8 +258,25 @@ export function findBash() {
 	return candidates.find((p) => existsSync(p)) ?? "";
 }
 
-/** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept). */
-export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking = "medium", compactKeep = "") {
+/** pi providers Ferry registers: "ferry" ("auto" and shared models) and one per provider on the server ("kiro"). */
+export const FERRY_PROVIDERS = new Set(["ferry"]);
+
+/** The pi provider a server model (or a cached one) is shown under. */
+export const providerOf = (m) => (m && typeof m === "object" && m.provider) || "ferry";
+
+/** A Ferry model by id, whichever provider it is shown under (model ids are unique on the server). */
+export function findFerryModel(registry, id) {
+	for (const p of FERRY_PROVIDERS) {
+		const m = registry?.find?.(p, id);
+		if (m) return m;
+	}
+	return undefined;
+}
+
+/** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept).
+ * models: the server's models (or just ids); the default model is saved with the provider it is shown under. */
+export function ensureAgentDir(defaultModel, models = [defaultModel], thinking = "medium", compactKeep = "") {
+	const where = new Map(models.map((m) => (typeof m === "string" ? [m, "ferry"] : [m.id, providerOf(m)])));
 	scaffoldHome();
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
 	const file = join(AGENT_DIR, "settings.json");
@@ -267,15 +284,19 @@ export function ensureAgentDir(defaultModel, modelIds = [defaultModel], thinking
 	// Searching (grep, find, ls) is on by default; Windows without Git Bash runs commands through PowerShell
 	const shell = findBash() ? "bash" : "powershell";
 	const tools = ["read", shell, "edit", "write", "grep", "find", "ls"];
-	const defaults = { defaultProvider: "ferry", defaultModel, enableInstallTelemetry: false, defaultTools: tools };
+	const defaults = { defaultProvider: where.get(defaultModel) ?? "ferry", defaultModel, enableInstallTelemetry: false, defaultTools: tools };
 	const next = { ...defaults, ...cur };
 	// lists written by older Ferry versions, which nobody chose by hand: upgrade them
 	const old = JSON.stringify(next.defaultTools);
 	if (old === JSON.stringify(["read", "powershell", "edit", "write"]) || old === JSON.stringify(["read", "bash", "edit", "write"])) {
 		next.defaultTools = tools;
 	}
-	// the server's model list changed (e.g. a new API key): fall back to its first model
-	if (next.defaultProvider === "ferry" && !modelIds.includes(next.defaultModel)) next.defaultModel = defaultModel;
+	// one of Ferry's models: keep it under the provider it is shown under now ("ferry/x" saved by 0.31 or older becomes
+	// "kiro/x"); gone from the server (e.g. a new API key): fall back to its first model
+	if (next.defaultProvider === "ferry" || [...where.values()].includes(next.defaultProvider)) {
+		if (!where.has(next.defaultModel)) next.defaultModel = defaultModel;
+		next.defaultProvider = where.get(next.defaultModel) ?? "ferry";
+	}
 	next.defaultThinkingLevel = ["low", "medium", "high", "xhigh"].includes(thinking) ? thinking : "medium";
 	// pressing Esc twice on an empty input opened pi's session tree, which looked like being thrown out; /rewind does that job
 	if (!("doubleEscapeAction" in cur)) next.doubleEscapeAction = "none";

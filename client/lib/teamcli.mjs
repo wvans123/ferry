@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
-import { readModelsCache } from "./config.mjs";
+import { providerOf, readModelsCache } from "./config.mjs";
 import { openInBrowser } from "./gateway.mjs";
 
 const ROLES = ["ceo", "cto", "cmo", "cfo", "security", "engineer", "designer", "pm", "qa", "devops", "researcher", "general"];
@@ -177,7 +177,8 @@ async function run(args) {
 		if (byName(agents, name)) throw new Error(`${name} is already on the team`);
 		const command = String(opts.command ?? findFerry());
 		if (!command) throw new Error("ferry is not on PATH (run ferry install), or give the full path with --command");
-		const model = String(opts.model ?? `ferry/${(readModelsCache() ?? [{ id: "auto" }])[0].id}`);
+		const first = (readModelsCache() ?? [{ id: "auto" }])[0];
+		const model = String(opts.model ?? `${providerOf(first)}/${first.id}`);
 		const role = ROLES.includes(String(opts.role)) ? String(opts.role) : agents.length ? "general" : "ceo";
 		const boss = opts.boss ? byName(agents, opts.boss) : role === "ceo" ? null : agents.find((a) => a.role === "ceo");
 		if (opts.boss && !boss) throw new Error(`no member called ${opts.boss}`);

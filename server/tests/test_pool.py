@@ -17,10 +17,12 @@ expose = true
 [providers.a]
 base_url = "https://a.example.com/v1"
 api_key_env = "KEY_A"
+share = true
 
 [providers.b]
 base_url = "https://b.example.com/v1"
 api_key_env = "KEY_B"
+share = true
 
 [models.gpt]
 provider = "a"
@@ -108,7 +110,7 @@ def test_conversations_spread_stick_and_fail_over(tmp_path, monkeypatch):
     asyncio.run(go())
 
 
-def test_a_separate_provider_keeps_its_same_named_model_apart(tmp_path, monkeypatch):
+def test_by_default_a_provider_keeps_its_same_named_model_apart(tmp_path, monkeypatch):
     seen = []
 
     def handler(req: httpx.Request):
@@ -116,7 +118,7 @@ def test_a_separate_provider_keeps_its_same_named_model_apart(tmp_path, monkeypa
         return httpx.Response(503, json={"error": {"message": "overloaded"}}) if req.url.host == "a.example.com" else answer()
 
     cfg, app = make(tmp_path, monkeypatch, handler)
-    text = (tmp_path / "models.toml").read_text().replace('api_key_env = "KEY_B"', 'api_key_env = "KEY_B"\nname = "Relay B"\nseparate = true')
+    text = (tmp_path / "models.toml").read_text().replace('api_key_env = "KEY_B"\nshare = true', 'api_key_env = "KEY_B"\nname = "Relay B"')
     (tmp_path / "models.toml").write_text(text)
     cfg = load_default()
     app = app_mod.create_app(cfg)
@@ -127,7 +129,9 @@ def test_a_separate_provider_keeps_its_same_named_model_apart(tmp_path, monkeypa
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             listed = (await c.get("/v1/ferry/models", headers=hdr)).json()["models"]
             assert [m["id"] for m in listed] == ["auto", "gpt", "gpt-b", "other"]   # listed on its own
-            assert listed[2]["via"] == "Relay B" and "providers" not in listed[1] and "via" not in listed[1]
+            # shown under its provider's name; the shared pool's "auto" stays Ferry's own
+            assert listed[2]["provider"] == "relay-b" and listed[1]["provider"] == "a" and listed[0]["provider"] == "ferry"
+            assert "providers" not in listed[1]
             # provider a fails: the request does not move to b's model of the same name
             body = json.dumps({"append": [json.dumps({"role": "user", "content": "hi"})], "tools": None})
             ack = (await c.post("/v1/ferry/commit", params={"conv": "s1", "base": 0, "base_hash": ""}, content=body, headers=hdr)).json()
@@ -141,7 +145,7 @@ def test_a_separate_provider_keeps_its_same_named_model_apart(tmp_path, monkeypa
 def test_busy_provider_gets_the_next_conversation():
     class M:
         def __init__(self, i):
-            self.id, self.api, self.model, self.ready = i, "openai", "gpt-6.1-sol", True
+            self.id, self.api, self.model, self.ready, self.share = i, "openai", "gpt-6.1-sol", True, True
 
     class C:
         models = {"a": M("a"), "b": M("b")}

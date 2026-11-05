@@ -9,7 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
-import { FERRY_HOME, PROTOCOL, serverHeaders } from "./config.mjs";
+import { FERRY_HOME, FERRY_PROVIDERS, PROTOCOL, providerOf, serverHeaders } from "./config.mjs";
 import { GATEWAY_NOTE, gatewayPage, openGatewayPage, waitForServer, whoAnswered } from "./gateway.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -67,7 +67,7 @@ export function modelDef(m, cfg) {
 	const thinks = !!known?.reasoning && (anthropic ? known.provider === "anthropic" : known.provider === "openai");
 	return {
 		id: m.id,
-		name: m.via ? `Ferry ${m.id} (${m.via})` : `Ferry ${m.id}`, // via: a provider kept apart from same-named models
+		name: m.id, // shown under its provider's name ("kiro/claude-opus-5.5"); "auto" and pooled models under "ferry"
 		reasoning: thinks,
 		...(thinks && known.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}),
 		// pi sends Claude's newest models a fixed effort "low" at the top and the chosen level as system messages
@@ -324,9 +324,10 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		const userOnPayload = options?.onPayload;
 		// the server says which API its model speaks: Claude through Anthropic's own, everything else OpenAI-style
 		const api = byId.get(model.id)?.api === "anthropic" ? "anthropic" : "openai";
+		// provider "ferry" whatever name the model is shown under: pi-ai has quirks for some provider names (deepseek, openai)
 		const inner = api === "anthropic"
-			? { ...model, api: "anthropic-messages", baseUrl: `${cfg.server}/anthropic` }
-			: { ...model, api: "openai-completions", baseUrl: `${cfg.server}/v1` };
+			? { ...model, provider: "ferry", api: "anthropic-messages", baseUrl: `${cfg.server}/anthropic` }
+			: { ...model, provider: "ferry", api: "openai-completions", baseUrl: `${cfg.server}/v1` };
 		const streamer = api === "anthropic" ? anthropicMessagesApi() : openAICompletionsApi();
 		const attempt = () => streamer.streamSimple(inner, context, {
 			...options,
@@ -379,13 +380,22 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		return out;
 	}
 
-	const register = (pi, c = cfg) => pi.registerProvider("ferry", {
-		baseUrl: `${cfg.server}/v1`,
-		apiKey: "$FERRY_TOKEN",
-		api: "ferry-sync",
-		models: models.map((m) => modelDef(m, c)),
-		streamSimple: streamFerry,
-	});
+	// one pi provider per provider on the server, so /model shows whose model it is ("kiro", "kiro-fuli");
+	// "ferry" holds "auto" and models several providers share
+	const register = (pi, c = cfg) => {
+		const by = new Map();
+		for (const m of models) by.set(providerOf(m), [...(by.get(providerOf(m)) ?? []), m]);
+		for (const [name, list] of by) {
+			FERRY_PROVIDERS.add(name);
+			pi.registerProvider(name, {
+				baseUrl: `${cfg.server}/v1`,
+				apiKey: "$FERRY_TOKEN",
+				api: "ferry-sync",
+				models: list.map((m) => modelDef(m, c)),
+				streamSimple: streamFerry,
+			});
+		}
+	};
 	const factory = (pi) => register(pi);
 	factory.register = register; // again, after /context changed a size
 	return factory;

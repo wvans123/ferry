@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, loadConfig, parseTokens, saveConfig } from "./config.mjs";
+import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, findFerryModel, loadConfig, parseTokens, saveConfig } from "./config.mjs";
 import { MODE_LABEL, ruleFiles } from "./permissions.mjs";
 import { ruleFilesInUse } from "./prompt.mjs";
 
@@ -283,7 +283,7 @@ export function createCommands(cfg, deps) {
 			saveConfig({ contextWindow: all });
 			cfg.contextWindow = all;
 			deps.reregister(pi, cfg);
-			const fresh = ctx.modelRegistry?.find?.("ferry", model.id);
+			const fresh = findFerryModel(ctx.modelRegistry, model.id);
 			if (fresh) await pi.setModel(fresh);
 			const size = fresh?.contextWindow ?? n;
 			tell(ctx, `Context size for ${model.id}: ${fmt(size)} tokens${n ? "" : " (the most the server allows)"}. ` +

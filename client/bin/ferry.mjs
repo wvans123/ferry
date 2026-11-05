@@ -25,6 +25,7 @@ import {
 	findBash,
 	loadConfig,
 	PROTOCOL,
+	providerOf,
 	readModelsCache,
 	serverHeaders,
 	SETTINGS,
@@ -327,11 +328,15 @@ function modelHint(err, cfg) {
 	return "see the error above";
 }
 
-/** Arguments as pi should see them: Ferry's own models in --list-models, and under Paperclip, Ferry's tools kept. */
-function piArgs(args, env = process.env) {
+/** Arguments as pi should see them: "--model ferry/x" written for 0.31 or older (e.g. a Paperclip member) names x under
+ * the provider it is shown under now, and under Paperclip, Ferry's tools kept. (--list-models shows only Ferry's
+ * models: trim.mjs filters pi's list.) */
+function piArgs(args, env = process.env, cached = readModelsCache() ?? []) {
 	const out = [...args];
-	const lm = out.indexOf("--list-models");
-	if (lm >= 0 && (!out[lm + 1] || out[lm + 1].startsWith("-"))) out.splice(lm + 1, 0, "ferry"); // not pi's whole catalog
+	const mi = out.findIndex((a) => a === "--model" || a === "-m");
+	const id = mi >= 0 && /^ferry\//.test(out[mi + 1] ?? "") ? out[mi + 1].slice(6) : "";
+	const known = id && cached.find((m) => m?.id === id);
+	if (known) out[mi + 1] = `${providerOf(known)}/${id}`;
 	if (env.PAPERCLIP_RUN_ID) { // Paperclip's pi adapter allows only pi's seven tools; Ferry's guard decides instead
 		const t = out.findIndex((a) => a === "--tools" || a === "-t");
 		if (t >= 0) out.splice(t, 2);
@@ -354,7 +359,7 @@ async function run(args) {
 	if (models[0].ready === false) {
 		console.error(`Ferry: no API key for model ${models[0].routesTo ?? models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
 	}
-	ensureAgentDir(models[0].id, models.map((m) => m.id), cfg.thinking, cfg.compactKeep);
+	ensureAgentDir(models[0].id, models, cfg.thinking, cfg.compactKeep);
 	installBundled(APP_ROOT); // fd and rg from the release zip, after an update
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 	process.env.FERRY_TOKEN = cfg.token;
@@ -554,7 +559,7 @@ Give a file instead: ferry mcp import <path to mcp.json>`);
 		return;
 	}
 	if (["add", "remove", "check", "login", "logout"].includes(sub)) {
-		ensureAgentDir((readModelsCache() ?? [{ id: "auto" }])[0].id);
+		ensureAgentDir((readModelsCache() ?? [{ id: "auto" }])[0].id, readModelsCache() ?? ["auto"]);
 		process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 		await applyProxy(loadConfig());
 		const { main } = await import("@earendil-works/pi-coding-agent");
@@ -591,7 +596,7 @@ else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | 
 		console.log("usage: ferry pkg install npm:<package>|git:<repo>|<folder>   ferry pkg list   ferry pkg remove <source>   ferry pkg update\n" +
 			"Installs pi extensions, skills and prompt packages for Ferry (needs access to npm or git for remote sources).");
 	} else {
-		ensureAgentDir((readModelsCache() ?? [{ id: "auto" }])[0].id);
+		ensureAgentDir((readModelsCache() ?? [{ id: "auto" }])[0].id, readModelsCache() ?? ["auto"]);
 		process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 		await applyProxy(loadConfig());
 		const { main } = await import("@earendil-works/pi-coding-agent");
