@@ -78,7 +78,7 @@ test("web_search limits results to sites: through the server, or written into Bi
 		await searchTool({ server: srv.base, features: ["search"] }).execute("1", { query: "TS 38.300", allowed_domains: ["https://www.3gpp.org/", "bad domain"] });
 		assert.deepEqual(JSON.parse(srv.seen[0].body).allowed_domains, ["www.3gpp.org"]);
 		await searchTool({ server: srv.base, features: [] }).execute("1", { query: "x", blocked_domains: ["reddit.com", "zhihu.com"] });
-		assert.equal(decodeURIComponent(srv.seen.at(-1).url).replace(/\+/g, " "), "/search?q=x -site:reddit.com -site:zhihu.com&setlang=zh-Hans");
+		assert.equal(decodeURIComponent(srv.seen.at(-1).url).replace(/\+/g, " "), "/search?q=x -site:reddit.com -site:zhihu.com&setlang=zh-Hans&adlt=strict");
 	} finally {
 		srv.close();
 	}
