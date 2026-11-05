@@ -873,8 +873,11 @@ async function loadReports() {
   try {
     const r = await api("reports");
     if (document.activeElement !== $("reportWords")) $("reportWords").value = r.words.join("\n");
-    box.innerHTML = r.reports.length ? r.reports.map((x) => `<div class="row" style="gap:8px;margin:4px 0"><span class="muted">${esc(x.id.slice(0, 13))}</span><span style="flex:1">${esc(x.title)}</span>` +
-      (x.issue ? `<a href="${esc(x.issue)}" target="_blank" rel="noopener">issue</a>` : `<span class="msg bad">${esc(x.error || "没发出")}</span><button class="btn" data-resend="${esc(x.id)}">再发一次</button>`) + `</div>`).join("") : `<span class="muted">还没有报告</span>`;
+    // only the reports that did not reach GitHub need you; the sent ones are one line with a link
+    const sent = r.sent ? `<div class="muted" style="margin:4px 0">已发到 GitHub ${r.sent} 份：<a href="https://github.com/${esc(r.repo)}/issues?q=${encodeURIComponent("is:issue \"[report]\" in:title")}" target="_blank" rel="noopener">在 GitHub 上看</a></div>` : "";
+    box.innerHTML = r.reports.map((x) => `<div class="row" style="gap:8px;margin:4px 0"><span class="muted">${esc(x.id.slice(0, 13))}</span><span style="flex:1">${esc(x.title)}</span>` +
+      `<span class="msg bad">${esc(x.error || "没发出")}</span><button class="btn" data-resend="${esc(x.id)}">再发一次</button></div>`).join("")
+      + sent || `<span class="muted">还没有报告</span>`;
     for (const b of box.querySelectorAll("[data-resend]")) b.onclick = async () => { try { const x = await api(`reports/${b.dataset.resend}/send`, "POST", {}); toast(x.ok ? "已发到 GitHub" : x.error); loadReports(); } catch (e) { toast(e.message); } };
   } catch (e) { box.textContent = e.message; }
 }

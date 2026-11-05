@@ -274,6 +274,42 @@ export function commandSites(command) {
 	return urls;
 }
 
+/**
+ * Pages only this computer should read: the company's intranet and anything on a private network. They are never
+ * sent to the Ferry server: an address that is an IP on a private network, a name without a dot, a typical internal
+ * suffix, or a site in localSites (ferry config set localSites wiki.corp.com,jira.corp.com).
+ */
+export function localSite(url, cfg = {}) {
+	let host = "";
+	try {
+		host = new URL(/^[a-z][\w+.-]*:\/\//i.test(url) ? url : `https://${url}`).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+	} catch {
+		return true;
+	}
+	if (!host.includes(".") || /\.(local|lan|corp|internal|intranet|home|localdomain)$/.test(host)) return true;
+	if (/^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/.test(host) || /^(::1|f[cd][0-9a-f]{2}:|fe80:)/.test(host)) return true;
+	return !!blockedSite(url, cfg.localSites);
+}
+
+/**
+ * Ask the Ferry server to read a public page: only the address (and the question) goes up. Returns the server's
+ * answer, or { fallback: reason } when this computer should read it (a file, a private address, a site the server
+ * cannot reach), or null when the server does not read pages.
+ */
+export async function readByServer(cfg, url, prompt, offset, signal) {
+	if (!(cfg.features ?? []).includes("read")) return null;
+	const res = await fetch(`${cfg.server}/v1/ferry/read`, {
+		method: "POST", redirect: "manual", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000),
+		headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
+		body: JSON.stringify({ url, prompt, offset }),
+	});
+	const out = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+	if (res.status === 415) return { fallback: "file" };
+	if (res.status === 422) return { fallback: out?.unreachable ?? "unreachable" };
+	if (!res.ok || !out) return { fallback: out?.error ?? `HTTP ${res.status}` };
+	return out;
+}
+
 /** A PDF, Office file or archive web_fetch got: into the project's downloads folder, for office_read. */
 function saveFile(page, cwd) {
 	const f = page.file;
@@ -322,15 +358,33 @@ export function createWeb(cfg) {
 		pi.registerTool({
 			name: "web_fetch",
 			label: "Web page",
-			description: `Read a web page. ${where} With prompt, the page is read for you and only the answer comes back ` +
-				"(like Claude Code's WebFetch); without it you get the page's text, long pages in parts (call again with " +
-				"offset). A PDF, Word, Excel or PowerPoint file is saved into the downloads folder for office_read. Pages " +
-				"read in the last 15 minutes are not fetched again.",
+			description: "Read a web page. Public pages are read by the Ferry server; intranet and private addresses, and " +
+				`pages it cannot reach, on this computer (${where.toLowerCase().replace(/\.$/, "")}). With prompt, the page is ` +
+				"read for you and only the answer comes back (like Claude Code's WebFetch); without it you get the page's text, " +
+				"long pages in parts (call again with offset). A PDF, Word, Excel or PowerPoint file is saved into the downloads " +
+				"folder for office_read. Pages that need a login or are built by scripts: use the browser.",
 			promptSnippet: "Read a web page, or ask a question about it",
 			parameters: FetchParams,
 			annotations: { readOnlyHint: true, openWorldHint: true },
 			async execute(_id, params, signal, _onUpdate, ctx) {
 				notBlocked(params.url);
+				const prompt0 = String(params.prompt ?? "").trim();
+				let why = "";
+				if (!localSite(params.url, cfg)) { // public pages: the Ferry server reads them, only the result comes here
+					try {
+						const r = await readByServer(cfg, params.url, prompt0, Number(params.offset) || 0, signal);
+						if (r?.answer) {
+							return { content: [{ type: "text", text: `${r.title ? `# ${r.title}\n` : ""}${r.url}\n\n${r.answer}\n\n` +
+								`[Answered from the page by ${r.model}. For exact wording, code or tables, call web_fetch without prompt.]` }],
+								details: { url: r.url, chars: r.chars, answeredBy: r.model, readBy: "server" } };
+						}
+						if (r && typeof r.text === "string") return show({ ...r, readBy: "server" });
+						if (r?.fallback && r.fallback !== "file") why = r.fallback;
+					} catch (e) {
+						if (signal?.aborted) throw e;
+						why = String(e.message).slice(0, 200);
+					}
+				}
 				const page = await readPage(params.url, signal);
 				if (page.file) return saveFile(page, ctx?.cwd ?? process.cwd());
 				if (page.sparse) {
@@ -357,7 +411,8 @@ export function createWeb(cfg) {
 					const r = await fetchPage(params.url, 0, signal);
 					return show({ ...r, text: note + r.text });
 				}
-				return show(await fetchPage(params.url, params.offset ?? 0, signal));
+				const r = await fetchPage(params.url, params.offset ?? 0, signal);
+				return show(why && !params.offset ? { ...r, text: `[Read on this computer: the Ferry server could not (${why}).]\n\n${r.text}` } : r);
 			},
 		});
 		pi.registerTool({

@@ -204,3 +204,58 @@ def test_with_a_deepseek_key_the_server_searches_with_deepseek_by_itself(tmp_pat
             assert json.loads(seen[-1].content)["query"].endswith(" -site:a.com")
 
     asyncio.run(go())
+
+
+def test_the_server_reads_public_pages_and_hands_back_private_ones_and_files(tmp_path, monkeypatch):
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req)
+        if req.url.path == "/v1/tools/fetch":
+            return httpx.Response(200, json={"title": "Spec", "content": "# Spec\n\nClause 5.1: the value is 42."})
+        if req.url.path.endswith("/chat/completions"):
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "It is 42."},
+                                                          "finish_reason": "stop"}], "usage": {"prompt_tokens": 50, "completion_tokens": 4}})
+        if req.url.host == "public.example" and req.url.path == "/page":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text="<html><title>P</title><body><nav>menu</nav><h1>Hello</h1><p>" + "word " * 100 + "</p></body></html>")
+        if req.url.host == "public.example" and req.url.path == "/moved":
+            return httpx.Response(302, headers={"location": "http://router.lan/admin"})
+        if req.url.path.endswith(".pdf"):
+            return httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"%PDF")
+        return httpx.Response(404)
+
+    cfg, app, token = setup(tmp_path, monkeypatch, [])
+    monkeypatch.setattr(app_mod.httpx, "AsyncClient", lambda **kw: REAL(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(search, "private_host", lambda h: h.endswith(".lan"))
+    app = app_mod.create_app(cfg)
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            assert "read" in (await c.get("/v1/ferry/models", headers=hdr)).json()["features"]
+            # with DeepSeek: its Fetch API reads the page, a model answers the question; only the answer goes back
+            r = (await c.post("/v1/ferry/read", headers=hdr, json={"url": "https://spec.example/38300", "prompt": "What value?"})).json()
+            assert r["answer"] == "It is 42." and r["via"] == "deepseek" and "text" not in r
+            assert json.loads(next(x for x in seen if x.url.path == "/v1/tools/fetch").content) == {"url": "https://spec.example/38300"}
+            # the same page again within 15 minutes: not fetched again; without a question its text in parts
+            n = len([x for x in seen if x.url.path == "/v1/tools/fetch"])
+            r = (await c.post("/v1/ferry/read", headers=hdr, json={"url": "https://spec.example/38300"})).json()
+            assert r["text"].startswith("# Spec") and r["next_offset"] is None
+            assert len([x for x in seen if x.url.path == "/v1/tools/fetch"]) == n
+            # without DeepSeek: the server fetches it itself
+            monkeypatch.setattr(search, "deepseek_key", lambda cfg: "")
+            r = (await c.post("/v1/ferry/read", headers=hdr, json={"url": "http://public.example/page"})).json()
+            assert r["via"] == "server" and r["title"] == "P" and r["text"].startswith("# Hello") and "menu" not in r["text"]
+            # an address on a private network, also after a redirect: the work computer reads it
+            r = await c.post("/v1/ferry/read", headers=hdr, json={"url": "http://intranet.lan/wiki"})
+            assert r.status_code == 422 and "private network" in r.json()["unreachable"]
+            r = await c.post("/v1/ferry/read", headers=hdr, json={"url": "http://public.example/moved"})
+            assert r.status_code == 422
+            assert not any(x.url.host == "router.lan" for x in seen)
+            # a file: the work computer downloads it
+            r = await c.post("/v1/ferry/read", headers=hdr, json={"url": "http://public.example/spec.pdf"})
+            assert r.status_code == 415 and r.json()["file"] == "application/pdf"
+            assert (await c.post("/v1/ferry/read", json={"url": "http://public.example/page"})).status_code == 401
+
+    asyncio.run(go())

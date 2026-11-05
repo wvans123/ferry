@@ -29,7 +29,7 @@ code map).
 |---|---|---|
 | Playwright MCP browser (`@playwright/mcp`) | 0.27 | replaced by agent-browser: a CLI the agent calls with bash plus a skill, no tool definitions, compact snapshots |
 | redaction (placeholders, word list, stream restoring) | 0.26 | off by default, never worked with Claude's own API, owner did not use it; /report keeps a small filter of its own |
-| server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. (0.29/0.30 search on the server is different: only the query or the page's text goes there, pages are still fetched on the PC) |
+| server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. Brought back in 0.30 at the owner's request in another form: search and public pages on the server (only the address goes up), intranet/private addresses still on the PC |
 | web_download tool | 0.24 | the agent downloads with curl like Cursor; commands get ferry's CA bundle and proxy |
 | web_render (Electron) and `ferry install-electron` | 0.24 | hardly needed, 100 MB download |
 | phone console `/m`, status reports, phone approvals | 0.24 | only showed titles; Bark notifications are enough |
@@ -79,6 +79,21 @@ reproduced with made-up content becomes a new task in evals/tasks/.
 
 Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `integrations`
 (docs/ROADMAP.md).
+
+## Where things stand (2026-11-05, end of the cloud session that built 0.25 to 0.31)
+
+- Released: 0.31.0 (server reads public pages, one-window browser login, undici 8.12.3). The long-lived branch
+  `claude/lucid-cori-4u8ucg` is retired; new work starts from main (see "How a change ships").
+- Web, as it is now: search and public pages are done by the server (DeepSeek's Search/Fetch APIs with the
+  server's DeepSeek key when it has one; else a search API, a model's own search, or Bing on the PC). Intranet and
+  private addresses, `localSites`, files, and pages the server cannot reach are read on the PC; logins and site
+  operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
+- Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses
+  automated sign-in), waits for the sign-in, then connects agent-browser; private-data commands always ask.
+- pi 1.5.0. Note: pi's Claude effort messages are turned off in sync.mjs modelDef (relays dropped them, #9).
+- Not verified on a real machine yet: Google sign-in through `ferry browser login`; the model-native search and
+  DeepSeek Fetch paths against the real APIs (unit tests use mocks). evals/run.py has not been run since 0.26.
+- Candidate next work is listed in docs/ROADMAP.md ("下一步候选").
 
 ## Where earlier context is
 

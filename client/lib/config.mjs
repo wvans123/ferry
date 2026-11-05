@@ -36,6 +36,7 @@ export const DEFAULTS = {
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
 	blockedSites: [], // sites never opened by web_fetch (and their subdomains), e.g. ["mail.corp.com"]
+	localSites: [], // sites read only on this computer, never by the Ferry server (the company's intranet), e.g. ["wiki.corp.com"]
 	browser: true, // let the agent drive the browser on this computer (Edge on Windows) with agent-browser
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: true, // run the browser without a window; the agent shows one for a login (#8, #10)
@@ -66,6 +67,7 @@ export const SETTINGS = {
 	web: ["string", "web_fetch and web_search, on this computer's network (the company proxy and gateway rules apply)",
 		["client  on", "off"]],
 	blockedSites: ["list", "sites the agent may never open with web_fetch, subdomains included (e.g. your mail, chat and cloud drive)"],
+	localSites: ["list", "sites read only on this computer, never by the Ferry server (the company's intranet; private addresses and names without a dot already are)"],
 	browser: ["boolean", "let the agent drive the browser on this computer (Edge on Windows): JavaScript pages, logins, clicking, forms"],
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],

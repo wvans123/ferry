@@ -17,6 +17,7 @@ conversation instead of the whole page. The summary model does it when one is se
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -276,9 +277,161 @@ def extract_models(cfg: Config) -> list[ModelConfig]:
     return [cfg.models[i] for i in dict.fromkeys(ids) if cfg.models[i].ready]
 
 
+# ---------- reading a page on the server ----------
+# The work computer asks the server to read public pages (only the address goes up, the answer or text comes back),
+# like Claude Code reads pages away from the user's machine. Pages the server cannot reach (the company's intranet,
+# addresses on the server's own network, sites that refuse it) are read on the work computer as before.
+
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 Ferry"
+TEXT_PART = 40_000
+FETCH_BYTES = 5_000_000
+
+
+class Unreachable(Exception):
+    """The server cannot or will not read this address; the work computer should."""
+
+
+class NotText(Exception):
+    """The address is a file (PDF, Office, archive): the work computer downloads it."""
+
+
+def private_host(host: str) -> bool:
+    """True when host is or resolves to an address on a private network (the server's own LAN, loopback, ...)."""
+    import ipaddress
+    import socket
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        raise Unreachable(f"{host} does not resolve from the Ferry server") from None
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return True
+    return False
+
+
+ENT = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'", "nbsp": " ", "#39": "'"}
+
+
+def html_to_text(html: str, base: str) -> tuple[str, str]:
+    """(title, readable text) of an HTML page: like the work computer's web_fetch, links kept as [text](address)."""
+    from html import unescape
+    from urllib.parse import urljoin
+    title = unescape(re.sub(r"\s+", " ", (re.search(r"<title[^>]*>([\s\S]*?)</title>", html, re.I) or [None, ""])[1])).strip()
+    h = re.sub(r"<!--[\s\S]*?-->", "", html)
+    h = re.sub(r"<(script|style|noscript|svg|head|title|nav|footer|form|iframe|template)\b[\s\S]*?</\1>", "", h, flags=re.I)
+    pres: list[str] = []
+
+    def keep_pre(m):
+        pres.append(unescape(re.sub(r"<[^>]+>", "", m.group(1))))
+        return f"\x00PRE{len(pres) - 1}\x00"
+    h = re.sub(r"<pre\b[^>]*>([\s\S]*?)</pre>", keep_pre, h, flags=re.I)
+
+    def link(m):
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(2))).strip()
+        href = unescape(m.group(1))
+        if not t or re.match(r"(javascript:|#)", href, re.I):
+            return t
+        return f"[{t}]({urljoin(base, href)})"
+    h = re.sub(r"""<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)</a>""", link, h, flags=re.I)
+    h = re.sub(r"<h([1-6])\b[^>]*>", lambda m: "\n\n" + "#" * int(m.group(1)) + " ", h, flags=re.I)
+    h = re.sub(r"<li\b[^>]*>", "\n- ", h, flags=re.I)
+    h = re.sub(r"</?code\b[^>]*>", "`", h, flags=re.I)
+    h = re.sub(r"</?(p|div|section|article|main|br|tr|table|ul|ol|header|aside|blockquote|dl|dt|dd|figure|hr|h[1-6])\b[^>]*>",
+               "\n", h, flags=re.I)
+    h = re.sub(r"<(td|th)\b[^>]*>", " | ", h, flags=re.I)
+    h = unescape(re.sub(r"<[^>]+>", "", h))
+    text = "\n".join(re.sub(r"[ \t\r\f\v]+", " ", line).strip() for line in h.split("\n"))
+    text = re.sub(r"\x00PRE(\d+)\x00", lambda m: "\n```\n" + pres[int(m.group(1))].strip("\n") + "\n```\n", text)
+    return title, re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+async def fetch_here(client: httpx.AsyncClient, url: str) -> tuple[str, str, str]:
+    """(final address, title, text), fetched by this server. Raises Unreachable or NotText."""
+    from urllib.parse import urljoin, urlsplit
+    current = url
+    for _ in range(6):
+        parts = urlsplit(current)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise Unreachable("only http and https addresses")
+        if await asyncio.to_thread(private_host, parts.hostname):
+            raise Unreachable(f"{parts.hostname} is on a private network")
+        try:
+            async with client.stream("GET", current, headers={"User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+                                     timeout=30, follow_redirects=False) as r:
+                if r.is_redirect and r.headers.get("location"):
+                    current = urljoin(current, r.headers["location"])
+                    continue
+                if r.status_code >= 400:
+                    raise Unreachable(f"the site answered HTTP {r.status_code}")
+                ctype = r.headers.get("content-type", "")
+                if ctype and not re.search(r"text|html|json|xml|javascript", ctype, re.I):
+                    raise NotText(ctype)
+                body = b""
+                async for chunk in r.aiter_bytes():
+                    body += chunk
+                    if len(body) > FETCH_BYTES:
+                        break
+        except httpx.HTTPError as e:
+            raise Unreachable(f"cannot reach it from the Ferry server: {type(e).__name__}") from None
+        charset = (re.search(r"charset=([\w-]+)", ctype, re.I) or re.search(rb"<meta[^>]+charset=[\"']?([\w-]+)", body[:3000], re.I))
+        enc = charset.group(1) if charset else "utf-8"
+        text = body.decode(enc.decode() if isinstance(enc, bytes) else enc, errors="replace")
+        if "html" in ctype.lower() or re.match(r"\s*<(!doctype html|html)", text[:200], re.I):
+            title, plain = html_to_text(text, current)
+            if len(re.sub(r"\s+", " ", plain)) < 300 and re.search(r"<script\b", text, re.I):
+                raise Unreachable("the page is built by JavaScript")  # the work computer's browser can read it
+            return current, title, plain
+        return current, "", text
+    raise Unreachable("too many redirects")
+
+
+async def fetch_page(cfg: Config, client: httpx.AsyncClient, url: str) -> tuple[str, str, str, str]:
+    """(address, title, text, how): DeepSeek's Fetch API when this server has a DeepSeek key (Markdown, also many
+    script-built pages), else this server's own fetch."""
+    key = deepseek_key(cfg)
+    if key:
+        try:
+            r = await client.post(f"{base('deepseek')}/v1/tools/fetch", json={"url": url[:8192]}, timeout=60,
+                                  headers={"Authorization": f"Bearer {key}"})
+            if r.status_code == 200 and (r.json().get("content") or "").strip():
+                return url, r.json().get("title") or "", r.json()["content"], "deepseek"
+        except (httpx.HTTPError, ValueError):
+            pass
+    address, title, text = await fetch_here(client, url)
+    return address, title, text, "server"
+
+
+async def answer_from_page(client: httpx.AsyncClient, cfg: Config, url: str, title: str, text: str, prompt: str,
+                           user: str, audit) -> dict:
+    """A model here answers prompt from the page. {"answer", "model"}; raises RuntimeError when none could."""
+    from .fit import Refused, complete
+    from .usage import cost, normalize
+    models = extract_models(cfg)
+    if not models:
+        raise RuntimeError("no model is ready to read the page")
+    page = f"Address: {url[:500]}\nTitle: {title[:300]}\n\n{text[:PAGE_CHARS]}"
+    user_text = f"<page>\n{page}\n</page>\n\nQuestion: {prompt}"
+    started, last = time.time(), ""
+    for m in models:
+        try:
+            answer, usage = await complete(client, m, EXTRACT_SYSTEM, user_text, 4000)
+        except (Refused, httpx.HTTPError) as e:
+            last = f"{m.id}: {e!r}"[:300]
+            continue
+        tokens = normalize(usage)
+        audit(event="chat", user=user, purpose="extract", model=m.id, status=200,
+              ms=int((time.time() - started) * 1000), tokens=tokens, cost=cost(tokens, m.price))
+        return {"answer": answer, "model": m.id}
+    audit(event="chat", user=user, purpose="extract", status=502, error=last)
+    raise RuntimeError(f"no model could read the page ({last})")
+
+
 def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
     """POST /v1/ferry/search {query, count, recent, allowed_domains, blocked_domains}: the work computer's web_search.
+    POST /v1/ferry/read {url, prompt, offset}: read a public page here; with a prompt only the answer goes back.
     POST /v1/ferry/extract {url, title, prompt, text}: answer a question from a page the work computer fetched."""
+    pages: dict[str, tuple[float, tuple]] = {}  # address -> (when, (address, title, text, how)), 15 minutes
 
     @app.post("/v1/ferry/search")
     async def web_search(request: Request):
@@ -302,30 +455,51 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
         audit(event="search", user=request.state.user, engine=name, ok=True, results=len(results))
         return {"engine": name, "results": results}
 
+    @app.post("/v1/ferry/read")
+    async def read(request: Request):
+        b = await request.json()
+        url = str(b.get("url") or "").strip()
+        if not re.match(r"https?://", url, re.I):
+            url = f"https://{url}" if url else ""
+        if not url:
+            return JSONResponse({"error": "url is empty"}, 400)
+        prompt = str(b.get("prompt") or "").strip()[:4000]
+        offset = max(0, int(b.get("offset") or 0))
+        hit = pages.get(url)
+        try:
+            page = hit[1] if hit and time.time() - hit[0] < 900 else await fetch_page(cfg, client, url)
+        except NotText as e:
+            return JSONResponse({"file": str(e)}, 415)
+        except Unreachable as e:
+            audit(event="read", user=request.state.user, ok=False)
+            return JSONResponse({"unreachable": str(e)}, 422)
+        pages[url] = (time.time(), page)
+        while len(pages) > 200:
+            pages.pop(next(iter(pages)))
+        address, title, text, how = page
+        audit(event="read", user=request.state.user, ok=True, via=how, chars=len(text))
+        if prompt and not offset:
+            try:
+                out = await answer_from_page(client, cfg, address, title, text, prompt, request.state.user, audit)
+            except RuntimeError as e:
+                return JSONResponse({"error": str(e)}, 502)
+            return {"url": address, "title": title, "chars": len(text), "via": how, **out}
+        part = text[offset:offset + TEXT_PART]
+        return {"url": address, "title": title, "chars": len(text), "via": how, "text": part,
+                "next_offset": offset + TEXT_PART if len(text) > offset + TEXT_PART else None}
+
     @app.post("/v1/ferry/extract")
     async def extract(request: Request):
-        from .fit import Refused, complete
-        from .usage import cost, normalize
         b = await request.json()
         prompt = str(b.get("prompt") or "").strip()[:4000]
         text = str(b.get("text") or "")[:PAGE_CHARS]
         if not prompt or not text.strip():
             return JSONResponse({"error": "prompt and text are needed"}, 400)
-        models = extract_models(cfg)
-        if not models:
+        if not extract_models(cfg):
             return JSONResponse({"error": "no model is ready to read the page"}, 503)
-        page = f"Address: {str(b.get('url') or '')[:500]}\nTitle: {str(b.get('title') or '')[:300]}\n\n{text}"
-        user_text = f"<page>\n{page}\n</page>\n\nQuestion: {prompt}"
-        started, last = time.time(), ""
-        for m in models:
-            try:
-                answer, usage = await complete(client, m, EXTRACT_SYSTEM, user_text, 4000)
-            except (Refused, httpx.HTTPError) as e:
-                last = f"{m.id}: {e!r}"[:300]
-                continue
-            tokens = normalize(usage)
-            audit(event="chat", user=request.state.user, purpose="extract", model=m.id, status=200,
-                  ms=int((time.time() - started) * 1000), tokens=tokens, cost=cost(tokens, m.price))
-            return {"answer": answer, "model": m.id, "chars": len(text)}
-        audit(event="chat", user=request.state.user, purpose="extract", status=502, error=last)
-        return JSONResponse({"error": f"no model could read the page ({last})"}, 502)
+        try:
+            out = await answer_from_page(client, cfg, str(b.get("url") or ""), str(b.get("title") or ""), text, prompt,
+                                         request.state.user, audit)
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, 502)
+        return {**out, "chars": len(text)}

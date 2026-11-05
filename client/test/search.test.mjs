@@ -157,3 +157,38 @@ test("web_fetch saves a PDF into the downloads folder for office_read", async ()
 		s.close();
 	}
 });
+
+test("intranet and private addresses stay on this computer; public pages go to the server", async () => {
+	const { localSite, readByServer } = await import("../lib/web.mjs");
+	for (const u of ["http://wiki/page", "https://10.1.2.3/x", "http://192.168.1.10", "https://jira.corp/x", "http://intranet.local/a",
+		"https://wiki.mycompany.com/x"]) {
+		assert.equal(localSite(u, { localSites: ["mycompany.com"] }), true, u);
+	}
+	for (const u of ["https://www.3gpp.org/ftp/", "https://github.com/x"]) assert.equal(localSite(u, {}), false, u);
+
+	let asked = null;
+	const s = http.createServer((req, res) => {
+		let b = "";
+		req.on("data", (c) => { b += c; });
+		req.on("end", () => {
+			asked = JSON.parse(b);
+			const out = asked.url.endsWith(".pdf") ? [415, { file: "application/pdf" }] : asked.url.includes("nowhere")
+				? [422, { unreachable: "nowhere.example does not resolve from the Ferry server" }]
+				: [200, { url: asked.url, title: "Spec", answer: "It is 42.", model: "deepseek-flash", chars: 900 }];
+			res.writeHead(out[0], { "content-type": "application/json" }).end(JSON.stringify(out[1]));
+		});
+	});
+	await new Promise((r) => s.listen(0, "127.0.0.1", r));
+	const cfg = { server: `http://127.0.0.1:${s.address().port}`, features: ["read"] };
+	try {
+		const r = await fetchTool(cfg).execute("1", { url: "https://spec.example/38300", prompt: "What value?" });
+		assert.match(r.content[0].text, /^# Spec\nhttps:\/\/spec.example\/38300\n\nIt is 42\.\n\n\[Answered from the page by deepseek-flash/);
+		assert.deepEqual(asked, { url: "https://spec.example/38300", prompt: "What value?", offset: 0 });
+		assert.equal(r.details.readBy, "server");
+		assert.deepEqual(await readByServer(cfg, "https://x.example/a.pdf", "", 0), { fallback: "file" });
+		assert.deepEqual(await readByServer(cfg, "https://nowhere.example/", "", 0), { fallback: "nowhere.example does not resolve from the Ferry server" });
+		assert.equal(await readByServer({ ...cfg, features: [] }, "https://x.example", "", 0), null);
+	} finally {
+		s.close();
+	}
+});
