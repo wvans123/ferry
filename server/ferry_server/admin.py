@@ -667,10 +667,18 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def calls(request: Request, limit: int = 200):
         if not allowed(request):
             return denied()
-        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") == "chat"][-max(1, min(limit, 1000)):][::-1]
+        # model calls, and the web searches and page reads the server did for the work computer
+        rows = [a for a in _tail_jsonl(audit_log) if a.get("event") in ("chat", "search", "read")][-max(1, min(limit, 1000)):][::-1]
         have = {d["id"] for d in live.details}
-        out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
-                                      "trimmed", "status", "ms", "usage")} for a in rows]
+        out = []
+        for a in rows:
+            o = {k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
+                                       "trimmed", "status", "ms", "usage", "tokens", "cost", "searches")}
+            if a.get("event") != "chat":  # not a model call: what did it and what came back
+                o.update(purpose=a["event"], model=a.get("engine") or a.get("via") or "server",
+                         status=200 if a.get("ok") else (a.get("status") or 502),
+                         results=a.get("results"), chars=a.get("chars"))
+            out.append(o)
         for o in out:
             o["has_details"] = o.get("id") in have
         return {"calls": out, "record_details": cfg.record_details}

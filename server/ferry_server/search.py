@@ -22,6 +22,7 @@ import os
 import re
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 from fastapi import FastAPI, Request
@@ -140,15 +141,16 @@ class SearchFailed(Exception):
 
 
 async def search(cfg: Config, client: httpx.AsyncClient, query: str, count: int = 8, recent: str = "",
-                 allowed: list[str] | None = None, blocked: list[str] | None = None) -> list[dict]:
-    """[{title, url, snippet, date}] from the configured engine. Raises httpx.HTTPStatusError on an API error."""
+                 allowed: list[str] | None = None, blocked: list[str] | None = None, spent: dict | None = None) -> list[dict]:
+    """[{title, url, snippet, date}] from the configured engine. Raises httpx.HTTPStatusError on an API error.
+    A model's own search costs tokens: spent gets {"model": its id, "usage": the API's usage object}."""
     name = engine(cfg)
     key = engine_key(cfg, name)
     count = max(1, min(int(count or 8), 20))
     recent = recent if recent in RECENT else ""
     allowed, blocked = allowed or [], ([] if allowed else blocked or [])
     if name.startswith("model:"):
-        return await model_search(client, search_model(cfg, name), query, count, recent, allowed, blocked)
+        return await model_search(client, search_model(cfg, name), query, count, recent, allowed, blocked, spent)
     if name == "deepseek":
         # DeepSeek's Search API (the one DeepSeek Harness uses by default); operators: site:, -site:, after:, lang:
         days = {"day": 1, "week": 7, "month": 31, "year": 366}.get(recent, 0)
@@ -197,8 +199,9 @@ def search_request(query: str, recent: str) -> str:
 
 
 async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, count: int, recent: str,
-                       allowed: list[str], blocked: list[str]) -> list[dict]:
+                       allowed: list[str], blocked: list[str], spent: dict | None = None) -> list[dict]:
     """A model's own web search: the server is the model's client and keeps only what the search found."""
+    spent = spent if spent is not None else {}
     limits = {"allowed_domains": allowed} if allowed else {"blocked_domains": blocked} if blocked else {}
     if m.api == "anthropic":
         # the basic search tool: results come straight back (no filtering code run on Anthropic's side)
@@ -207,6 +210,7 @@ async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, co
         r = await client.post(anthropic_url(m.base_url), json=body, timeout=90,
                               headers={"x-api-key": m.api_key, "anthropic-version": "2023-06-01"})
         r.raise_for_status()
+        spent.update(model=m.id, usage=r.json().get("usage") or {})
         blocks = r.json().get("content") or []
         cited = {}
         for b in blocks:
@@ -234,6 +238,7 @@ async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, co
     r = await client.post(responses_url(m.base_url), json=body, timeout=90,
                           headers={"Authorization": f"Bearer {m.api_key}", "Content-Type": "application/json"})
     r.raise_for_status()
+    spent.update(model=m.id, usage=r.json().get("usage") or {})
     out = []
     for item in r.json().get("output") or []:
         if item.get("type") == "message":
@@ -403,7 +408,7 @@ async def fetch_page(cfg: Config, client: httpx.AsyncClient, url: str) -> tuple[
 
 
 async def answer_from_page(client: httpx.AsyncClient, cfg: Config, url: str, title: str, text: str, prompt: str,
-                           user: str, audit) -> dict:
+                           user: str, audit, project: str = "") -> dict:
     """A model here answers prompt from the page. {"answer", "model"}; raises RuntimeError when none could."""
     from .fit import Refused, complete
     from .usage import cost, normalize
@@ -420,10 +425,10 @@ async def answer_from_page(client: httpx.AsyncClient, cfg: Config, url: str, tit
             last = f"{m.id}: {e!r}"[:300]
             continue
         tokens = normalize(usage)
-        audit(event="chat", user=user, purpose="extract", model=m.id, status=200,
+        audit(event="chat", user=user, project=project, purpose="extract", model=m.id, status=200,
               ms=int((time.time() - started) * 1000), tokens=tokens, cost=cost(tokens, m.price))
         return {"answer": answer, "model": m.id}
-    audit(event="chat", user=user, purpose="extract", status=502, error=last)
+    audit(event="chat", user=user, project=project, purpose="extract", status=502, error=last)
     raise RuntimeError(f"no model could read the page ({last})")
 
 
@@ -441,18 +446,31 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
             return JSONResponse({"error": "query is empty"}, 400)
         if not ready(cfg):
             return JSONResponse({"error": "no search engine is set on the Ferry server"}, 404)
-        name = engine(cfg)
+        name, spent, started = engine(cfg), {}, time.time()
+        who = {"user": request.state.user, "project": unquote(request.headers.get("x-ferry-project", ""))}
+
+        def charged() -> None:
+            """A model's own search is a model call: in the call records and the cost, like any other."""
+            if spent.get("model") in cfg.models:
+                from .usage import cost, normalize
+                tokens = normalize(spent.get("usage") or {})
+                searches = int(((spent.get("usage") or {}).get("server_tool_use") or {}).get("web_search_requests") or 0)
+                audit(event="chat", **who, purpose="search", model=spent["model"], status=200,
+                      ms=int((time.time() - started) * 1000), tokens=tokens, cost=cost(tokens, cfg.models[spent["model"]].price),
+                      **({"searches": searches} if searches else {}))
         try:
             results = await search(cfg, client, query, b.get("count") or 8, str(b.get("recent") or ""),
-                                   domains(b.get("allowed_domains")), domains(b.get("blocked_domains")))
+                                   domains(b.get("allowed_domains")), domains(b.get("blocked_domains")), spent)
         except httpx.HTTPStatusError as e:
-            audit(event="search", user=request.state.user, engine=name, ok=False, status=e.response.status_code)
+            audit(event="search", **who, engine=name, ok=False, status=e.response.status_code)
             return JSONResponse({"error": f"{label(cfg)} answered HTTP {e.response.status_code}: "
                                           f"{e.response.text[:300]}"}, 502)
         except (httpx.HTTPError, SearchFailed) as e:
-            audit(event="search", user=request.state.user, engine=name, ok=False)
+            charged()
+            audit(event="search", **who, engine=name, ok=False)
             return JSONResponse({"error": f"{label(cfg)} did not answer: {e!r}"[:400]}, 502)
-        audit(event="search", user=request.state.user, engine=name, ok=True, results=len(results))
+        charged()
+        audit(event="search", **who, engine=name, ok=True, results=len(results), ms=int((time.time() - started) * 1000))
         return {"engine": name, "results": results}
 
     @app.post("/v1/ferry/read")
@@ -471,16 +489,18 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
         except NotText as e:
             return JSONResponse({"file": str(e)}, 415)
         except Unreachable as e:
-            audit(event="read", user=request.state.user, ok=False)
+            audit(event="read", user=request.state.user, project=unquote(request.headers.get("x-ferry-project", "")), ok=False)
             return JSONResponse({"unreachable": str(e)}, 422)
         pages[url] = (time.time(), page)
         while len(pages) > 200:
             pages.pop(next(iter(pages)))
         address, title, text, how = page
-        audit(event="read", user=request.state.user, ok=True, via=how, chars=len(text))
+        audit(event="read", user=request.state.user, project=unquote(request.headers.get("x-ferry-project", "")), ok=True,
+              via=how, chars=len(text))
         if prompt and not offset:
             try:
-                out = await answer_from_page(client, cfg, address, title, text, prompt, request.state.user, audit)
+                out = await answer_from_page(client, cfg, address, title, text, prompt, request.state.user, audit,
+                                             unquote(request.headers.get("x-ferry-project", "")))
             except RuntimeError as e:
                 return JSONResponse({"error": str(e)}, 502)
             return {"url": address, "title": title, "chars": len(text), "via": how, **out}
@@ -499,7 +519,7 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
             return JSONResponse({"error": "no model is ready to read the page"}, 503)
         try:
             out = await answer_from_page(client, cfg, str(b.get("url") or ""), str(b.get("title") or ""), text, prompt,
-                                         request.state.user, audit)
+                                         request.state.user, audit, unquote(request.headers.get("x-ferry-project", "")))
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, 502)
         return {**out, "chars": len(text)}

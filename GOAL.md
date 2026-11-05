@@ -78,7 +78,7 @@
 
 ## 最近一次结果
 
-2026-11-05，v0.32.0，Linux，Node 22，Python 3.13：服务端单元测试 48/48，客户端单元测试 57/57；本地端到端只跑了改到的 F25、F28–F34、F38、F54、F59–F61、F68（18/18），全部 65 项由 CI 在 Linux 和 Windows 上跑。
+2026-11-05，v0.32.1，Linux，Python 3.13：改到的服务端 test_search、test_admin 12/12；端到端由 CI 跑。
 
 真模型评测第一次（v0.26.0，Windows，DeepSeek 默认模型）：7 个任务过了 6 个，共 518k token；没过的 fix_bug 是判分把 Windows 的换行当成了改动，0.27 已修。
 

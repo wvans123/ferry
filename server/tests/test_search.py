@@ -103,7 +103,8 @@ def test_a_model_searches_for_the_work_computer_and_only_its_results_go_back(tmp
                      "encrypted_content": "xyz", "page_age": "October 1, 2026"},
                     {"type": "web_search_result", "url": "https://www.3gpp.org/other", "title": "Other", "encrypted_content": "abc"}]},
                 {"type": "text", "text": "done", "citations": [{"type": "web_search_result_location", "url": "https://www.3gpp.org/38300",
-                                                                "title": "TS 38.300", "cited_text": "NR overall description"}]}]})
+                                                                "title": "TS 38.300", "cited_text": "NR overall description"}]}],
+                "usage": {"input_tokens": 1200, "output_tokens": 300, "server_tool_use": {"web_search_requests": 1}}})
         if req.url.path.endswith("/responses"):
             assert body["tools"][0]["filters"] == {"blocked_domains": ["reddit.com"]}
             assert body["include"] == ["web_search_call.action.sources"]
@@ -118,7 +119,7 @@ def test_a_model_searches_for_the_work_computer_and_only_its_results_go_back(tmp
     cfg, app, token = setup(tmp_path, monkeypatch, [])
     monkeypatch.setattr(app_mod.httpx, "AsyncClient", lambda **kw: REAL(transport=httpx.MockTransport(handler), **kw))
     cfg.models["claude"] = ModelConfig(id="claude", base_url="https://api.anthropic.com", model="claude-opus-5-5",
-                                       api="anthropic", key_value="ka", provider="p")
+                                       api="anthropic", key_value="ka", provider="p", price={"input": 5, "output": 25})
     cfg.models["gpt"] = ModelConfig(id="gpt", base_url="https://api.openai.com/v1", model="gpt-6.1-sol",
                                     api="openai-responses", key_value="ko", provider="p")
     app = app_mod.create_app(cfg)
@@ -137,6 +138,13 @@ def test_a_model_searches_for_the_work_computer_and_only_its_results_go_back(tmp
             r = (await c.post("/v1/ferry/search", headers=hdr, json={"query": "q", "blocked_domains": ["reddit.com"]})).json()
             assert [x["url"] for x in r["results"]] == ["https://a.example/x", "https://b.example/y"]
             assert r["results"][0]["snippet"] == "beta"
+            # the model's search is a model call: it shows in the call records with its tokens and cost, next to the search
+            c.cookies.set("ferry_admin", (tmp_path / "admin-key").read_text().strip())
+            calls = (await c.get("/admin/api/calls")).json()["calls"]
+            spent = next(x for x in calls if x["purpose"] == "search" and x["model"] == "claude")
+            assert spent["tokens"]["input"] == 1200 and spent["searches"] == 1 and spent["cost"] == 0.0135
+            done = [x for x in calls if x["purpose"] == "search" and x["model"] == "model:claude"]
+            assert done and done[0]["status"] == 200 and done[0]["results"] == 2
 
     asyncio.run(go())
 

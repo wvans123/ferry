@@ -296,11 +296,11 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
 
     <section data-view="calls" hidden>
       <h1>调用记录</h1>
-      <p class="lead">每一次发给模型的请求。只记大小、耗时和用量，不记对话内容；想检查提示词，到"设置"里打开详细记录。</p>
+      <p class="lead">每一次发给模型的请求，以及服务端替工作电脑做的搜索和读网页。只记大小、耗时和用量，不记对话内容；想检查提示词，到"设置"里打开详细记录。</p>
       <div class="row" style="margin-bottom:12px">
         <select id="cModel" style="width:auto"><option value="">全部模型</option></select>
         <select id="cStatus" style="width:auto"><option value="">全部结果</option><option value="ok">成功</option><option value="bad">失败</option></select>
-        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option><option value="subagent">子 agent</option></select>
+        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option><option value="subagent">子 agent</option><option value="extract">按问题读网页</option><option value="search">搜索</option><option value="read">服务端读网页</option></select>
         <span class="muted" id="cCount"></span>
       </div>
       <div class="card tablecard">
@@ -484,7 +484,17 @@ function hhmm(ts, sec = true) { return new Date(ts * 1000).toLocaleTimeString("z
 function when(ts) { const d = new Date(ts * 1000), t = new Date(); return (d.toDateString() === t.toDateString() ? "" : (d.getMonth() + 1) + "/" + d.getDate() + " ") + hhmm(ts); }
 function secs(ms) { return ms == null ? "–" : (ms / 1000).toFixed(1) + " 秒"; }
 function result(a) { return a.status === 200 ? '<span class="tag good">成功</span>' : `<span class="tag bad">HTTP ${a.status}</span>`; }
-function purpose(p) { return p === "summary" ? '<span class="tag lamp">写摘要</span>' : p === "subagent" ? '<span class="tag">子 agent</span>' : '<span class="tag">干活</span>'; }
+// extract: a model answers the agent's question from a web page (web_fetch with a prompt), using the "summary" model
+const PURPOSES = { summary: '<span class="tag lamp">写摘要</span>', subagent: '<span class="tag">子 agent</span>',
+  extract: '<span class="tag">按问题读网页</span>', search: '<span class="tag">搜索</span>', read: '<span class="tag">服务端读网页</span>' };
+function purpose(p) { return PURPOSES[p] || '<span class="tag">干活</span>'; }
+// tokens in / out: the API's usage, else the server's own count (calls made by the server itself)
+function inOut(a) { const u = a.usage || {}, t = a.tokens || {};
+  if (u.prompt_tokens != null || u.completion_tokens != null) return `${u.prompt_tokens ?? "–"} / ${u.completion_tokens ?? "–"}`;
+  if (a.tokens) return `${(t.input || 0) + (t.cache_read || 0) + (t.cache_write || 0)} / ${t.output ?? "–"}`;
+  return "– / –"; }
+// messages column: for a search the number of results, for a page read its length in characters
+function count(a) { return a.purpose === "search" && a.results != null ? `${a.results} 条结果` : a.purpose === "read" && a.chars != null ? `${a.chars} 字` : (a.messages ?? "–"); }
 
 function systemView(text) {
   const m = /<server-rules>([\s\S]*?)<\/server-rules>/.exec(text || "");
@@ -767,7 +777,7 @@ function renderCalls() {
   const rows = CALLS.filter((c) => (!m || c.model === m) && (!st || (st === "ok") === (c.status === 200)) && (!pu || (c.purpose || "agent") === pu));
   $("cCount").textContent = `${rows.length} 条`;
   $("cRows").innerHTML = rows.map((a) => { const u = a.usage || {};
-    return `<tr class="click" data-call="${esc(a.id || "")}"><td class="num">${when(a.ts)}</td><td>${esc(a.project || "–")}</td><td>${esc(a.model)}</td><td>${purpose(a.purpose)}</td><td class="r num">${a.messages ?? "–"}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${(u.prompt_tokens ?? "–")} / ${(u.completion_tokens ?? "–")}</td><td class="r num">${secs(a.ms)}</td><td>${result(a)}</td></tr>`; }).join("")
+    return `<tr class="click" data-call="${esc(a.id || "")}"><td class="num">${when(a.ts)}</td><td>${esc(a.project || "–")}</td><td>${esc(a.model)}</td><td>${purpose(a.purpose)}</td><td class="r num">${count(a)}</td><td class="r num">${bytes(a.upstream_bytes)}</td><td class="r num">${inOut(a)}</td><td class="r num">${secs(a.ms)}</td><td>${result(a)}</td></tr>`; }).join("")
     || `<tr><td colspan="9" class="empty">没有符合条件的调用。</td></tr>`;
   for (const r of document.querySelectorAll("[data-call]")) r.onclick = () => openCall(rows.find((c) => (c.id || "") === r.dataset.call));
 }
