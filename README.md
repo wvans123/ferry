@@ -9,7 +9,7 @@ A Claude-Code-style coding agent for locked-down Windows PCs. The agent runs on 
 ```
 C:\my-project> ferry
 
-  Ferry v0.30.0  server ferry.example.com
+  Ferry v0.31.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
   memory: 3 (/memory)  ·  subagents on  ·  /help for commands (/goal /tasks /cost /rewind)
 

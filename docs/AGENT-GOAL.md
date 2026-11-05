@@ -414,8 +414,14 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | #8 浏览器的活做一半就停；改去下载网页 | 浏览器技能改成"看、做、查"的循环：先想清楚做到什么算完，每步查结果，做到拿到为止，卡住要说清卡在哪；操作网站时不中途换成 web_fetch 或 curl | 技能说明 |
 | #8 #10 想默认后台跑，登录时再弹窗 | `browserHeadless` 默认改成 true；要登录时 agent 用 `--headed` 打开一个窗口请你登录，登录完关掉，回到后台接着做（同一个资料夹，登录还在）；网站要权限时不替你同意 | 客户端单元测试、F36 |
 | #8 #10 全部放行时，浏览器读 cookie、上传文件等也不问 | 碰隐私的 agent-browser 命令（cookies、storage、state、clipboard、upload、auth、connect、set credentials、network har，和 --profile、--cdp、--auto-connect、--state）在任何模式下都问，"以后都允许"也不算；撤不回的操作（提交、发送、下单、发帖、改设置、删除）先用 ask_user 问 | 客户端单元测试 |
-| Google 不让登录 | Google、Microsoft 拒绝被程序控制的浏览器登录。要登录时 agent 运行 `ferry browser login 地址`：同一个浏览器和资料夹按普通方式打开，你登录好（它看页面离开了登录页）后 agent 才连上这个窗口接着做，不用关窗口；`ferry browser hide` 关掉，回到后台，登录还在 | 客户端单元测试 |
+| Google 不让登录 | Google、Microsoft 拒绝被程序控制的浏览器登录。`ferry browser login [地址]` 用同一个浏览器和资料夹以普通方式打开，登录完关窗口，之后 agent 的浏览器带着登录 | 客户端单元测试 |
 | #10 没装对应服务端的电脑上，客户端测试卡两分钟 | `update.test.mjs` 里重启服务端那项在没有对应版本服务端时跳过，失败时也关掉测试用的服务器 | 客户端单元测试 |
 | 搜索还是要自己去注册 | 服务端接了 DeepSeek 时，默认用 DeepSeek 自家的搜索 API（同一个 Key，每千次 0.75 美元，DeepSeek Harness 默认也用它），结果带长摘要、日期；管理页可以改成 Bing、搜索 API 或模型自带的搜索 | 服务端单元测试 |
-| 工作电脑传的网页太多 | 公开网页改由服务端读（有 DeepSeek Key 时用它的读网页 API，否则服务端自己下载），工作电脑只发地址；带问题时只拿回回答。内网、私有地址、`localSites`、服务端读不到的、PDF/Office 文件仍在工作电脑上读；服务端不读私有网络地址 | 客户端和服务端单元测试 |
+
+## v0.31：公开网页由服务端读，登录只用一个窗口，undici 升级
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 工作电脑传的网页太多 | 公开网页改由服务端读（`POST /v1/ferry/read`）：有 DeepSeek Key 时用它的读网页 API（Markdown，不少脚本生成的网页也能读），否则服务端自己下载；带问题时只拿回回答。工作电脑只发地址。内网、私有地址、`localSites`、服务端读不到的、PDF/Office 文件仍在工作电脑上读；服务端不读私有网络地址（含跳转） | 客户端和服务端单元测试 |
+| `ferry browser login` 要单独敲命令、登完还要关窗口，很别扭 | 要登录时 agent 运行 `ferry browser login 地址`：同一个浏览器和资料夹按普通方式打开（带调试端口），只看页面地址等你登录好，再把 agent-browser 连上这个窗口，agent 直接接着做；`ferry browser hide` 或 ferry 退出时关掉窗口，回到后台，登录还在 | 客户端单元测试 |
 | npm audit 报 undici 有高危漏洞 | undici 从 8.10.2 升到 8.12.3（修了 8 个漏洞，包括证书校验被绕过和几种拒绝服务），并让 pi 和 openai SDK 共用这一份；`npm audit` 0 个漏洞。Node 要求写明 22.19 以上（undici 8 本来就要） | 全部测试 |
