@@ -1,10 +1,13 @@
 // The permission gate: every tool call passes through decide() (permissions.mjs) before it runs.
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
 import { findBash } from "./config.mjs";
-import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, prefixRule } from "./permissions.mjs";
+import { resolve } from "node:path";
+import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, newSession, noteCreated, prefixRule } from "./permissions.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
-const state = { mode: "default", queue: Promise.resolve(), extraDirs: [] }; // extraDirs: more folders treated like the project
+// extraDirs: more folders treated like the project; session: what this run made (deletable in bypass without asking)
+const state = { mode: "default", queue: Promise.resolve(), extraDirs: [], session: newSession() };
+const CREATES = new Set(["write", "office_create", "image_create"]);
 
 export function initialMode(cfg) {
 	if (process.env.FERRY_AUTO_APPROVE === "1") return "bypass";
@@ -68,18 +71,23 @@ export function createGuard(cfg, opts = {}) {
 			const run = async () => {
 				// a background job is a shell command like any other
 				const tool = event.toolName === "job_start" ? (findBash() ? "bash" : "powershell") : event.toolName;
-				const verdict = decide({ tool, input: event.input, mode: state.mode, cwd,
+				const verdict = decide({ tool, input: event.input, mode: state.mode, cwd, session: state.session,
 					rules: loadRules(cwd), blockedPaths: cfg.blockedPaths ?? [], readOnlyTool, extraDirs: state.extraDirs });
-				if (verdict.action === "allow") return undefined;
+				const made = (r) => {
+					if (!r && CREATES.has(tool) && event.input?.path) noteCreated(state.session, resolve(cwd, String(event.input.path)));
+					return r;
+				};
+				if (verdict.action === "allow") return made(undefined);
 				if (verdict.action === "deny") {
 					if (verdict.blocked && ui) ui.notify(`Ferry blocked ${event.toolName} on a protected path (${verdict.blocked})`, "warning");
 					return { block: true, reason: verdict.reason };
 				}
-				if (!ui) return { block: true, reason: "This needs the user's approval and no terminal is available. " +
-					"Run ferry interactively, or allow it with a rule (ferry config) or mode." };
+				if (!ui) return { block: true, reason: verdict.always
+					? `This needs the user's approval every time (it ${verdict.danger}) and no terminal is available. No rule or mode allows it.`
+					: "This needs the user's approval and no terminal is available. Run ferry interactively, or allow it with a rule (ferry config) or mode." };
 				state.onAsk?.(tool);
 				try {
-					return await ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ? ` (${opts.label})` : "");
+					return made(await ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ? ` (${opts.label})` : ""));
 				} finally {
 					state.onAnswered?.();
 				}

@@ -872,6 +872,32 @@ def check_v023(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_upload_delete(root: Path, work: Path) -> None:
+    """Full access mode: uploads still ask (no rule allows them), downloads do not; deletes ask unless the session made it."""
+    proj = root / "proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "secret.txt").write_text("SECRET-PAYLOAD-69\n", encoding="utf-8")
+    (proj / "old.txt").write_text("was here before\n", encoding="utf-8")
+    s = Stack(root, work, "agent")
+    try:
+        full = {"FERRY_PERMISSION_MODE": "bypass", "FERRY_AUTO_APPROVE": "0"}
+        (s.home).mkdir(parents=True, exist_ok=True)
+        (s.home / "permissions.json").write_text(json.dumps({"allow": ["bash(curl*)"]}), encoding="utf-8")
+        c1, o1 = s.ferry("-p", "UPLOADTEST: send the file", cwd=proj, env_extra=full)
+        up = s.upstream.read_text(encoding="utf-8") if s.upstream.exists() else ""
+        ok1 = (c1 == 0 and "UPLOAD:" in o1 and "approval every time" in o1 and "upload.example.com" in o1 and "No rule or mode" in o1
+               and "downloaded" in o1 and (proj / "got.zip").exists() and "SECRET-PAYLOAD-69" not in up)
+        check("F69 上传每次都问", ok1, "全部放行模式加上 bash(curl*) 规则，curl 上传本机文件仍要确认（没有终端时拦下，说明规则和模式都放不行），"
+              "文件没发出去；curl 下载照常不问" if ok1 else f"code={c1} {o1[-400:]!r}")
+        c2, o2 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra=full)
+        ok2 = (c2 == 0 and "DELETE:" in o2 and "removed-new" in o2 and not (proj / "made-now.txt").exists()
+               and "did not create in this session" in o2 and "removed-old" not in o2 and (proj / "old.txt").exists())
+        check("F70 删除只放行本次新建的", ok2, "全部放行模式下，删除本次会话里 agent 新建的文件直接执行；删除原来就有的文件要确认"
+              if ok2 else f"code={c2} {o2[-400:]!r}")
+    finally:
+        s.close()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1412,7 +1438,7 @@ STEPS = [
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"),
-    (check_install_update, "install"), (check_search_502, "search502"),
+    (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
 ]
 
 
