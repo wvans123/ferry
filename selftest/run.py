@@ -799,7 +799,7 @@ def check_v022(root: Path, work: Path) -> None:
     """A rate-limited Claude account whose fallback speaks OpenAI's API: the client asks the fallback itself."""
     toml = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
             'fallback = "main"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
-            'context_window = 200000\nmax_tokens = 8000\n\n[routing]\ndefault = "claude"\n')
+            'context_window = 200000\nmax_tokens = 8000\n\n[routing]\ndefault = "claude"\nexpose = true\n')
     s = Stack(root, work, "agent", extra_toml=toml)
     try:
         c1, o1 = s.ferry("-p", "LIMITTEST: say something")
@@ -811,6 +811,10 @@ def check_v022(root: Path, work: Path) -> None:
         check("F61 限流时改用另一种接口的模型", ok, "Claude 账号 429 冷却，回退模型是 OpenAI 接口：客户端按它的格式重发，"
               "同一次运行里后面的请求直接问回退模型，冷却期间不再打扰 Claude 账号"
               if ok else f"c={c1},{c2} claude={len(claude_calls)} reroutes={len(reroutes)} o1={o1[-300:]!r} o2={o2[-200:]!r}")
+        c3, listed = s.ferry("--list-models")
+        ok3 = c3 == 0 and re.search(r"(?m)^kiro\s+claude\b", listed) and re.search(r"(?m)^ferry\s+auto\b", listed)
+        check("F68 模型按服务商列出", bool(ok3), "服务商 kiro 的模型在工作电脑上显示成 kiro/claude，auto 仍在 ferry 下"
+              if ok3 else f"{listed[-400:]!r}")
     finally:
         s.close()
 

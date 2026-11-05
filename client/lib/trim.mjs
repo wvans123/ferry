@@ -50,7 +50,8 @@ export async function trimPi() {
 		// what the server offers, nothing else.
 		const { ModelRuntime } = await import(new URL("./core/model-runtime.js", index).href);
 		const P = ModelRuntime.prototype;
-		const onlyFerry = (list) => (Array.isArray(list) ? list.filter((m) => m?.provider === "ferry") : list);
+		const { FERRY_PROVIDERS } = await import("./config.mjs");
+		const onlyFerry = (list) => (Array.isArray(list) ? list.filter((m) => FERRY_PROVIDERS.has(m?.provider)) : list);
 		const snap = P.getAvailableSnapshot;
 		P.getAvailableSnapshot = function getAvailableSnapshot(...a) {
 			return onlyFerry(snap.apply(this, a));

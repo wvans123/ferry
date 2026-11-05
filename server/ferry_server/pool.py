@@ -27,10 +27,11 @@ LONG_PAUSE = 300      # ... after a key or model problem (401, 402, 403, 404)
 
 
 def members(cfg: Config, m: ModelConfig) -> list[ModelConfig]:
-    """m and the other ready models with the same name and API, m first. A separate model stands alone."""
-    if getattr(m, "separate", False):
+    """m and the other ready models with the same name and API, m first, when m's provider shares (share = true):
+    then the sharing providers' copies form one pool. By default a model stands alone."""
+    if not getattr(m, "share", False):
         return [m]
-    same = [x for x in cfg.models.values() if x.id != m.id and not getattr(x, "separate", False) and x.api == m.api
+    same = [x for x in cfg.models.values() if x.id != m.id and getattr(x, "share", False) and x.api == m.api
             and norm(x.model) == norm(m.model) and x.ready]
     return [m, *same]
 

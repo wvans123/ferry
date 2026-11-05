@@ -216,7 +216,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 单个请求 ≤ 1MB，但长会话的上下文会超过 1MB | 客户端每轮只上传新增消息，用哈希链校验双方一致；超过 512KB 的内容拆块上传；服务端拼回完整上下文再发给模型 | `client/lib/sync.mjs`、`server/ferry_server/store.py` |
 | 服务端缓存丢了怎么办 | 客户端始终保存完整记录；服务端只是缓存。校验不一致时返回 409，客户端自动全量重传 | 同上 |
 | 提示词由谁决定 | 和 Cursor 一样由服务端完成最终组装：通用规则 + 按项目的规则，改完下一轮即生效，不用动客户端 | `server/ferry_server/prompt.py` |
-| 用哪个模型由服务端决定 | 客户端只看到一个 `auto` 模型；服务端按设置把干活的请求和写摘要的请求分别发给不同模型。同名模型在几家服务商之间分配和切换（`pool.py`）；接口有 OpenAI 兼容、Anthropic Messages、OpenAI Responses 三种 | `server/ferry_server/app.py`、`config.py`、`pool.py`、`responses.py` |
+| 用哪个模型由服务端决定 | 客户端只看到一个 `auto` 模型；服务端按设置把干活的请求和写摘要的请求分别发给不同模型。每家服务商的模型在工作电脑上各自列出（`kiro/模型名`）；勾了合成一组的几家，同名模型在它们之间分配和切换（`pool.py`）；接口有 OpenAI 兼容、Anthropic Messages、OpenAI Responses 三种 | `server/ferry_server/app.py`、`config.py`、`pool.py`、`responses.py` |
 | 服务端存不存对话 | 设置项 `session_store`：存磁盘（省流量）、只存内存、完全不存（每轮整段重传，仍按 512KB 分块，单个请求不超过 1MB） | `server/ferry_server/store.py` |
 | 本地安全底线 | 禁止目录、执行前确认都在客户端执行，服务端无法绕过；拦截原因里不含受保护的名字 | `client/lib/guard.mjs` |
 | 可审计 | 访问日志和审计日志只记大小、模型、用量，不记对话内容 | `server/ferry_server/app.py` |

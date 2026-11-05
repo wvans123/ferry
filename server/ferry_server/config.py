@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import tomllib
 from dataclasses import dataclass, field
@@ -31,8 +32,9 @@ class ModelConfig:
     vision: bool = True                                 # takes images; vision = false for a text-only model
     # USD per million tokens: input, output, cache_read, cache_write. Used for the cost in /cost and the usage page.
     price: dict = field(default_factory=dict)
-    # never grouped with same-named models of other providers (a relay whose "claude-opus" may be something else)
-    separate: bool = False
+    # pooled with same-named models of other providers that also share (one entry, conversations spread over them);
+    # off by default: each provider's models are its own (a relay's "claude-opus" may be something else)
+    share: bool = False
 
     @property
     def api_key(self) -> str:
@@ -61,7 +63,7 @@ class Provider:
     rpm: int = 0             # calls started per minute at most; more wait (0 = no limit)
     cooldown: int = 60       # after "too many requests" (429): seconds this account is left alone (Retry-After wins)
     fallback: str = ""       # model that answers while this account cools down ("" = wait); another API form: the client asks it
-    separate: bool = False   # its models are listed on their own, never merged with same-named models elsewhere
+    share: bool = False      # pool its models with same-named models of other sharing providers (default: kept apart)
 
     @property
     def api_key(self) -> str:
@@ -337,10 +339,11 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
             api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0),
             rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60), fallback=str(p.get("fallback", "") or ""),
-            separate=bool(p.get("separate", False)))
+            share=bool(p.get("share", False)))  # "separate" (0.29, now the default) is ignored
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
         m = dict(m)
+        m.pop("separate", None)  # 0.29's per-model copy of a provider setting that no longer exists
         pid = m.pop("provider", "")
         if pid:
             prov = providers.get(pid)
@@ -352,7 +355,7 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             m.setdefault("rename_params", prov.rename_params)
             m.setdefault("no_key", prov.no_key)
             m.setdefault("api", prov.api)
-            m.setdefault("separate", prov.separate)
+            m.setdefault("share", prov.share)
             m["key_value"] = prov.key
         try:
             models[mid] = ModelConfig(id=mid, provider=pid, **m)
@@ -361,6 +364,20 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
         _upgrade_old_sizes(models[mid])
         _fill_price(models[mid])
     return providers, models
+
+
+def provider_labels(cfg) -> dict[str, str]:
+    """provider id -> the short name the work PC shows in front of its models ("kiro fuli" -> "kiro-fuli"): its
+    name, else its id; unique, never "ferry" (that one is the server's own "auto" and pooled models)."""
+    out: dict[str, str] = {}
+    for pid, p in cfg.providers.items():
+        label = re.sub(r"[^a-z0-9._-]+", "-", (p.name or pid).lower()).strip("-.") or pid
+        if label == "ferry" or label in out.values():
+            label = re.sub(r"[^a-z0-9._-]+", "-", pid.lower()).strip("-.") or "provider"
+        while label == "ferry" or label in out.values():
+            label += "-2"
+        out[pid] = label
+    return out
 
 
 def _fill_price(m: ModelConfig) -> None:
@@ -414,7 +431,7 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]
-        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback", "separate"):
+        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback", "share"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
     for m in models:

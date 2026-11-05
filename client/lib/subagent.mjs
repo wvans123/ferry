@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { AGENT_DIR, FERRY_HOME } from "./config.mjs";
+import { AGENT_DIR, FERRY_HOME, findFerryModel } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
 import { createPrompt } from "./prompt.mjs";
 import { createWeb } from "./web.mjs";
@@ -259,7 +259,7 @@ export function createSubagents(cfg, deps) {
 function pickModel(agent, ctx) {
 	if (!agent.model) return ctx?.model;
 	const reg = ctx?.modelRegistry;
-	return reg?.find?.("ferry", agent.model) ?? ctx?.model;
+	return findFerryModel(reg, String(agent.model).replace(/^[^/]*\//, "")) ?? ctx?.model; // "kiro/x" or "x"
 }
 
 async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cwd, pi }) {

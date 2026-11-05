@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from starlette.background import BackgroundTask
 
 from . import PROTOCOL, __version__
-from .config import Config, refresh_models
+from .config import Config, provider_labels, refresh_models
 from .devices import Devices
 from . import globalmem
 from . import report as reports
@@ -332,12 +332,12 @@ def create_app(cfg: Config) -> FastAPI:
     async def health():
         return {"ok": True, "version": __version__, "protocol": PROTOCOL}
 
-    def describe(m, mid=None) -> dict:
+    def describe(m, mid=None, provider="") -> dict:
+        # provider: the name the work PC shows in front of the model ("kiro/claude-opus-5.5"); "ferry" for "auto",
+        # pooled models and models with an address of their own
         return {"id": mid or m.id, "contextWindow": limit_of(m), "maxTokens": m.max_tokens,
                 "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision,
-                "price": m.price,
-                # listed on its own next to a same-named model: the client shows whose it is
-                **({"via": cfg.providers[m.provider].name} if m.separate and m.provider in cfg.providers else {})}
+                "price": m.price, "provider": provider or "ferry"}
 
     def reload() -> None:
         err = refresh_models(cfg)
@@ -350,6 +350,7 @@ def create_app(cfg: Config) -> FastAPI:
         """The client sees "auto" (the server picks); other models only when routing.expose is on."""
         reload()
         d = cfg.models[cfg.default_model]
+        labels = provider_labels(cfg)
         auto = {**describe(d, "auto"), "routesTo": d.id}
         if cfg.summary_model:  # a summary request carries the whole history, so it must fit the smaller window
             auto["contextWindow"] = min(limit_of(d), limit_of(cfg.models[cfg.summary_model]))
@@ -363,7 +364,7 @@ def create_app(cfg: Config) -> FastAPI:
             ids = shared.get(m.id)
             if ids and any(x["id"] in ids for x in listed[1:]):
                 continue  # another provider's copy of this model is listed already
-            row = describe(m)
+            row = describe(m, provider="" if ids else labels.get(m.provider, ""))
             if ids:
                 row["contextWindow"] = min(limit_of(cfg.models[i]) for i in ids)
                 row["providers"] = len(ids)
