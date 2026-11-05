@@ -1,7 +1,8 @@
 name: test and release
 
-# Every push and pull request: unit tests and the end-to-end self-test on Linux and Windows.
-# A push to main whose package.json version has no release yet: build the offline Windows package and
+# Pull request: unit tests and the end-to-end self-test on Linux and Windows (skipped when only docs change).
+# Push to main: if the commit is a pull request that already passed those tests with the same files, the tests
+# are not run again. If package.json's version has no release yet, build the offline Windows package and
 # publish release v<version> (that is what `ferry update` downloads). So releasing = bumping the version.
 on:
   push:
@@ -11,9 +12,51 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
+  checks: read
+
+# a new push to a pull request cancels its older run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.g.outputs.test }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+    steps:
+      - name: do the tests need to run?
+        id: g
+        run: |
+          # docs/, eval results and top-level .md files; a SKILL.md inside client/ is code (the agent reads it)
+          docs_only() { ! grep -qvE '^(docs/|evals/results/|[^/]+\.md$)' "$1"; }
+          verdict() { echo "test=$1" >> "$GITHUB_OUTPUT"; echo "tests: $1 ($2)"; }
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            gh api --paginate "repos/$R/pulls/${{ github.event.number }}/files" --jq '.[].filename' > files
+            if docs_only files; then verdict false "only docs changed"; else verdict true "code changed"; fi
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" != push ]; then verdict true "${{ github.event_name }}"; exit 0; fi
+          sha=${{ github.sha }}
+          gh api "repos/$R/commits/$sha" --jq '.files[].filename' > files
+          if docs_only files; then verdict false "only docs changed"; exit 0; fi
+          tree=$(gh api "repos/$R/commits/$sha" --jq .commit.tree.sha)
+          head=$(gh api "repos/$R/commits/$sha/pulls" --jq '[.[] | select(.merged_at != null)][0].head.sha // empty')
+          if [ -z "$head" ]; then verdict true "not from a pull request"; exit 0; fi
+          if [ "$(gh api "repos/$R/commits/$head" --jq .commit.tree.sha)" != "$tree" ]; then
+            verdict true "main moved after the pull request was tested"; exit 0
+          fi
+          ok=$(gh api "repos/$R/commits/$head/check-runs?per_page=100" \
+            --jq '[.check_runs[] | select(.name|startswith("test (")) | select(.conclusion=="success")] | length')
+          if [ "$ok" -ge 2 ]; then verdict false "pull request $head passed on Linux and Windows"; else verdict true "pull request not tested"; fi
+
   test:
+    needs: gate
+    if: needs.gate.outputs.test == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -41,8 +84,10 @@ jobs:
         run: python selftest/run.py
 
   release:
-    needs: test
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [gate, test]
+    if: >-
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && needs.gate.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
