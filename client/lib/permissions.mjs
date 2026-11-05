@@ -452,7 +452,9 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	if (denied) return { action: "deny", reason: `Not allowed by the rule ${denied}` };
 
 	// a site tool is "read only" by its annotation, but which sites it contacts is still the user's choice
-	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && (READ_ONLY.has(tool) || readOnlyTool(tool));
+	const writes = tool === "office_read" && input.out ? String(input.out) : ""; // batch mode writes .txt files into out
+	if (writes && blockedPaths.some((p) => writes.toLowerCase().includes(p.toLowerCase()))) return { action: "deny", reason: "Access to this path is not allowed by local policy" };
+	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && !writes && (READ_ONLY.has(tool) || readOnlyTool(tool));
 	if (mode === "plan" && !readOnly && !NET.has(tool)) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
 			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
@@ -470,8 +472,8 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	if (any(rules.ask)) return { action: "ask", segments };
 	if (readOnly) return { action: "allow" };
 
-	if (EDIT.has(tool)) {
-		if (![cwd, ...extraDirs].some((d) => insideProject(d, resolve(cwd, String(input.path ?? ""))))) return { action: "ask", outside: true };
+	if (EDIT.has(tool) || writes) {
+		if (![cwd, ...extraDirs].some((d) => insideProject(d, resolve(cwd, writes || String(input.path ?? ""))))) return { action: "ask", outside: true };
 		if (mode === "acceptEdits" || any(rules.allow)) return { action: "allow" };
 		return { action: "ask" };
 	}

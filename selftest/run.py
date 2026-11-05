@@ -947,7 +947,8 @@ def check_office_legacy(root: Path, work: Path) -> None:
         ok2 = c2 == 0 and "IRM:" in o2 and "rights management (IRM)" in o2 and "tell the user" in o2
         check("F76 IRM 加密文件说清楚", ok2, "扩展名是 .docx、实际是 IRM 加密的 OLE 文件：office_read 按内容识别，直接说明已加密、"
               "没有所有者授权读不了、要告诉用户" if ok2 else f"code={c2} {o2[-300:]!r}")
-        c3, o3 = s.ferry("-p", "DOCFOLDERTEST: convert the folder", cwd=proj)
+        # batch mode writes files, so it is a file change: allowed in auto-edit mode
+        c3, o3 = s.ferry("-p", "DOCFOLDERTEST: convert the folder", cwd=proj, env_extra={"FERRY_PERMISSION_MODE": "acceptEdits"})
         out = proj / "docs-txt"
         txt = lambda rel: (out / rel).read_text(encoding="utf-8", errors="replace") if (out / rel).exists() else ""  # noqa: E731
         ok3 = (c3 == 0 and "ok 3, encrypted 0, failed 1" in o3 and "broken.docx" in o3 and "Batch docx text" in txt("new.docx.txt")
