@@ -103,7 +103,7 @@ async function serverJson(cfg, method, path, body) {
 	const res = await fetch(`${cfg.server}${path}`, { method, redirect: "manual", signal: AbortSignal.timeout(8000),
 		headers: serverHeaders(cfg, body ? { "Content-Type": "application/json" } : {}), body: body ? JSON.stringify(body) : undefined });
 	const json = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
-	if (!res.ok || !json) throw new Error(json?.error?.message ?? `the Ferry server answered HTTP ${res.status}`);
+	if (!res.ok || !json) throw Object.assign(new Error(json?.error?.message ?? `the Ferry server answered HTTP ${res.status}`), { status: res.status });
 	return json;
 }
 
@@ -140,7 +140,12 @@ async function runGlobal(cfg, params) {
 		const content = String(params.content ?? "").trim();
 		if (!content) throw new Error("content is required");
 		if (!params.replace) {
-			const old = await serverJson(cfg, "GET", path).then((r) => r.content, () => null);
+			let old = null;
+			try {
+				old = (await serverJson(cfg, "GET", path)).content;
+			} catch (e) {
+				if (e.status !== 404) throw new Error(`could not check whether memory ${name} exists: ${e.message}; try again`);
+			}
 			if (typeof old === "string" && old.trim() === content) return text(`Memory "${name}" already has this content; nothing to do.`);
 			if (typeof old === "string" && old.trim()) return text(exists("global", name, old));
 		}

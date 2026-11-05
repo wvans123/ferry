@@ -43,3 +43,25 @@ test("global memory goes to the Ferry server and shows in the prompt", async () 
 	assert.equal(store.size, 0);
 	srv.close();
 });
+
+test("global save without replace stops when the existence check fails", async () => {
+	const puts = [];
+	let getStatus = 500;
+	const srv = http.createServer((req, res) => {
+		req.resume();
+		req.on("end", () => {
+			res.setHeader("content-type", "application/json");
+			if (req.url === "/v1/ferry/memory") return res.end(JSON.stringify({ enabled: true, index: "" }));
+			if (req.method === "GET") { res.statusCode = getStatus; return res.end(JSON.stringify({ error: { message: "boom" } })); }
+			if (req.method === "PUT") { puts.push(req.url); return res.end(JSON.stringify({ ok: true, name: "x" })); }
+		});
+	});
+	await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+	const cfg = { server: `http://127.0.0.1:${srv.address().port}`, token: "t" };
+	await assert.rejects(_runGlobal(cfg, { action: "save", name: "x", content: "new" }), /could not check whether memory x exists: boom; try again/);
+	assert.equal(puts.length, 0);
+	getStatus = 404; // not found is a new memory: it is saved
+	assert.match((await _runGlobal(cfg, { action: "save", name: "x", content: "new" })).content[0].text, /Saved global memory/);
+	assert.equal(puts.length, 1);
+	srv.close();
+});
