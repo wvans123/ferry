@@ -5,6 +5,7 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "n
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { Type } from "typebox";
+import { wrapExternal } from "./external.mjs";
 
 const MAX_OUT = 60_000;
 
@@ -948,7 +949,7 @@ export function createOffice() {
 						"out (a folder for the text files, e.g. out: \"office-text\"). Each file becomes a .txt there and you get a summary back.");
 				}
 				const text = await readOffice(path, p);
-				return { content: [{ type: "text", text: cut(text) }], details: undefined };
+				return { content: [{ type: "text", text: wrapExternal(`file:${path}`, cut(text)) }], details: undefined };
 			},
 		});
 

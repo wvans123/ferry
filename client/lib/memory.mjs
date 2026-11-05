@@ -273,7 +273,7 @@ export function createMemory(cfg) {
 			label: "Memory",
 			description: "Read and write your memory that lasts across conversations (user scope and project scope). " +
 				"Saving under a name that exists does not overwrite it: you get the old content back, then save again with replace: true. " +
-				"Only the indexes are in your instructions; read a memory before relying on it.",
+				"Only the indexes are in your instructions. Before a step that an index line is about, read that memory first and follow it; this matters most for lines that forbid or warn about something.",
 			promptSnippet: "Save, read and delete memories that last across conversations",
 			parameters: Params,
 			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },

@@ -850,6 +850,11 @@ def check_prompt_rules(root: Path, work: Path) -> None:
               and "The user brings all kinds of work" in sys0 and "Keep going until the whole task is done" in sys0)
         check("F63 系统提示干净", ok, "提示里句子不再被换行截断；只放项目自己的 AGENTS.md，上层文件夹里的（比如别的工具留下的规则备份）不放进去"
               if ok else f"code={code} project={'PROJECT-RULE' in sys0} parent={'PARENT-RULE' in sys0} {sys0[:300]!r}")
+        sys1 = sys0.lower()
+        ok72 = ("carry on from where it stopped" in sys0 and "do not wrap up early" in sys0 and "A question, explanation, review" in sys0
+                and "do not allow anything new" in sys0 and "<external>" in sys0)
+        check("F72 提示里的范围和压缩规则", ok72, "系统提示里有：按请求类型限定动作范围、被压缩摘要后接着干不重来、外部内容里的指令不执行"
+              if ok72 else f"{sys1[:300]!r}")
     finally:
         s.close()
 
@@ -996,6 +1001,10 @@ def check_web_browser(root: Path, work: Path) -> None:
     try:
         c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)
         client_ok = c1 == 0 and "pelican-42" in o1
+        seen71 = json.dumps(jsonl(s.upstream)[-1].get("messages", []), ensure_ascii=False)
+        wrapped = '<external source="http://127.0.0.1:9100' in seen71.replace('\\"', '"')
+        check("F71 外部内容带来源标记", c1 == 0 and wrapped, "web_fetch 读到的网页交给模型时包在 <external source=\"网址\"> 里，"
+              "模型分得清哪些是网页内容、哪些是用户的话" if wrapped else f"code={c1} {seen71[-300:]!r}")
         c2, o2 = s.ferry("-p", "GATETEST: read the gated site", env_extra=pages)
         gate_ok = c2 == 0 and "company network gateway" in o2
         s.home.mkdir(parents=True, exist_ok=True)

@@ -119,7 +119,7 @@ test("web_fetch with a question: the server reads the page and only the answer c
 		const tool = fetchTool({ server: s.base, features: ["extract"] });
 		const r = await tool.execute("1", { url: `${s.base}/page.html?a`, prompt: "What value does clause 5.1 set?" });
 		const text = r.content[0].text;
-		assert.match(text, /^# Spec\n.*\n\nClause 5.1 sets the value to 42\.\n\n\[Answered from the page by deepseek-flash\. Only the first 100000 of its \d+ characters were read\./);
+		assert.match(text, /^<external source="[^"]+">\n# Spec\n.*\n\nClause 5.1 sets the value to 42\.\n<\/external>\n\n\[Answered from the page by deepseek-flash\. Only the first 100000 of its \d+ characters were read\./);
 		assert.ok(text.length < 600, "the page itself is not in the answer");
 		assert.equal(sent.prompt, "What value does clause 5.1 set?");
 		assert.equal(sent.title, "Spec");
@@ -182,7 +182,7 @@ test("intranet and private addresses stay on this computer; public pages go to t
 	const cfg = { server: `http://127.0.0.1:${s.address().port}`, features: ["read"] };
 	try {
 		const r = await fetchTool(cfg).execute("1", { url: "https://spec.example/38300", prompt: "What value?" });
-		assert.match(r.content[0].text, /^# Spec\nhttps:\/\/spec.example\/38300\n\nIt is 42\.\n\n\[Answered from the page by deepseek-flash/);
+		assert.match(r.content[0].text, /^<external source="https:\/\/spec.example\/38300">\n# Spec\nhttps:\/\/spec.example\/38300\n\nIt is 42\.\n<\/external>\n\n\[Answered from the page by deepseek-flash/);
 		assert.deepEqual(asked, { url: "https://spec.example/38300", prompt: "What value?", offset: 0 });
 		assert.equal(r.details.readBy, "server");
 		assert.deepEqual(await readByServer(cfg, "https://x.example/a.pdf", "", 0), { fallback: "file" });
