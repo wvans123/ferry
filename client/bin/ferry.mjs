@@ -600,6 +600,14 @@ else if (cmd === "pkg") { // pi packages: ferry pkg install npm:<name> | list | 
 }
 else if (cmd === "mcp") await mcp(rest);
 else if (cmd === "team") await (await import("../lib/teamcli.mjs")).teamCli(rest, { ferry: fileURLToPath(import.meta.url) }).then(exit);
+else if (cmd === "browser" && rest[0] === "login") {
+	const { browserLogin } = await import("../lib/browser.mjs");
+	console.log("Opening the browser the agent uses, in its own profile. Sign in there (Google, Microsoft or any site),\n" +
+		"then close the window: the agent's browser stays signed in from then on.");
+	await browserLogin(loadConfig(), rest[1]).then(() => console.log("Done: the sign-in is kept in the agent's browser profile."),
+		(e) => { console.error(`ferry browser login: ${e.message}`); process.exitCode = 1; });
+	exit();
+}
 else if (cmd === "doctor") await doctor().then(exit);
 else if (cmd === "check") await check().then(exit);
 else if (cmd === "install") {
@@ -625,6 +633,7 @@ else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   ferry doctor [--no-model]         check the setup step by step, ending with a tiny request to each model
   ferry doctor --upload             which upload sizes get through the network to the server
   ferry check                       does the company gateway want its confirmation now? if so, opens it
+  ferry browser login [url]         sign in (Google, Microsoft...) in the agent's browser; it keeps the login
   ferry login <server-url> <token>  use a Ferry server on another machine
       [--header "Name: value"]      extra header for every request (e.g. a Cloudflare Access service token)
   ferry logout                      go back to a Ferry server on this computer

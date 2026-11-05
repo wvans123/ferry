@@ -283,6 +283,36 @@ function relPath(cwd, p) {
  * The verdict for one tool call: { action: "allow" | "ask" | "deny", reason, danger, segments }.
  * readOnlyTool(name): extra tools known to only read (from their annotations).
  */
+// agent-browser commands that touch the user's private data or accounts: asked every time, in every mode (full access
+// and "always allow" rules included), like Claude Code asks before acting with the user's credentials (#8, #10)
+const BROWSER_PRIVATE = {
+	upload: "uploads files from this computer to a website",
+	cookies: "reads or changes the browser's cookies (logins)",
+	storage: "reads or changes a site's stored data",
+	clipboard: "reads or writes the clipboard",
+	state: "saves or loads the browser's logins (cookies and storage) to or from a file",
+	auth: "uses saved passwords",
+	connect: "connects to another browser (it may be your own, with your logins)",
+};
+const BROWSER_PRIVATE_FLAGS = /^--(profile|cdp|auto-connect|state|session-name)\b/;
+
+/** Why an agent-browser command needs the user every time, or "". */
+export function browserPrivacyOf(cmd) {
+	for (const seg of splitCommand(String(cmd ?? ""))) {
+		const w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+		if (!/^agent-browser(\.exe)?$/i.test(w[0] ?? "")) continue;
+		const args = w.slice(1);
+		if (args.some((a) => BROWSER_PRIVATE_FLAGS.test(a))) return "uses another browser profile or saved logins";
+		const at = args.findIndex((a) => !a.startsWith("-"));
+		const sub = (args[at] ?? "").toLowerCase();
+		const next = (args[at + 1] ?? "").toLowerCase();
+		if (BROWSER_PRIVATE[sub]) return BROWSER_PRIVATE[sub];
+		if (sub === "set" && next === "credentials") return "sends a user name and password to a site";
+		if (sub === "network" && next === "har") return "records all network traffic, logins included";
+	}
+	return "";
+}
+
 export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [] }) {
 	const shell = SHELL.has(tool);
 	const target = PATH_TOOLS.has(tool) ? input.path : shell ? input.command : undefined;
@@ -304,6 +334,8 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
 			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
 	}
+	const privacy = shell ? browserPrivacyOf(cmd) : "";
+	if (privacy) return { action: "ask", danger: privacy, segments }; // even in full access; no "always allow"
 	if (mode === "bypass") return { action: "allow" };
 
 	const danger = shell ? dangerOf(cmd) : "";

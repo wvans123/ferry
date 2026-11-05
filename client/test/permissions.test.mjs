@@ -97,3 +97,25 @@ test("web_fetch asks per site, rules cover subdomains", () => {
 test("edit(...) rules cover write too", () => {
 	assert.equal(d("write", { path: "src/new.js" }, "default", { allow: ["edit(src/**)"], ask: [], deny: [] }), "allow");
 });
+
+test("browser commands that touch private data ask in every mode, full access and allow rules included (#8, #10)", () => {
+	const allowAll = { allow: ["bash(agent-browser*)"], ask: [], deny: [] };
+	const verdict = (command, mode = "bypass", r = allowAll) =>
+		P.decide({ tool: "bash", input: { command }, mode, cwd: process.cwd(), rules: r, blockedPaths: [] });
+	for (const c of ["agent-browser cookies get", "agent-browser state save auth.json", "agent-browser upload @e3 report.pdf",
+		"agent-browser clipboard read", "agent-browser storage local", "agent-browser connect 9222", "agent-browser auth login app",
+		"agent-browser network har start", "agent-browser --profile Default open https://x.example",
+		"agent-browser --cdp 9222 snapshot", "cd x && agent-browser --auto-connect get url", "agent-browser.exe cookies clear"]) {
+		const v = verdict(c);
+		assert.equal(v.action, "ask", c);
+		assert.ok(v.danger, `${c}: shown as a careful prompt, without "always allow"`);
+		assert.equal(verdict(c, "acceptEdits").action, "ask", c);
+	}
+	for (const c of ["agent-browser open https://x.example", "agent-browser click @e3", "agent-browser fill @e5 hi",
+		"agent-browser --headed open https://x.example/login", "agent-browser set viewport 1280 800", "agent-browser close",
+		"echo agent-browser cookies"]) {
+		assert.equal(verdict(c).action, "allow", c);
+	}
+	assert.equal(verdict("agent-browser cookies get", "plan").action, "deny");
+	assert.equal(P.browserPrivacyOf("agent-browser set credentials user pass"), "sends a user name and password to a site");
+});

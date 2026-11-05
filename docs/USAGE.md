@@ -53,6 +53,7 @@
 | `ferry --session <id>` | 接着指定的对话（退出时会打印这一行） |
 | `ferry -p "问题"` | 只问一句，打印回答后退出，适合放进脚本 |
 | `ferry doctor` | 逐项检查网络、令牌、模型、搜索工具；`--upload` 测多大的上传能通过 |
+| `ferry browser login [地址]` | 在 agent 用的浏览器里登录（Google、Microsoft 这类不让程序控制的浏览器登录的网站），登录一直保留 |
 | `ferry check` | 看公司网关要不要确认，要就打开确认页并等到通过。在 ferry 里输入 `!ferry check` 也行 |
 | `ferry config` | 查看和修改客户端设置 |
 | `ferry mcp list` / `import` | 查看用到的 MCP 服务器 / 从 Claude Desktop、Claude Code、Cursor、VS Code、Windsurf 导入 |
@@ -168,12 +169,14 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 
 ### 浏览器
 
-web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的内容，也不能登录、点击。碰到这类网页，agent 会用电脑上的 Edge（没有 Edge 就用 Chrome）：打开网页、读脚本跑完后的内容、点击、填表、截图。
+web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的内容，也不能登录、点击。要在网站上操作（在站内搜索、一页页点下去、填表、登录后办事），agent 用电脑上的 Edge（没有 Edge 就用 Chrome）：打开网页、读脚本跑完后的内容、点击、填表、截图，一直做到拿到要的结果，中途卡住会说清卡在哪。
 
 - 用的是 Vercel 开源的 [agent-browser](https://github.com/vercel-labs/agent-browser)，随 Ferry 一起装好。agent 用命令调用它（`agent-browser open 网址`、`snapshot -i`、`click @e3`……），不需要另外装东西。
-- 默认打开浏览器窗口，你能看到它在做什么。不想看到窗口：`ferry config set browserHeadless true`。
-- 它用自己的浏览器资料夹（`%USERPROFILE%\.ferry\browser-profile`），和你平时用的 Edge 分开。要登录的网站，agent 会请你在它打开的窗口里登录一次，以后就记住了。
+- 默认在后台跑，不弹窗口。想一直看着它操作：`ferry config set browserHeadless false`。
+- 它用自己的浏览器资料夹（`%USERPROFILE%\.ferry\browser-profile`），和你平时用的浏览器分开。碰到要登录的网站，agent 打开一个窗口请你登录，登录完它关掉窗口、回到后台接着做；以后就记住了。密码只由你自己输入。
+- Google、Microsoft 等网站不让"被程序控制的浏览器"登录（提示"此浏览器或应用可能不安全"）。这时运行 `ferry browser login 登录页地址`（不写地址就是 Google 登录页）：它用同一个浏览器和资料夹，以普通方式打开窗口，你登录完关掉窗口，agent 的浏览器就带着这个登录了。agent 自己碰到这种情况也会运行这条命令，并告诉你怎么做。
 - 只看页面（`snapshot`、`get`、`screenshot`）不问你；打开网页、点击、填表要先确认，选"以后都允许"就是 `bash(agent-browser*)`。
+- 碰到你隐私的命令每次都问，"全部放行"模式和"以后都允许"也一样：读写 cookie 和网站存储、保存或载入登录状态、读写剪贴板、上传文件、用保存的密码、连到别的浏览器、录网络流量，以及换浏览器资料夹的选项。提交、发送、下单、发帖、改账户设置、删除这类撤不回的操作，agent 会先问你。网站要摄像头、位置等权限时，agent 不会替你同意。
 - 走公司代理，用这台电脑信任的证书。碰到公司网关的确认页，agent 会告诉你，不会替你点过去。
 - ferry 退出时把浏览器关掉。不想让 agent 用浏览器：`ferry config set browser false`。用别的浏览器：`ferry config set browserPath C:\路径\chrome.exe`。
 - 浏览器用不了时（没找到 Edge 或 Chrome、从源码运行没跑 `npm ci`），agent 一用就会告诉你原因和怎么修。`ferry doctor` 里 `browser:` 那一行也写着。

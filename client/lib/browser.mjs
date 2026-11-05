@@ -6,7 +6,7 @@
 // gives it a profile of its own under FERRY_HOME (so a site you log in to once stays logged in), shows the window
 // unless browserHeadless, and lets it use the company proxy (HTTPS_PROXY, set by Ferry) and this computer's
 // certificates. Settings already present in the environment win. The browser is closed when ferry exits.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, statSync, chmodSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -87,6 +87,29 @@ export function prepareBrowser(cfg) {
 	set("AGENT_BROWSER_USE_SYSTEM_CA", "1");
 	if (Array.isArray(cfg.browserArgs) && cfg.browserArgs.length) set("AGENT_BROWSER_ARGS", cfg.browserArgs.join("\n"));
 	return { on: true, browser };
+}
+
+/**
+ * `ferry browser login [url]`: the same browser and profile the agent uses, opened the ordinary way (not driven by a
+ * program), so the user can sign in where sites refuse a browser under automation ("This browser or app may not be
+ * secure", Google, Microsoft). The login is kept in the profile; agent-browser uses it from then on. Resolves when the
+ * user closes the window. opts.spawn and opts.close are for tests.
+ */
+export async function browserLogin(cfg, url = "https://accounts.google.com", opts = {}) {
+	const exe = process.env.AGENT_BROWSER_EXECUTABLE_PATH || findBrowser(cfg);
+	if (!exe) throw new Error("no Edge or Chrome found (ferry config set browserPath <path to the browser>)");
+	const profile = process.env.AGENT_BROWSER_PROFILE || join(FERRY_HOME, "browser-profile");
+	// the agent's browser must not hold the profile (one browser per profile)
+	(opts.close ?? (() => existsSync(BROWSER_BIN) && spawnSync(BROWSER_BIN, ["close", "--all"],
+		{ timeout: 15000, stdio: "ignore", windowsHide: true })))();
+	mkdirSync(profile, { recursive: true });
+	const args = [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", url];
+	const child = (opts.spawn ?? spawn)(exe, args, { stdio: "ignore" });
+	await new Promise((done, fail) => {
+		child.on("exit", done);
+		child.on("error", fail);
+	});
+	return { exe, profile, args };
 }
 
 /** The pi extension: the browser skill while the browser is on; close the browser when ferry exits. */

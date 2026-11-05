@@ -38,7 +38,7 @@ export const DEFAULTS = {
 	blockedSites: [], // sites never opened by web_fetch (and their subdomains), e.g. ["mail.corp.com"]
 	browser: true, // let the agent drive the browser on this computer (Edge on Windows) with agent-browser
 	browserPath: "", // a browser program to use instead of Edge / Chrome
-	browserHeadless: false, // run the browser without a window
+	browserHeadless: true, // run the browser without a window; the agent shows one for a login (#8, #10)
 	thinking: "medium", // how long Claude / GPT think: low, medium, high, xhigh
 	trimOldOutputs: "80k", // past this many tokens of context, old long tool outputs are left out ("0" = never)
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
@@ -82,7 +82,7 @@ export const ADVANCED_SETTINGS = {
 	notifyAfterSeconds: ["number", "how long a request must take before the notification"],
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
-	browserHeadless: ["boolean", "run that browser without a window (by default you see what the agent does)"],
+	browserHeadless: ["boolean", "run that browser without a window (default); false: always show it, so you see what the agent does"],
 	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
