@@ -5,6 +5,8 @@ usage: python selftest/run.py          (needs: node + `npm install` in client/, 
 """
 from __future__ import annotations
 
+import argparse
+import inspect
 import json
 import os
 import re
@@ -28,6 +30,7 @@ TOKEN_BOB = "ferry-selftest-token-bob"
 SECRET = "ferry-selftest-secret-0123456789"
 CONTENT = ["internal-host-01", "10.1.2.3", "bob@corp.example", "EMP-12345"]  # what notes.txt says
 LONG_FILES, FILE_BYTES = 36, 45 * 1024
+PROMPT = "请读取 Project Titan 目录下的 notes.txt 并告诉我内容"
 results: list[tuple[str, bool]] = []
 
 
@@ -1063,12 +1066,8 @@ def check_install_update(root: Path) -> None:
         shutil.rmtree(inst, ignore_errors=True)
 
 
-def main() -> int:
-    base = Path(tempfile.mkdtemp(prefix="ferry-selftest-"))
-    work = make_work(base / "work")
-    print(f"logs: {base}")
-    prompt = "请读取 Project Titan 目录下的 notes.txt 并告诉我内容"
-
+def part_basic(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[1/14] 基本流程：读文件、逐字流式、服务端规则、审计、参数适配、鉴权", flush=True)
     s = Stack(base / "basic", work, "basic")
     try:
@@ -1106,6 +1105,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_long(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print(f"\n[2/14] 长会话：连续读取 {LONG_FILES} 个 {FILE_BYTES // 1024}KB 文件，触发上下文压缩，中途服务端丢一次会话", flush=True)
     cheap = ('\n[models.cheap]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\n'
              'model = "cheap-model"\ncontext_window = 300000\nmax_tokens = 8192\ndrop_params = ["store"]\n'
@@ -1146,6 +1148,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_nostore(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[3/14] 服务端不保存会话（session_store = none）", flush=True)
     s = Stack(base / "nostore", work, "long:4", session_store="none")
     try:
@@ -1160,6 +1165,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_drop(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[4/14] 服务端频繁丢失会话", flush=True)
     s = Stack(base / "drop", work, "long:8", drop_every=3)
     try:
@@ -1172,6 +1180,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_guard(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[5/14] 本地安全规则", flush=True)
     s = Stack(base / "guard", work, "basic")
     try:
@@ -1184,6 +1195,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_proxy(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[6/14] 经公司代理访问服务端", flush=True)
     s = Stack(base / "proxy", work, "basic", server_host="127.0.0.2")
     try:
@@ -1203,6 +1217,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_gate(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[7/14] 服务端前面有登录页（像 Cloudflare Access）", flush=True)
     s = Stack(base / "gate", work, "long:2", server_env={"FERRY_TEST_REQUIRE_HEADER": "CF-Access-Client-Id"})
     try:
@@ -1219,6 +1236,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_chatdrop(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[8/14] 调用模型前一刻服务端丢了缓存", flush=True)
     s = Stack(base / "chatdrop", work, "long:6", drop_before_chat=2)
     try:
@@ -1230,6 +1250,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_users(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[9/14] 多用户隔离、版本协商、弱密钥", flush=True)
     s = Stack(base / "users", work, "basic")
     try:
@@ -1251,6 +1274,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_cap(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[10/14] 服务端压缩：发给模型的请求有上限", flush=True)
     s = Stack(base / "cap", work, f"long:{LONG_FILES}", context_window=1_000_000, max_upstream=400_000)
     try:
@@ -1262,6 +1288,9 @@ def main() -> int:
     finally:
         s.close()
 
+
+def part_zero(base: Path, work: Path) -> None:
+    prompt = PROMPT
     print("\n[11/14] 零配置：只设 DEEPSEEK_API_KEY，直接运行 ferry", flush=True)
     s = Stack(base / "zero", work, "long:3", start_server=False)
     try:
@@ -1290,29 +1319,51 @@ def main() -> int:
     finally:
         s.close()
 
-    print("\n[12/14] 客户端 agent：记忆、子 agent、长输出、任务清单、权限、系统提示、中文路径", flush=True)
-    check_agent_features(base / "agent", work)
 
-    print("\n[13/14] 联网、公司网关、浏览器", flush=True)
-    check_web_browser(base / "web", work)
-    check_gateway(base / "gateway", work)
-    check_resume_upload(base / "resume", work)
-    check_v016(base / "v016", work)
-    check_context_and_mcp(base / "ctx", work)
-    check_project_mcp(base / "pmcp")
-    check_tui(base / "tui", work)
-    check_steer(base / "steer", work)
-    check_team(base / "team", work)
-    check_v019(base / "v019", work)
-    check_v022(base / "v022", work)
-    check_prompt_rules(base / "rules", work)
-    check_v023(base / "v023", work)
-    check_diy(base / "diy")
-    check_claude_goal_jobs(base / "claude", work)
-    check_v018(base / "v018", work)
+# Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
+# its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
+STEPS = [
+    (part_basic, ""), (part_long, ""), (part_nostore, ""), (part_drop, ""),
+    (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
+    (part_users, ""), (part_cap, ""), (part_zero, ""),
+    (check_agent_features, "agent"), (check_web_browser, "web"), (check_gateway, "gateway"),
+    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"),
+    (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
+    (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
+    (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"),
+    (check_install_update, "install"),
+]
 
-    print("\n[14/14] 安装与从 GitHub 更新（用本机模拟的发布页）", flush=True)
-    check_install_update(base / "install")
+
+def step_checks(fn) -> list[str]:
+    return re.findall(r'check\("(F\d+)', inspect.getsource(fn))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Ferry end-to-end self-test (fake model, no API key)")
+    ap.add_argument("--only", default="", help="comma-separated F numbers, e.g. F7,F66: run only the steps with those checks")
+    ap.add_argument("--list", action="store_true", help="list the steps and the F checks in each, then exit")
+    args = ap.parse_args()
+    if args.list:
+        for fn, folder in STEPS:
+            print(f"{fn.__name__:28} {' '.join(step_checks(fn))}")
+        return 0
+    wanted = {f.strip().upper() for f in args.only.split(",") if f.strip()}
+    known = {f for fn, _ in STEPS for f in step_checks(fn)}
+    if wanted - known:
+        print(f"no such check: {', '.join(sorted(wanted - known))} (see --list)")
+        return 2
+    steps = [(fn, folder) for fn, folder in STEPS if not wanted or wanted & set(step_checks(fn))]
+    base = Path(tempfile.mkdtemp(prefix="ferry-selftest-"))
+    work = make_work(base / "work")
+    print(f"logs: {base}")
+    for fn, folder in steps:
+        if not fn.__name__.startswith("part_"):
+            print(f"\n[{fn.__name__}]", flush=True)
+        if len(inspect.signature(fn).parameters) == 2:
+            fn(base / folder, work)
+        else:
+            fn(base / folder)
 
     failed = [r for r in results if not r[1]]
     print(f"\n结果: {len(results) - len(failed)}/{len(results)} 通过" + (f"，日志在 {base}" if failed else ""))
