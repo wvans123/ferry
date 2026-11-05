@@ -297,7 +297,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
     async def list_reports(request: Request):
         if not allowed(request):
             return denied()
-        return {"reports": reports.recent(cfg), "repo": cfg.github_repo, "token": bool(reports.github_token(cfg)),
+        unsent, sent = reports.recent(cfg)
+        return {"reports": unsent, "sent": sent, "repo": cfg.github_repo, "token": bool(reports.github_token(cfg)),
                 "words": reports.words(cfg)}
 
     @app.put("/admin/api/reports/words")

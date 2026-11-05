@@ -103,6 +103,12 @@ def test_providers_keys_prompts_report_words(tmp_path, monkeypatch):
             from ferry_server.report import scrub
             text, n = scrub(cfg, "project titan on host-01 at 10.1.2.3, call 13812345678")
             assert n == 4 and "titan" not in text.lower() and "host-01" not in text and "10.1.2.3" not in text
+            # the list shows only reports that did not reach GitHub; the sent ones are a count
+            from ferry_server.report import save
+            save(cfg, {"id": "20261105-0900-a", "title": "sent one", "issue": "https://github.com/x/y/issues/1", "error": ""})
+            save(cfg, {"id": "20261105-0901-b", "title": "stuck one", "issue": "", "error": "no GitHub token"})
+            lst = (await c.get("/admin/api/reports")).json()
+            assert [x["title"] for x in lst["reports"]] == ["stuck one"] and lst["sent"] == 1
 
     run(go())
 

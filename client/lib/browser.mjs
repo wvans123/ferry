@@ -7,7 +7,8 @@
 // unless browserHeadless, and lets it use the company proxy (HTTPS_PROXY, set by Ferry) and this computer's
 // certificates. Settings already present in the environment win. The browser is closed when ferry exits.
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, linkSync, mkdirSync, statSync, chmodSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, chmodSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,27 +90,88 @@ export function prepareBrowser(cfg) {
 	return { on: true, browser };
 }
 
+// ---------- signing in ----------
+// Google, Microsoft and others refuse to sign in to a browser a program launched ("This browser or app may not be
+// secure"). For a login Ferry opens the same browser and profile the ordinary way, with a debugging port the agent
+// connects to only after the user has signed in, so the agent carries on in that very window. `ferry browser hide`
+// (or ferry exiting) closes it; the next command runs in the background again, still signed in (same profile).
+
+const WINDOW_FILE = join(FERRY_HOME, "browser-window.json");
+const LOGIN_URL = /(log-?in|sign-?in|logon|\/auth|sso|oauth|saml|\/cas\/|servicelogin|challenge|accounts\.google\.|login\.microsoftonline\.|login\.live\.)/i;
+
+function freePort() {
+	return new Promise((done, fail) => {
+		const s = createServer();
+		s.on("error", fail);
+		s.listen(0, "127.0.0.1", () => {
+			const { port } = s.address();
+			s.close(() => done(port));
+		});
+	});
+}
+
+/** The pages open in the window (HTTP only: nothing attaches to them while the user signs in), or null when it is gone. */
+async function windowPages(port) {
+	try {
+		const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000) });
+		return (await r.json()).filter((t) => t.type === "page").map((t) => String(t.url ?? ""));
+	} catch {
+		return null;
+	}
+}
+
 /**
- * `ferry browser login [url]`: the same browser and profile the agent uses, opened the ordinary way (not driven by a
- * program), so the user can sign in where sites refuse a browser under automation ("This browser or app may not be
- * secure", Google, Microsoft). The login is kept in the profile; agent-browser uses it from then on. Resolves when the
- * user closes the window. opts.spawn and opts.close are for tests.
+ * `ferry browser login [url]`: open the agent's browser and profile as an ordinary window at url and wait until the
+ * user has signed in (a page away from the login pages), then connect the agent's browser commands to that window.
+ * Returns { state: "signed-in" | "already" | "closed" | "timeout", port }. opts: spawn, run, waitMs, every (tests).
  */
 export async function browserLogin(cfg, url = "https://accounts.google.com", opts = {}) {
 	const exe = process.env.AGENT_BROWSER_EXECUTABLE_PATH || findBrowser(cfg);
 	if (!exe) throw new Error("no Edge or Chrome found (ferry config set browserPath <path to the browser>)");
 	const profile = process.env.AGENT_BROWSER_PROFILE || join(FERRY_HOME, "browser-profile");
-	// the agent's browser must not hold the profile (one browser per profile)
-	(opts.close ?? (() => existsSync(BROWSER_BIN) && spawnSync(BROWSER_BIN, ["close", "--all"],
-		{ timeout: 15000, stdio: "ignore", windowsHide: true })))();
+	const run = opts.run ?? ((args) => existsSync(BROWSER_BIN) && spawnSync(BROWSER_BIN, args, { timeout: 15000, stdio: "ignore", windowsHide: true }));
+	browserHide({ run }); // one browser per profile: the agent's own (and an earlier login window) must go first
 	mkdirSync(profile, { recursive: true });
-	const args = [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", url];
-	const child = (opts.spawn ?? spawn)(exe, args, { stdio: "ignore" });
-	await new Promise((done, fail) => {
-		child.on("exit", done);
-		child.on("error", fail);
-	});
-	return { exe, profile, args };
+	const port = await freePort();
+	const args = [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, "--no-first-run", "--no-default-browser-check", url];
+	const child = (opts.spawn ?? spawn)(exe, args, { detached: true, stdio: "ignore" });
+	child.unref?.();
+	writeFileSync(WINDOW_FILE, JSON.stringify({ pid: child.pid, port }), "utf8");
+	const until = Date.now() + (opts.waitMs ?? 10 * 60_000);
+	const every = opts.every ?? 2000;
+	let seenLogin = false;
+	let seenUp = false;
+	let state = "timeout";
+	for (let calm = 0; Date.now() < until; await new Promise((r) => setTimeout(r, every))) {
+		const pages = await windowPages(port);
+		if (!pages) {
+			if (seenUp) { state = "closed"; break; } // the user closed the window: the login is kept in the profile
+			continue;
+		}
+		seenUp = true;
+		const real = pages.filter((u) => /^https?:/i.test(u));
+		if (real.some((u) => LOGIN_URL.test(u))) { seenLogin = true; calm = 0; continue; }
+		// away from every login page twice in a row (redirects settle), or never on one: signed in
+		if (real.length && ++calm >= 2) { state = seenLogin ? "signed-in" : "already"; break; }
+	}
+	if (state === "signed-in" || state === "already") run(["connect", String(port)]);
+	if (state === "closed" || state === "timeout") browserHide({ run });
+	return { state, port, args };
+}
+
+/** `ferry browser hide`: close the login window (and disconnect); the next browser command runs in the background. */
+export function browserHide(opts = {}) {
+	const run = opts.run ?? ((args) => existsSync(BROWSER_BIN) && spawnSync(BROWSER_BIN, args, { timeout: 15000, stdio: "ignore", windowsHide: true }));
+	run(["close", "--all"]);
+	if (!existsSync(WINDOW_FILE)) return false;
+	try {
+		const { pid } = JSON.parse(readFileSync(WINDOW_FILE, "utf8"));
+		if (pid) process.kill(pid);
+	} catch {
+		// already closed
+	}
+	rmSync(WINDOW_FILE, { force: true });
+	return true;
 }
 
 /** The pi extension: the browser skill while the browser is on; close the browser when ferry exits. */
@@ -130,7 +192,8 @@ export function createBrowser(status) {
 			if (/\bagent-browser\b/.test(String(event.input?.command ?? ""))) used = true;
 		});
 		pi.on("session_shutdown", () => {
-			if (used) spawnSync(BROWSER_BIN, ["close", "--all"], { timeout: 5000, stdio: "ignore", windowsHide: true });
+			if (existsSync(WINDOW_FILE)) browserHide(); // a login window Ferry opened: closed with ferry
+			else if (used) spawnSync(BROWSER_BIN, ["close", "--all"], { timeout: 5000, stdio: "ignore", windowsHide: true });
 		});
 	};
 }

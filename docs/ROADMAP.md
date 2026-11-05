@@ -54,12 +54,27 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 
 还要在 Windows 上确认：GitHub 的 Windows 测试机上有 Edge，自测 F36 会用它跑一遍；公司代理和网关下的表现，要在工作电脑上试。
 
+## 下一步候选（2026-11-05 整理，按值得做的程度排）
+
+| 功能 | 做什么 | 备注 |
+|---|---|---|
+| 真机验证 0.31 | Windows 上跑 `python evals/run.py`；试 `ferry browser login` 登录 Google；服务端用真 DeepSeek Key 试搜索和读网页 | 0.26 之后还没跑过真模型评测 |
+| 调研类评测任务 | evals/tasks 里加"查资料写结论"和"在网站上操作"的任务，衡量搜索和浏览器到底好不好用 | 现在的 8 个任务不覆盖联网 |
+| 网页正文提取 | 服务端读网页时去掉导航、侧栏、广告，只留正文（pi-web-access 用 Readability 的做法） | 不加依赖的话写一个简化版 |
+| 没有 DeepSeek 时的搜索 | Exa 的免费搜索（不要 Key，有限速）或 Gemini API 自带的 Google 搜索，作为服务端搜索的备选 | 只在服务端做，Key 不进工作电脑 |
+| 用自己的浏览器（可选） | 设置项：agent-browser 连你正在用的 Chrome（chrome://inspect 里打开远程调试，每次连接 Chrome 会问你），所有登录直接可用 | 能看到你所有账号；公司可能禁用；Edge 支不支持待查 |
+| 记忆 | 你纠正 agent 后它问一句"要记住吗"；定期合并、去重、删掉过时的记忆 | 不做每次对话结束自动记（会记成流水账） |
+| 传输 | 新增内容小的那一轮，把上传和调用合成一个请求，每轮少一次往返 | 收益不大，排后 |
+| 团队 | Paperclip 要 Node 24.11，工作电脑可能不够；看要不要换成 Ferry 自带的简单看板 | 先等实际用过 |
+| DSH 接入 | 见上面"顺序"表第 2、3 项 | DeepSeek Harness 生态很大（27 万星），插件可以借鉴 |
+
 ## 看过、暂时不做的
 
 | 项目 | 是什么 | 结论 |
 |---|---|---|
 | [agent-desktop](https://github.com/vercel-labs/agent-desktop) | 同一家的桌面版：通过系统的无障碍接口读、操作任何桌面程序（Windows 上是 UI Automation），也是命令行加快照编号的用法 | 暂不做。Word、Excel 已经直接改文件，不用操作窗口；在公司电脑上让 agent 点任意程序风险大；项目还在 labs 阶段。以后真要操作某个只有界面的内部程序，按同样的"命令行 + 技能说明"接进来，改动很小 |
 | [Scrapling](https://github.com/D4Vinci/Scrapling) | Python 爬虫框架：伪装浏览器指纹、绕过 Cloudflare 验证、自适应选择器、并发爬取，带 MCP 服务器 | 不集成。工作电脑上的客户端不需要 Python，它还要下载自己的浏览器；我们要读的（3GPP、文档站）是普通页面；在公司网络里绕过网站的反爬也不合适。某个项目真要爬数据，agent 可以在那个项目里用命令装它 |
+| Antigravity CLI（modsearch 用它搜索） | Google 的 agent 命令行，用个人 Google 账号登录后能搜索和读网页 | 不接。每搜一次要启动一个 agent，慢；拿个人账号当接口用不稳。服务端有 DeepSeek 搜索 API 就够了 |
 | [ClawChat](https://clawling.com/zh/chat/) | 一个聊天 App，让 Claude Code、Codex、OpenClaw、Hermes 这些 agent 和人在群聊里一起说话，agent 会主动发言 | 团队先用 Paperclip。ClawChat 的聊天服务在它自己的云上，不能自己部署，公司的工作内容不能放上去；它是聊天，不管任务、分工和进度。它"在手机上跟 agent 群聊"的想法，和上面"调度员只跟你说话"是一回事，等调度员做好了再看要不要接一个聊天入口 |
 
 ## 离商业产品还差什么（v0.24）

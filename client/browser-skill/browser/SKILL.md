@@ -43,17 +43,16 @@ Full reference, matched to the installed version: `agent-browser skills get core
 
 ## Logins and the user's help
 
-- A login page (a sign-in form, a redirect to a single sign-on page, 401 or 403): the user logs in, you never type a
-  password. In the background there is no window, so show one:
-  `agent-browser close && agent-browser --headed open <login page>`, ask the user to log in there (ask_user), then
-  `agent-browser wait` for an element of the page behind the login and carry on. Afterwards `agent-browser close`;
-  the next command starts in the background again, still logged in (same profile).
-- Google, Microsoft and some others refuse to sign in to a browser that a program drives ("This browser or app may not
-  be secure"). Then run `ferry browser login <login page>`: it opens the same browser and profile the ordinary way and
-  waits until the user closes the window. Tell the user what to do first (sign in, then close the window). After it
-  returns, open the site again with agent-browser: the login is there.
-- A site asks for a permission (camera, location, notifications): never grant it yourself. If the task needs it, show
-  the window the same way and let the user answer the browser's question.
+- A login page (a sign-in form, a redirect to a single sign-on page, 401 or 403): the user signs in, you never type
+  a password. Say in one line what the user should do (sign in to <site> in the window that opens), then run
+  `ferry browser login <login page or the page you need>` (give the command a long timeout, up to 10 minutes). It
+  opens the same browser and profile as an ordinary window (sites such as Google and Microsoft refuse to sign in
+  to a browser a program drives), waits until the user has signed in, and connects agent-browser to that window:
+  carry on there with the usual commands. When the window is no longer needed, `ferry browser hide`; the next
+  command runs in the background again, still signed in. If it says the window was closed or nobody signed in,
+  tell the user and stop that part.
+- A site asks for a permission (camera, location, notifications): never grant it yourself. If the task needs it, open
+  the window the same way (`ferry browser login <page>`) and let the user answer the browser's question.
 - A company gateway's confirmation page ("are you sure you want to visit…"): tell the user; do not click through it.
 
 ## What always needs the user

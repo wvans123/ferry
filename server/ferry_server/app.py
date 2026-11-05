@@ -373,7 +373,7 @@ def create_app(cfg: Config) -> FastAPI:
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
         return {"models": listed, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
-                + (["search"] if web_search.ready(cfg) else []) + (["extract"] if web_search.extract_models(cfg) else [])}
+                + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
 
     @app.post("/v1/ferry/image")
     async def image(request: Request):

@@ -35,7 +35,7 @@ cmd 窗口里的 ferry ──(本机 127.0.0.1)──> Ferry 服务端 ───
 
 需要：
 
-- Node.js 22 或更高（你已有 v25.8.1）。
+- Node.js 22.19 或更高（你已有 v25.8.1）。
 - Python 3.11 到 3.14 之一。在 cmd 里输入 `python --version` 能看到版本号即可；提示"不是内部或外部命令"时试 `py -3 --version`。都没有的话，从 python.org 安装，安装时勾选 "Add python.exe to PATH"。
 
 1. 从 GitHub 发布页 https://github.com/wvans123/ferry/releases/latest 下载 `ferry-windows-0.13.0.zip`（版本号以页面上的为准，下面的命令里换成对应的数字）。工作电脑打不开 GitHub 的话，在别的电脑下载后拷过去。
