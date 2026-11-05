@@ -276,7 +276,7 @@ async function doctor() {
 		const store = { disk: "cached on disk", memory: "cached in memory only", none: "not kept (full upload every turn)" };
 		info(`conversation on the server: ${store[r.body.sessionStore] ?? "cached"}; the full history stays on this computer`);
 		const webOff = cfg.web === "off" || cfg.web === false;
-		info(webOff ? "web tools: off" : "web tools: on this computer, through its normal network (ferry config set web off to turn them off)");
+		info(webOff ? "web tools: off" : `web tools: ${(r.body.features ?? []).includes("search") ? "search through the server" : "search reads Bing on this computer"}, ${(r.body.features ?? []).includes("read") ? "public pages through the server" : "pages read on this computer"}; intranet and private addresses always on this computer (ferry config set web off to turn them off)`);
 		if (!webOff && cfg.blockedSites?.length) info(`blocked sites: ${cfg.blockedSites.join(", ")}`);
 		for (const m of r.body.models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);

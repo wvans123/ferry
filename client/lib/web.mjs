@@ -221,14 +221,41 @@ export function parseBing(html) {
  */
 export async function searchServer(cfg, query, count = 8, recent = "", signal, sites = {}) {
 	if (!(cfg.features ?? []).includes("search")) return null;
-	const res = await fetch(`${cfg.server}/v1/ferry/search`, {
+	const ask = () => fetch(`${cfg.server}/v1/ferry/search`, {
 		method: "POST", redirect: "manual", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(100000)]) : AbortSignal.timeout(100000),
 		headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
 		body: JSON.stringify({ query, count, recent, allowed_domains: sites.allowed ?? [], blocked_domains: sites.blocked ?? [] }),
 	});
-	const out = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
-	if (!res.ok || !Array.isArray(out?.results)) throw new Error(out?.error ?? `HTTP ${res.status}`);
+	let res = await ask();
+	if ([502, 503, 504].includes(res.status) && !res.headers.get("content-type")?.includes("json")) {  // a tunnel or gateway page (not the server's own JSON error) usually clears in a second: ask once more
+		await new Promise((done) => setTimeout(done, Number(process.env.FERRY_SEARCH_RETRY_MS ?? 1500)));
+		if (signal?.aborted) throw signal.reason;
+		res = await ask();
+	}
+	const isJson = res.headers.get("content-type")?.includes("json");
+	let out = null;
+	let html = "";
+	if (isJson) out = await res.json().catch(() => null);
+	else html = await res.text().catch(() => "");
+	if (!res.ok || !Array.isArray(out?.results)) {
+		if (out?.error) throw new Error(out.error);
+		if (!isJson) {
+			const err = new Error(`HTTP ${res.status} from ${replySource(res, html)}, not from the search engine (the reply was not JSON)`);
+			err.nonJson = true;
+			throw err;
+		}
+		throw new Error(`HTTP ${res.status}`);
+	}
 	return { results: out.results, engine: out.engine };
+}
+
+/** Who sent a reply that is not the Ferry server's JSON: Cloudflare, or the page's own title. */
+function replySource(res, html) {
+	const ray = res.headers.get("cf-ray");
+	if (ray || /cloudflare/i.test(res.headers.get("server") ?? "")) return `Cloudflare${ray ? ` (cf-ray ${ray})` : ""}`;
+	const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.replace(/\s+/g, " ").trim();
+	if (title) return `a page titled "${title.slice(0, 80)}"`;
+	return res.headers.get("server") || "something between this computer and the server";
 }
 
 /** Domain limits written into the query (site: / -site:), for Bing's page. */
@@ -238,8 +265,9 @@ export function withSites(query, allowed = [], blocked = []) {
 }
 
 export async function searchWeb(query, count = 8, signal, base = process.env.FERRY_TEST_SEARCH_BASE) {
-	const url = `${base || "https://www.bing.com"}/search?q=${encodeURIComponent(query)}&setlang=zh-Hans`;
-	const r = await get(url, signal);
+	// strict SafeSearch, in the address and in the cookie Bing's own setting writes: "6G" otherwise matched adult file shares
+	const url = `${base || "https://www.bing.com"}/search?q=${encodeURIComponent(query)}&setlang=zh-Hans&adlt=strict`;
+	const r = await get(url, signal, { headers: { Cookie: "SRCHHPGUSR=ADLT=STRICT" } });
 	if (gatewayPage(r.url, r.buf.length < 30000 ? r.text : "")) throw new GatewayError(r.url, url);
 	return { results: parseBing(r.text).slice(0, count) };
 }
@@ -436,8 +464,10 @@ export function createWeb(cfg) {
 					r = await searchServer(cfg, params.query, count, recent, signal, { allowed, blocked });
 				} catch (e) {
 					if (signal?.aborted) throw e;
-					note = `\n\n[The server's search engine failed (${String(e.message).slice(0, 200)}); these results are Bing's page.]`;
+					note = e.nonJson ? `\n\n[Searching through the server failed: ${String(e.message).slice(0, 300)}; these results are Bing's page.]`
+						: `\n\n[The server's search engine failed (${String(e.message).slice(0, 200)}); these results are Bing's page.]`;
 				}
+				if (r?.engine) note += `\n\n[Searched by the server with ${r.engine}.]`;
 				if (!r) {
 					r = await searchWeb(withSites(params.query, allowed, blocked), count, signal);
 					if (recent) note += `\n\n[Bing's page cannot limit results to the last ${recent}: check the dates yourself.]`;
