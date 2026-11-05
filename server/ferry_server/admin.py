@@ -144,7 +144,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
             "shared_memory": cfg.shared_memory,
             "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "github_repo": cfg.github_repo, "github_token": bool(reports.github_token(cfg)),
-            "search_engine": web_search.engine(cfg), "search_key": bool(web_search.api_key(cfg)),
+            "search_engine": cfg.search_engine, "search_in_use": web_search.engine(cfg),
+            "search_key": bool(web_search.api_key(cfg)), "deepseek_key": bool(web_search.deepseek_key(cfg)),
             "search_engines": web_search.ENGINES,
             # models that can search the web themselves (Claude's API, OpenAI's Responses API)
             "search_models": [{"id": m.id, "model": m.model, "api": m.api} for m in cfg.models.values()
@@ -271,7 +272,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.github_repo = str(b["github_repo"]).strip()
         if "github_token" in b:
             reports.save_github_token(cfg, str(b["github_token"] or ""))
-        if "search_engine" in b and ((b["search_engine"] or "") in ("", *web_search.ENGINES)
+        if "search_engine" in b and ((b["search_engine"] or "") in ("", "bing", *web_search.ENGINES)
                                      or web_search.search_model(cfg, str(b["search_engine"]))):
             cfg.search_engine = b["search_engine"] or ""
         if "search_key" in b:

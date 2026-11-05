@@ -80,13 +80,17 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 | `DEEPSEEK_API_KEY` 等 | 用环境变量给 Key，优先于管理页里填的 |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
 | `FERRY_GITHUB_TOKEN` / `FERRY_GITHUB_REPO` | 问题报告用的 GitHub 令牌和仓库（优先于管理页） |
-| `FERRY_SEARCH` / `FERRY_SEARCH_KEY` | 网页搜索来源（`tavily`、`brave`、`bocha`，或 `model:<模型名>` 用模型自带的搜索）和搜索 API 的 Key（优先于管理页） |
+| `FERRY_SEARCH` / `FERRY_SEARCH_KEY` | 网页搜索来源（`deepseek`、`tavily`、`brave`、`bocha`、`model:<模型名>` 用模型自带的搜索，`bing` 不用服务端搜索；不设就是自动）和搜索 API 的 Key（优先于管理页） |
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
 
 ## 网页搜索
 
-agent 的 `web_search` 默认在工作电脑上读 Bing 的结果页。搜索引擎给程序的结果页质量差（实测搜"agent memory open source github"，前几条是字典里 agent 的释义），所以 agent 搜得笨。在管理页 → 设置 → 网页搜索里换一个搜索来源，有两类：
+搜索引擎给程序看的结果页质量差（实测搜"agent memory open source github"，Bing 前几条是字典里 agent 的释义），所以 agent 的 `web_search` 尽量由服务端去搜。
+
+默认是"自动"：服务端接了 DeepSeek（模型地址是 api.deepseek.com），就用 DeepSeek 自家的搜索 API，用的是同一个 Key，不用另外注册。DeepSeek Harness 默认也用它。每千次 0.75 美元，只有返回结果的才收费；结果带摘要（几百字）、日期和权威度，支持 `site:`、`after:` 这些写法。没接 DeepSeek 时，工作电脑读 Bing 的结果页。
+
+想换别的，在管理页 → 设置 → 网页搜索里选，有两类：
 
 - 模型自带的搜索，和 Claude Code、Codex 的做法一样：服务端用这个模型的 Key 请它搜一下，只把搜到的网页（标题、地址、日期、引用的那句话）交回工作电脑。列表里出现的是能这样搜的模型：走 Claude 官方接口（Anthropic 格式）的 Claude，和走 OpenAI Responses 接口的 GPT。不用另注册，但每次搜索除了 token 另有费用（Claude 官方是每千次 10 美元）。中转多半不支持，选好后点"测试"。
 - 搜索 API：[Tavily](https://app.tavily.com) 是给 AI agent 用的，每月有免费额度；[Brave Search](https://api-dashboard.search.brave.com) 有自己的索引；[博查](https://open.bochaai.com) 中文网页多，国内能直接访问。注册拿 Key，选这家，贴 Key，保存，点"测试"。Key 存在数据目录的 `search-key` 文件里，管理页不再显示它。

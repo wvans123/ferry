@@ -12,6 +12,8 @@ REAL = httpx.AsyncClient
 ANSWERS = {
     "api.tavily.com": {"results": [{"title": "T", "url": "https://t.example", "content": "tavily text", "published_date": "2026-10-02"}]},
     "api.search.brave.com": {"web": {"results": [{"title": "B", "url": "https://b.example", "description": "brave text", "page_age": "2026-10-03"}]}},
+    "api.deepseek.com": {"results": [{"title": "D", "url": "https://d.example", "snippet": "short", "summary": "DeepSeek summary",
+                                      "date": "2026-10-05T00:00:00Z", "authority": 3, "rerank_score": 2.1}]},
     "api.bochaai.com": {"code": 200, "data": {"webPages": {"value": [{"name": "博", "url": "https://c.example", "snippet": "s", "summary": "博查摘要", "datePublished": "2026-10-04"}]}}},
 }
 
@@ -40,8 +42,9 @@ def test_each_engine_answers_in_one_shape_and_the_key_stays_on_the_server(tmp_pa
 
     async def go():
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            cfg.search_engine = "bing"
             m = (await c.get("/v1/ferry/models", headers=hdr)).json()
-            assert "search" not in m["features"]                       # nothing set: the work PC reads Bing
+            assert "search" not in m["features"]                       # "bing": the work PC reads Bing's page
             assert (await c.post("/v1/ferry/search", headers=hdr, json={"query": "x"})).status_code == 404
             search.save_key(cfg, "secret-key")
             for name, title, snippet in (("tavily", "T", "tavily text"), ("brave", "B", "brave text"), ("bocha", "博", "博查摘要")):
@@ -174,5 +177,30 @@ def test_a_page_is_read_with_a_question_by_the_summary_model_else_the_default(tm
             assert (await c.post("/v1/ferry/extract", json={"prompt": "q", "text": "t"})).status_code == 401
         rows = [json.loads(l) for l in (tmp_path / "data" / "audit.jsonl").read_text().splitlines() if '"extract"' in l]
         assert rows and rows[-1]["tokens"]["input"] == 900
+
+    asyncio.run(go())
+
+
+def test_with_a_deepseek_key_the_server_searches_with_deepseek_by_itself(tmp_path, monkeypatch):
+    seen = []
+    cfg, app, token = setup(tmp_path, monkeypatch, seen)
+    hdr = {"Authorization": f"Bearer {token}"}
+    assert cfg.search_engine == "" and search.engine(cfg) == "deepseek"   # zero setup: the model's DeepSeek key
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            assert "search" in (await c.get("/v1/ferry/models", headers=hdr)).json()["features"]
+            r = (await c.post("/v1/ferry/search", headers=hdr, json={"query": "TS 38.300", "recent": "year",
+                                                                      "allowed_domains": ["3gpp.org"]})).json()
+            assert r["engine"] == "deepseek"
+            assert r["results"][0] == {"title": "D", "url": "https://d.example", "snippet": "DeepSeek summary",
+                                       "date": "2026-10-05T00:00:00Z"}
+            sent = json.loads(seen[-1].content)
+            assert str(seen[-1].url) == "https://api.deepseek.com/v1/tools/search"
+            assert seen[-1].headers["authorization"] == "Bearer k"
+            assert sent["query"].startswith("TS 38.300 site:3gpp.org after:") and len(sent["query"]) <= 128
+            long = (await c.post("/v1/ferry/search", headers=hdr, json={"query": "x" * 200, "blocked_domains": ["a.com"]})).json()
+            assert long["engine"] == "deepseek" and len(json.loads(seen[-1].content)["query"]) <= 128
+            assert json.loads(seen[-1].content)["query"].endswith(" -site:a.com")
 
     asyncio.run(go())

@@ -2,7 +2,8 @@
 (web_fetch with a prompt).
 
 Search. Search engines' own result pages give automated requests poor results (Bing answered "agent memory github"
-with dictionary entries). Two better sources, both used from here so their keys stay on this computer:
+with dictionary entries). Better sources, all used from here so their keys stay on this computer:
+- DeepSeek's Search API, with the DeepSeek key this server already has (the default when there is one);
 - a search API (Tavily, Brave or Bocha), made for programs;
 - a model's own web search, as Claude Code and Codex use it: Claude through Anthropic's API (its web_search
   server tool) or an OpenAI model through the Responses API (its web_search tool). The server is the model's
@@ -29,6 +30,8 @@ from .config import Config, ModelConfig
 from .presets import anthropic_url
 
 ENGINES = {
+    "deepseek": {"name": "DeepSeek 搜索", "key_url": "https://platform.deepseek.com",
+                 "note": "用服务端已有的 DeepSeek Key，每千次 0.75 美元，结果带摘要、日期和权威度"},
     "tavily": {"name": "Tavily", "key_url": "https://app.tavily.com", "note": "给 AI agent 用的，每月有免费额度"},
     "brave": {"name": "Brave Search", "key_url": "https://api-dashboard.search.brave.com", "note": "有自己的索引"},
     "bocha": {"name": "博查", "key_url": "https://open.bochaai.com", "note": "中文网页多，国内能直接访问"},
@@ -47,11 +50,23 @@ def search_model(cfg: Config, value: str) -> ModelConfig | None:
     return m if m and m.api in ("anthropic", "openai-responses") else None
 
 
+def deepseek_key(cfg: Config) -> str:
+    """The key of a DeepSeek model this server calls at api.deepseek.com, for DeepSeek's Search API ("" when none)."""
+    for m in cfg.models.values():
+        if "api.deepseek.com" in m.base_url and m.api_key:
+            return m.api_key
+    return ""
+
+
 def engine(cfg: Config) -> str:
+    """The search source: "" (auto) uses DeepSeek's Search API when this server has a DeepSeek key; "bing" leaves
+    searching to the work computer (Bing's page); otherwise the engine or "model:<id>" chosen on the admin page."""
     e = (os.environ.get("FERRY_SEARCH") or cfg.search_engine or "").strip()
     if e.startswith("model:"):
         return e if search_model(cfg, e) else ""
     e = e.lower()
+    if not e:
+        return "deepseek" if deepseek_key(cfg) else ""
     return e if e in ENGINES else ""
 
 
@@ -81,19 +96,24 @@ def save_key(cfg: Config, value: str) -> None:
         pass
 
 
+def engine_key(cfg: Config, e: str) -> str:
+    """The key for engine e: the one saved for search, or for DeepSeek the server's own DeepSeek key."""
+    return api_key(cfg) or (deepseek_key(cfg) if e == "deepseek" else "")
+
+
 def ready(cfg: Config) -> bool:
     e = engine(cfg)
     if e.startswith("model:"):
         m = search_model(cfg, e)
         return bool(m and m.ready)
-    return bool(e and api_key(cfg))
+    return bool(e and engine_key(cfg, e))
 
 
 def base(name: str) -> str:
     """The engine's address; FERRY_SEARCH_API_<NAME> points it elsewhere (tests, a proxy)."""
     own = os.environ.get(f"FERRY_SEARCH_API_{name.upper()}", "").rstrip("/")
-    return own or {"tavily": "https://api.tavily.com", "brave": "https://api.search.brave.com",
-                   "bocha": "https://api.bochaai.com"}[name]
+    return own or {"deepseek": "https://api.deepseek.com", "tavily": "https://api.tavily.com",
+                   "brave": "https://api.search.brave.com", "bocha": "https://api.bochaai.com"}[name]
 
 
 def domains(v) -> list[str]:
@@ -121,12 +141,25 @@ class SearchFailed(Exception):
 async def search(cfg: Config, client: httpx.AsyncClient, query: str, count: int = 8, recent: str = "",
                  allowed: list[str] | None = None, blocked: list[str] | None = None) -> list[dict]:
     """[{title, url, snippet, date}] from the configured engine. Raises httpx.HTTPStatusError on an API error."""
-    name, key = engine(cfg), api_key(cfg)
+    name = engine(cfg)
+    key = engine_key(cfg, name)
     count = max(1, min(int(count or 8), 20))
     recent = recent if recent in RECENT else ""
     allowed, blocked = allowed or [], ([] if allowed else blocked or [])
     if name.startswith("model:"):
         return await model_search(client, search_model(cfg, name), query, count, recent, allowed, blocked)
+    if name == "deepseek":
+        # DeepSeek's Search API (the one DeepSeek Harness uses by default); operators: site:, -site:, after:, lang:
+        days = {"day": 1, "week": 7, "month": 31, "year": 366}.get(recent, 0)
+        after = f" after:{time.strftime('%Y-%m-%d', time.gmtime(time.time() - days * 86400))}" if days else ""
+        q = with_sites(query, allowed, blocked) + after
+        if len(q) > 128:  # the API takes at most 128 characters: shorten the words, keep the operators
+            q = query[:max(10, 128 - len(q) + len(query))].rstrip() + q[len(query):]
+        r = await client.post(f"{base(name)}/v1/tools/search", headers={"Authorization": f"Bearer {key}"}, timeout=30,
+                              json={"query": q[:128], "count": count, "ori_question": query[:128]})
+        r.raise_for_status()
+        return [{"title": x.get("title", ""), "url": x.get("url", ""), "snippet": x.get("summary") or x.get("snippet", ""),
+                 "date": x.get("date") or ""} for x in r.json().get("results", [])]
     if name == "tavily":
         r = await client.post(f"{base(name)}/search", headers={"Authorization": f"Bearer {key}"}, timeout=30, json={
             "query": query, "max_results": count, "search_depth": "basic",

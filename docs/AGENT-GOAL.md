@@ -416,3 +416,4 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | #8 #10 全部放行时，浏览器读 cookie、上传文件等也不问 | 碰隐私的 agent-browser 命令（cookies、storage、state、clipboard、upload、auth、connect、set credentials、network har，和 --profile、--cdp、--auto-connect、--state）在任何模式下都问，"以后都允许"也不算；撤不回的操作（提交、发送、下单、发帖、改设置、删除）先用 ask_user 问 | 客户端单元测试 |
 | Google 不让登录 | Google、Microsoft 拒绝被程序控制的浏览器登录。`ferry browser login [地址]` 用同一个浏览器和资料夹以普通方式打开，登录完关窗口，之后 agent 的浏览器带着登录 | 客户端单元测试 |
 | #10 没装对应服务端的电脑上，客户端测试卡两分钟 | `update.test.mjs` 里重启服务端那项在没有对应版本服务端时跳过，失败时也关掉测试用的服务器 | 客户端单元测试 |
+| 搜索还是要自己去注册 | 服务端接了 DeepSeek 时，默认用 DeepSeek 自家的搜索 API（同一个 Key，每千次 0.75 美元，DeepSeek Harness 默认也用它），结果带长摘要、日期；管理页可以改成 Bing、搜索 API 或模型自带的搜索 | 服务端单元测试 |
