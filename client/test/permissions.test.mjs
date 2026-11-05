@@ -36,6 +36,18 @@ test("dangerous commands are flagged", () => {
 	for (const c of ["git push", "rm a.txt", "git reset HEAD~1", "npm test"]) assert.equal(P.dangerOf(c), "", c);
 });
 
+test("office_read with out writes files: a file change in the out folder", () => {
+	const ro = { tool: "office_read", cwd, rules: none, blockedPaths: [".ssh"], readOnlyTool: (t) => t === "office_read" };
+	const dd = (input, mode = "default") => P.decide({ ...ro, input, mode }).action;
+	assert.equal(dd({ path: "docs/a.doc" }), "allow");
+	assert.equal(dd({ path: "docs/a.doc" }, "plan"), "allow");
+	assert.equal(dd({ path: "docs", out: "docs-txt" }), "ask");
+	assert.equal(dd({ path: "docs", out: "docs-txt" }, "acceptEdits"), "allow");
+	assert.equal(dd({ path: "docs", out: "docs-txt" }, "plan"), "deny");
+	assert.equal(P.decide({ ...ro, input: { path: "docs", out: join(tmpdir(), "elsewhere") }, mode: "acceptEdits" }).outside, true);
+	assert.equal(dd({ path: "docs", out: "x/.ssh/t" }, "acceptEdits"), "deny");
+});
+
 test("modes decide what asks", () => {
 	assert.equal(d("bash", { command: "git status" }), "allow");
 	assert.equal(d("bash", { command: "npm test" }), "ask");

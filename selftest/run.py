@@ -898,6 +898,67 @@ def check_upload_delete(root: Path, work: Path) -> None:
         s.close()
 
 
+def _tiny_pdf(text: str) -> bytes:
+    stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET"
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    pdf, offs = "%PDF-1.4\n", []
+    for i, o in enumerate(objs):
+        offs.append(len(pdf))
+        pdf += f"{i + 1} 0 obj\n{o}\nendobj\n"
+    xref = len(pdf)
+    pdf += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n" + "".join(f"{o:010d} 00000 n \n" for o in offs)
+    pdf += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    return pdf.encode("latin1")
+
+
+def _tiny_docx(text: str) -> bytes:
+    import io
+    import zipfile
+    w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="xml" ContentType="application/xml"/></Types>')
+        z.writestr("word/document.xml", f'<?xml version="1.0"?><w:document {w}><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>')
+    return buf.getvalue()
+
+
+def check_office_legacy(root: Path, work: Path) -> None:
+    """Old .doc files, a .docx that is really an IRM-encrypted file, and a whole folder into text files, all without Office."""
+    fx = ROOT / "client" / "test" / "fixtures"
+    proj = root / "proj"
+    (proj / "old").mkdir(parents=True, exist_ok=True)
+    (proj / "docs" / "sub").mkdir(parents=True, exist_ok=True)
+    shutil.copy(fx / "memo.doc", proj / "old" / "memo.doc")
+    shutil.copy(fx / "irm-protected.docx", proj / "old" / "locked.docx")
+    (proj / "docs" / "new.docx").write_bytes(_tiny_docx("Batch docx text"))
+    shutil.copy(fx / "memo.doc", proj / "docs" / "sub" / "old.doc")
+    (proj / "docs" / "paper.pdf").write_bytes(_tiny_pdf("Batch PDF text"))
+    (proj / "docs" / "broken.docx").write_bytes(b"PK\x03\x04 not a real zip")
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "OLDDOCTEST: read the memo", cwd=proj)
+        ok1 = c1 == 0 and "OLDDOC:" in o1 and "Ferry test memo" in o1 and "渡船测试" in o1
+        check("F75 读旧版 .doc", ok1, "office_read 直接读出 Word 97-2003 的 .doc 文字（中英文、表格），不用 Office，也不用 COM"
+              if ok1 else f"code={c1} {o1[-300:]!r}")
+        c2, o2 = s.ferry("-p", "IRMTEST: read the locked file", cwd=proj)
+        ok2 = c2 == 0 and "IRM:" in o2 and "rights management (IRM)" in o2 and "tell the user" in o2
+        check("F76 IRM 加密文件说清楚", ok2, "扩展名是 .docx、实际是 IRM 加密的 OLE 文件：office_read 按内容识别，直接说明已加密、"
+              "没有所有者授权读不了、要告诉用户" if ok2 else f"code={c2} {o2[-300:]!r}")
+        # batch mode writes files, so it is a file change: allowed in auto-edit mode
+        c3, o3 = s.ferry("-p", "DOCFOLDERTEST: convert the folder", cwd=proj, env_extra={"FERRY_PERMISSION_MODE": "acceptEdits"})
+        out = proj / "docs-txt"
+        txt = lambda rel: (out / rel).read_text(encoding="utf-8", errors="replace") if (out / rel).exists() else ""  # noqa: E731
+        ok3 = (c3 == 0 and "ok 3, encrypted 0, failed 1" in o3 and "broken.docx" in o3 and "Batch docx text" in txt("new.docx.txt")
+               and "渡船测试" in txt("sub/old.doc.txt") and "Batch PDF text" in txt("paper.pdf.txt"))
+        check("F77 整个文件夹转成文本", ok3, "office_read 给文件夹和 out：docx、doc、pdf 各转成一个 .txt，坏文件列在失败里，"
+              "对话里只有一份汇总" if ok3 else f"code={c3} {o3[-400:]!r}")
+    finally:
+        s.close()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -1437,7 +1498,7 @@ STEPS = [
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
-    (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"),
+    (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
 ]
 

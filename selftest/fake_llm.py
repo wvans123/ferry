@@ -260,6 +260,18 @@ def decide_agent(msgs):
         return ("text", "BATCH: " + text_of(tools[-1])[:400].replace("\n", " | "))
     if "SUBBATCH" in first:
         return ("text", "ITEM " + first.split()[2] + " ok")
+    if "OLDDOCTEST" in first:  # an old binary .doc, read without Office
+        if not tools:
+            return ("tool", "office_read", {"path": "old/memo.doc"})
+        return ("text", "OLDDOC: " + text_of(tools[-1])[:300].replace("\n", " | "))
+    if "IRMTEST" in first:  # a .docx that is really an IRM-encrypted compound file
+        if not tools:
+            return ("tool", "office_read", {"path": "old/locked.docx"})
+        return ("text", "IRM: " + text_of(tools[-1])[:300].replace("\n", " "))
+    if "DOCFOLDERTEST" in first:  # a whole folder into text files
+        if not tools:
+            return ("tool", "office_read", {"path": "docs", "out": "docs-txt"})
+        return ("text", "DOCFOLDER: " + text_of(tools[-1])[:600].replace("\n", " | "))
     if "OFFICETEST" in first:
         names = [n for m in msgs if m.get("role") == "assistant" for n in [c["function"]["name"] for c in (m.get("tool_calls") or [])]]
         if not names:
