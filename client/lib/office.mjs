@@ -1,8 +1,8 @@
 // Office files without Office: read Word (with tracked changes and comments), Excel, PowerPoint and PDF; change Word
 // text as tracked changes and Excel cells; create Word and Excel files. Works on the files themselves, so nothing
 // needs to be installed and no window on the screen is touched. A .docx/.xlsx/.pptx is a zip of XML files.
-import { readFileSync, writeFileSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { Type } from "typebox";
 
@@ -15,7 +15,7 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 const attr = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
 
 function openZip(path) {
-	const files = unzipSync(readFileSync(path));
+	const files = unzipSync(typeof path === "string" ? readFileSync(path) : path);
 	return { files, text: (n) => (files[n] ? strFromU8(files[n]) : ""), put: (n, s) => { files[n] = strToU8(s); } };
 }
 
@@ -197,7 +197,7 @@ function sharedStrings(z) {
 		[...si[1].matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((t) => unesc(t[1])).join(""));
 }
 
-export function readXlsx(path, { sheet, range, formulas = false, maxRows = 200 } = {}) {
+export function readXlsx(path, { sheet, range, formulas = false, maxRows = 200, maxSheets = 5 } = {}) {
 	const z = openZip(path);
 	const sheets = sheetsOf(z);
 	const ss = sharedStrings(z);
@@ -211,7 +211,7 @@ export function readXlsx(path, { sheet, range, formulas = false, maxRows = 200 }
 		[c1, r1, c2, r2] = [colNum(ca), ra, colNum(cb), rb];
 	}
 	const out = [`Sheets: ${sheets.map((s) => s.name).join(", ")}`];
-	for (const s of pick.slice(0, sheet ? 1 : 5)) {
+	for (const s of pick.slice(0, sheet ? 1 : maxSheets)) {
 		const xml = z.text(s.file);
 		const grid = new Map();
 		let maxC = 0;
@@ -316,7 +316,7 @@ export function readPptx(path) {
 
 export async function readPdf(path, pages) {
 	const { extractText, getDocumentProxy } = await import("unpdf");
-	const pdf = await getDocumentProxy(new Uint8Array(readFileSync(path)));
+	const pdf = await getDocumentProxy(new Uint8Array(typeof path === "string" ? readFileSync(path) : path));
 	const { text } = await extractText(pdf, { mergePages: false });
 	let [a, b] = [1, text.length];
 	if (pages) {
@@ -324,6 +324,518 @@ export async function readPdf(path, pages) {
 		if (m) [a, b] = [+m[1], +(m[2] ?? m[1])];
 	}
 	return `${text.length} pages\n\n${text.slice(a - 1, b).map((t, i) => `--- page ${a + i} ---\n${t}`).join("\n\n")}`;
+}
+
+// ---------- old binary files: .doc, .xls, .ppt ----------
+// They are OLE compound files: a small FAT file system inside one file. Read here with plain code, so neither Office
+// nor its COM automation (blocked on many company PCs) is needed.
+
+const END = 0xfffffffa; // sector numbers from here up mark the end of a chain, a free sector, a FAT sector
+const u16le = new TextDecoder("utf-16le");
+const view = (b) => new DataView(b.buffer, b.byteOffset, b.byteLength);
+const concat = (parts) => {
+	const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+	let o = 0;
+	for (const p of parts) { out.set(p, o); o += p.length; }
+	return out;
+};
+const CP1252 = "€�‚ƒ„…†‡ˆ‰Š‹Œ�Ž�" +
+	"�‘’“”•–—˜™š›œ�žŸ";
+/** One byte per character: Windows-1252 (Word's "compressed" text), or Latin-1. */
+const bytesText = (b, cp1252 = true) => {
+	const codes = new Uint16Array(b.length);
+	for (let i = 0; i < b.length; i++) codes[i] = cp1252 && b[i] >= 0x80 && b[i] < 0xa0 ? CP1252.charCodeAt(b[i] - 0x80) : b[i];
+	return u16le.decode(codes);
+};
+
+/** An error for a file nobody can read without its owner; batch mode counts these apart. */
+function locked(message, short) {
+	const e = new Error(message);
+	e.code = "ENCRYPTED";
+	e.short = short;
+	return e;
+}
+const IRM = () => locked("This file is encrypted with rights management (IRM): it cannot be read without the owner's permission, " +
+	"by office_read or by any other tool or script. Do not try other ways; tell the user.", "rights management (IRM)");
+const PASSWORD = () => locked("This file is protected with a password: it cannot be read without it. Do not try other ways; " +
+	"ask the user for an unprotected copy.", "password");
+
+/** A compound file: { names: every storage/stream path, stream(path) -> bytes or undefined }. */
+export function readCfb(buf) {
+	const bad = () => new Error("damaged file (old Office compound file format)");
+	if (buf.length < 512) throw bad();
+	const dv = view(buf);
+	const u32 = (o) => {
+		if (o < 0 || o + 4 > buf.length) throw bad();
+		return dv.getUint32(o, true);
+	};
+	const ssz = 1 << dv.getUint16(0x1e, true);
+	if (ssz !== 512 && ssz !== 4096) throw bad();
+	const per = ssz / 4;
+	const at = (s) => (s + 1) * ssz;
+	const fatSectors = [];
+	for (let i = 0; i < 109; i++) if (u32(0x4c + i * 4) < END) fatSectors.push(u32(0x4c + i * 4));
+	for (let d = u32(0x44), n = 0; d < END && n <= u32(0x48); n++) { // more FAT sector numbers, in a chain of DIFAT sectors
+		for (let i = 0; i < per - 1; i++) if (u32(at(d) + i * 4) < END) fatSectors.push(u32(at(d) + i * 4));
+		d = u32(at(d) + ssz - 4);
+	}
+	const fat = [];
+	for (const s of fatSectors) for (let i = 0; i < per; i++) fat.push(at(s) + i * 4 + 4 <= buf.length ? u32(at(s) + i * 4) : 0xfffffffe);
+	const chain = (start, table) => {
+		const out = [];
+		for (let s = start; s < END; s = table[s]) {
+			if (s >= table.length || out.length >= table.length) throw bad();
+			out.push(s);
+		}
+		return out;
+	};
+	const big = (start, size) => {
+		const all = concat(chain(start, fat).map((s) => buf.subarray(at(s), at(s) + ssz)));
+		return size === undefined ? all : all.subarray(0, size);
+	};
+	const dir = big(u32(0x30));
+	const ddv = view(dir);
+	const entries = [];
+	for (let o = 0; o + 128 <= dir.length; o += 128) {
+		const nameLen = Math.min(64, ddv.getUint16(o + 0x40, true));
+		entries.push({
+			name: u16le.decode(dir.subarray(o, o + Math.max(0, nameLen - 2))), type: dir[o + 0x42],
+			left: ddv.getUint32(o + 0x44, true), right: ddv.getUint32(o + 0x48, true), child: ddv.getUint32(o + 0x4c, true),
+			start: ddv.getUint32(o + 0x74, true), size: ddv.getUint32(o + 0x78, true),
+		});
+	}
+	const root = entries[0];
+	if (root?.type !== 5) throw bad();
+	const cutoff = u32(0x38);
+	const msz = 1 << dv.getUint16(0x20, true);
+	let mini;
+	let miniFat;
+	const small = (start, size) => { // streams under the cutoff live in 64-byte sectors inside the root's own stream
+		if (!mini) {
+			mini = big(root.start, root.size);
+			const mf = u32(0x3c) < END ? big(u32(0x3c)) : new Uint8Array(0);
+			miniFat = Array.from({ length: mf.length >> 2 }, (_, i) => view(mf).getUint32(i * 4, true));
+		}
+		return concat(chain(start, miniFat).map((s) => mini.subarray(s * msz, (s + 1) * msz))).subarray(0, size);
+	};
+	const paths = new Map();
+	const seen = new Set();
+	const stack = [[root.child, ""]];
+	while (stack.length) {
+		const [id, prefix] = stack.pop();
+		if (id >= entries.length || seen.has(id)) continue;
+		seen.add(id);
+		const e = entries[id];
+		paths.set(prefix + e.name, e);
+		stack.push([e.left, prefix], [e.right, prefix]);
+		if (e.type === 1) stack.push([e.child, `${prefix}${e.name}/`]);
+	}
+	return {
+		names: [...paths.keys()],
+		stream(path) {
+			const e = paths.get(path) ?? [...paths].find(([k]) => k.toLowerCase() === path.toLowerCase())?.[1];
+			if (e?.type !== 2) return undefined;
+			return e.size < cutoff ? small(e.start, e.size) : big(e.start, e.size);
+		},
+	};
+}
+
+/** Word's text with its marks: paragraphs and line breaks as new lines, table cells as tabs, field codes dropped (results kept). */
+function wordText(s) {
+	let out = "";
+	const fields = []; // per open field: true while in its code, false once in its result
+	let cell = false;
+	for (const ch of s) {
+		const c = ch.charCodeAt(0);
+		if (c === 0x13) fields.push(true);
+		else if (c === 0x14) { if (fields.length) fields[fields.length - 1] = false; }
+		else if (c === 0x15) fields.pop();
+		else if (fields.includes(true)) continue;
+		else if (c === 0x07) { // end of a cell; a second one in a row ends the table row
+			out = cell ? `${out.slice(0, -1)}\n` : `${out}\t`;
+			cell = !cell;
+			continue;
+		} else if (c === 0x0d || c === 0x0b || c === 0x0c) out += "\n";
+		else if (c === 0x09) out += "\t";
+		else if (c === 0x1e) out += "-";
+		else if (c === 0xa0) out += " ";
+		else if (c >= 0x20) out += ch;
+		cell = false;
+	}
+	return out.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Text of a Word 97-2003 .doc: the main text through the piece table, both 1-byte and 2-byte pieces. */
+export function readDoc(cfb) {
+	const wd = cfb.stream("WordDocument");
+	if (!wd || wd.length < 0x200) throw new Error("damaged Word file (no WordDocument stream)");
+	const dv = view(wd);
+	if (dv.getUint16(0, true) !== 0xa5ec) throw new Error("damaged Word file (not a Word 97-2003 document)");
+	const flags = dv.getUint16(0x0a, true);
+	if (flags & 0x0100) throw PASSWORD();
+	if (dv.getUint16(2, true) < 101) throw new Error("a Word 6/95 file (older than Word 97): it cannot be read here; ask the user to save it as .docx");
+	const table = cfb.stream(flags & 0x0200 ? "1Table" : "0Table");
+	const bad = () => new Error("damaged Word file (no piece table)");
+	if (!table) throw bad();
+	const lw = 34 + dv.getUint16(32, true) * 2 + 2; // after FibBase and FibRgW: FibRgLw
+	const fcs = lw + dv.getUint16(lw - 2, true) * 4 + 2; // then FibRgFcLcb
+	const ccpText = dv.getUint32(lw + 12, true);
+	const fcClx = dv.getUint32(fcs + 33 * 8, true);
+	const lcbClx = dv.getUint32(fcs + 33 * 8 + 4, true);
+	if (!lcbClx || fcClx + lcbClx > table.length) throw bad();
+	const tv = view(table);
+	let o = fcClx;
+	while (o < fcClx + lcbClx && table[o] === 1) o += 3 + tv.getInt16(o + 1, true); // property runs before the piece table
+	if (table[o] !== 2) throw bad();
+	const lcb = tv.getUint32(o + 1, true);
+	const plc = o + 5;
+	const n = (lcb - 4) / 12;
+	if (!Number.isInteger(n) || plc + lcb > table.length) throw bad();
+	const parts = [];
+	for (let i = 0; i < n; i++) {
+		const cp0 = tv.getUint32(plc + i * 4, true);
+		const cp1 = Math.min(tv.getUint32(plc + i * 4 + 4, true), ccpText);
+		if (cp1 <= cp0) continue;
+		const fc = tv.getUint32(plc + (n + 1) * 4 + i * 8 + 2, true);
+		if (fc & 0x40000000) { const a = (fc & 0x3fffffff) / 2; parts.push(bytesText(wd.subarray(a, a + cp1 - cp0))); }
+		else parts.push(u16le.decode(wd.subarray(fc, fc + (cp1 - cp0) * 2)));
+	}
+	return wordText(parts.join(""));
+}
+
+/** Rows as a Markdown table, like readXlsx: grid is Map(row -> Map(col -> text)), both from 1. */
+function gridTable(name, grid, maxC, maxRows) {
+	const rows = [...grid.keys()].sort((a, b) => a - b);
+	const out = ["", `## ${name} (${rows.length} rows with data)`];
+	if (!rows.length) return out;
+	const cols = Array.from({ length: Math.min(maxC, 40) }, (_, i) => i + 1);
+	out.push(`| row | ${cols.map(colName).join(" | ")} |`, `|---|${cols.map(() => "---").join("|")}|`);
+	for (const r of rows.slice(0, maxRows)) out.push(`| ${r} | ${cols.map((c) => String(grid.get(r).get(c) ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ")).join(" | ")} |`);
+	if (rows.length > maxRows) out.push(`... ${rows.length - maxRows} more rows`);
+	return out;
+}
+
+/** Strings of the shared string table, which may run on over CONTINUE records (segs). */
+function sstStrings(segs) {
+	let si = 0;
+	let o = 0;
+	const next = () => {
+		while (si < segs.length && o >= segs[si].length) { si++; o = 0; }
+		if (si >= segs.length) throw new Error("end");
+	};
+	const u8 = () => { next(); return segs[si][o++]; };
+	const u16 = () => u8() | (u8() << 8);
+	const u32 = () => (u16() | (u16() << 16)) >>> 0;
+	const skip = (n) => { while (n > 0) { next(); const k = Math.min(n, segs[si].length - o); o += k; n -= k; } };
+	const out = [];
+	try {
+		skip(4);
+		const count = u32();
+		for (let i = 0; i < count; i++) {
+			const cch = u16();
+			const flags = u8();
+			const runs = flags & 8 ? u16() : 0;
+			const ext = flags & 4 ? u32() : 0;
+			let high = flags & 1;
+			let s = "";
+			for (let left = cch; left > 0;) {
+				if (o >= segs[si].length) { // the characters go on in the next record, which starts with a new flags byte
+					si++;
+					o = 0;
+					if (si >= segs.length) throw new Error("end");
+					high = segs[si][o++] & 1;
+				}
+				const seg = segs[si];
+				const k = Math.min(left, Math.floor((seg.length - o) / (high ? 2 : 1)));
+				s += high ? u16le.decode(seg.subarray(o, o + k * 2)) : bytesText(seg.subarray(o, o + k), false);
+				o = k ? o + k * (high ? 2 : 1) : seg.length;
+				left -= k;
+			}
+			skip(runs * 4 + ext);
+			out.push(s);
+		}
+	} catch { /* a short or damaged table: keep what was read */ }
+	return out;
+}
+
+/** Cell values of an Excel 97-2003 .xls: text, numbers, cached formula results (dates show as numbers). */
+export function readXls(cfb, { maxRows = 200 } = {}) {
+	const wb = cfb.stream("Workbook");
+	if (!wb) throw new Error(cfb.stream("Book") ? "an Excel 5/95 file (older than Excel 97): it cannot be read here; ask the user to save it as .xlsx" : "damaged Excel file");
+	const dv = view(wb);
+	function* records(from) {
+		for (let o = from; o + 4 <= wb.length;) {
+			const len = dv.getUint16(o + 2, true);
+			yield { type: dv.getUint16(o, true), data: wb.subarray(o + 4, o + 4 + len) };
+			o += 4 + len;
+		}
+	}
+	const xlStr = (d, o, cch) => (d[o] & 1 ? u16le.decode(d.subarray(o + 1, o + 1 + cch * 2)) : bytesText(d.subarray(o + 1, o + 1 + cch), false));
+	const sheets = [];
+	let sstSegs = null;
+	let sst = [];
+	for (const { type, data } of records(0)) {
+		if (type === 0x3c && sstSegs) { sstSegs.push(data); continue; }
+		if (sstSegs) { sst = sstStrings(sstSegs); sstSegs = null; }
+		if (type === 0x0a) break; // end of the workbook part
+		if (type === 0x2f) throw PASSWORD(); // FILEPASS
+		if (type === 0x85 && data.length >= 8) sheets.push({ pos: view(data).getUint32(0, true), kind: data[5], name: xlStr(data, 7, data[6]) });
+		if (type === 0xfc) sstSegs = [data];
+	}
+	const rk = (v) => {
+		let n;
+		if (v & 2) n = v >> 2;
+		else { const b = new DataView(new ArrayBuffer(8)); b.setUint32(4, v & 0xfffffffc, true); n = b.getFloat64(0, true); }
+		return String(v & 1 ? n / 100 : n);
+	};
+	const out = [`Sheets: ${sheets.map((s) => s.name).join(", ")}`];
+	for (const sh of sheets) {
+		if (sh.kind !== 0) continue; // charts, macro sheets
+		const grid = new Map();
+		let maxC = 0;
+		let formula = null;
+		const set = (r, c, v) => {
+			if (!grid.has(r + 1)) grid.set(r + 1, new Map());
+			grid.get(r + 1).set(c + 1, v);
+			maxC = Math.max(maxC, c + 1);
+		};
+		for (const { type, data } of records(sh.pos)) {
+			if (type === 0x0a) break;
+			if (data.length < (type === 0x207 ? 3 : 6)) continue;
+			const d = view(data);
+			const r = d.getUint16(0, true);
+			const c = data.length >= 4 ? d.getUint16(2, true) : 0;
+			if (type === 0xfd && data.length >= 10) set(r, c, sst[d.getUint32(6, true)] ?? "");
+			else if (type === 0x203 && data.length >= 14) set(r, c, String(d.getFloat64(6, true)));
+			else if (type === 0x27e && data.length >= 10) set(r, c, rk(d.getUint32(6, true)));
+			else if (type === 0xbd) for (let i = 0; 6 + i * 6 + 6 <= data.length; i++) set(r, c + i, rk(d.getUint32(6 + i * 6, true)));
+			else if (type === 0x06 && data.length >= 14) {
+				if (d.getUint16(12, true) !== 0xffff) set(r, c, String(d.getFloat64(6, true)));
+				else if (data[6] === 0) formula = [r, c]; // text result: in the STRING record that follows
+				else if (data[6] === 1) set(r, c, data[8] ? "TRUE" : "FALSE");
+			} else if (type === 0x207 && formula) { set(...formula, xlStr(data, 2, d.getUint16(0, true))); formula = null; }
+			else if (type === 0x204 && data.length >= 9) set(r, c, xlStr(data, 8, d.getUint16(6, true)));
+			else if (type === 0x205 && data.length >= 8 && !data[7]) set(r, c, data[6] ? "TRUE" : "FALSE");
+		}
+		out.push(...gridTable(sh.name, grid, maxC, maxRows));
+	}
+	return out.join("\n");
+}
+
+/** Text of a PowerPoint 97-2003 .ppt, slide by slide (found through the file's own index of its records). */
+export function readPpt(cfb) {
+	const doc = cfb.stream("PowerPoint Document");
+	if (!doc) throw new Error("damaged PowerPoint file");
+	const cu = cfb.stream("Current User");
+	if (cu?.length >= 20 && view(cu).getUint32(12, true) === 0xf3d1c4df) throw PASSWORD();
+	const dv = view(doc);
+	const u32 = (o) => (o + 4 <= doc.length ? dv.getUint32(o, true) : 0);
+	const hdr = (o) => (o + 8 <= doc.length ? { ver: dv.getUint16(o, true) & 0xf, inst: dv.getUint16(o, true) >> 4, type: dv.getUint16(o + 2, true), len: dv.getUint32(o + 4, true) } : null);
+	const atom = (h, a) => {
+		const b = Math.min(a + h.len, doc.length);
+		const t = h.type === 0x0fa0 ? u16le.decode(doc.subarray(a, b)) : h.type === 0x0fa8 ? bytesText(doc.subarray(a, b)) : null;
+		return t?.replace(/[\r\v]/g, "\n").replace(/[\x00-\x08\x0e-\x1f]/g, "").trim() || null;
+	};
+	// every text atom between from and to, inside containers too; masters and notes are left out
+	const walk = (from, to, push, skip = new Set([0x03f8, 0x03f0, 0x0fc9])) => {
+		for (let o = from, h; (h = hdr(o)) && o + 8 <= to; o += 8 + h.len) {
+			if (h.ver === 0xf) { if (!skip.has(h.type) && !(h.type === 0x0ff0 && h.inst)) walk(o + 8, Math.min(o + 8 + h.len, to), push, skip); }
+			else { const t = atom(h, o + 8); if (t) push(t); }
+		}
+	};
+	const slides = [];
+	try {
+		const persist = new Map(); // object id -> where it is, newest edit first
+		let docRef = 0;
+		for (let e = cu?.length >= 20 ? view(cu).getUint32(16, true) : 0, n = 0; n < 1000; n++) { // edits, newest first
+			const h = hdr(e);
+			if (h?.type !== 0x0ff5) break;
+			if (!n) docRef = u32(e + 8 + 16);
+			const d = u32(e + 8 + 12);
+			const dh = hdr(d);
+			for (let p = d + 8; dh && p < d + 8 + dh.len;) {
+				const x = u32(p);
+				for (let i = 0; i < x >>> 20; i++) if (!persist.has((x & 0xfffff) + i)) persist.set((x & 0xfffff) + i, u32(p + 4 + i * 4));
+				p += 4 + (x >>> 20) * 4;
+			}
+			if (!u32(e + 8 + 8)) break;
+			e = u32(e + 8 + 8);
+		}
+		const docOff = persist.get(docRef);
+		const dh = docOff !== undefined && hdr(docOff);
+		for (let o = docOff + 8, h; dh && (h = hdr(o)) && o < docOff + 8 + dh.len; o += 8 + h.len) {
+			if (h.type !== 0x0ff0 || h.inst !== 0) continue; // the list of slides with their outline text
+			for (let a = o + 8, ah; (ah = hdr(a)) && a < o + 8 + h.len; a += 8 + ah.len) {
+				if (ah.type === 0x03f3) slides.push({ ref: u32(a + 8), text: [] });
+				else if (slides.length) { const t = atom(ah, a + 8); if (t) slides.at(-1).text.push(t); }
+			}
+		}
+		for (const s of slides) { // text boxes drawn on the slide itself
+			const at = persist.get(s.ref);
+			const h = at !== undefined && hdr(at);
+			if (h?.type === 0x03ee) walk(at + 8, at + 8 + h.len, (t) => s.text.push(t));
+		}
+	} catch { /* fall back to reading the records in order */ }
+	if (!slides.some((s) => s.text.length)) {
+		const all = [];
+		walk(0, doc.length, (t) => all.push(t));
+		return all.join("\n");
+	}
+	return slides.map((s, i) => `## Slide ${i + 1}\n${s.text.join("\n")}`).join("\n\n");
+}
+
+// ---------- any file, by what it is ----------
+
+const KINDS = {
+	docx: ["Word .docx", /\.(docx|docm|dotx|dotm)$/i], xlsx: ["Excel .xlsx", /\.(xlsx|xlsm|xltx|xltm)$/i],
+	pptx: ["PowerPoint .pptx", /\.(pptx|pptm|potx|ppsx)$/i], pdf: ["PDF", /\.pdf$/i], doc: ["Word 97-2003 .doc", /\.(doc|dot)$/i],
+	xls: ["Excel 97-2003 .xls", /\.(xls|xlt)$/i], ppt: ["PowerPoint 97-2003 .ppt", /\.(ppt|pps|pot)$/i],
+};
+
+/** What the first bytes say: zip (a .docx/.xlsx/.pptx), ole (.doc/.xls/.ppt), pdf, rtf, html, or unknown. */
+export function sniffOffice(buf) {
+	if (buf[0] === 0x50 && buf[1] === 0x4b) return "zip";
+	if ([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((b, i) => buf[i] === b)) return "ole";
+	const head = Buffer.from(buf.subarray(0, 1024)).toString("latin1");
+	if (head.includes("%PDF-")) return "pdf";
+	if (head.startsWith("{\\rtf")) return "rtf";
+	if (/^(﻿|\xef\xbb\xbf)?\s*(<\?xml|<!doctype|<html|MIME-Version)/i.test(head)) return "html";
+	return "unknown";
+}
+
+const OTHER = {
+	rtf: "an RTF file (text with formatting codes), not a binary Word file: read it with read",
+	html: "a web page or XML file saved under an Office name: read it with read",
+	unknown: "not an Office or PDF file (judged by its content): use read for text files",
+};
+
+/** Text of a Word, Excel, PowerPoint (new or old format) or PDF file, judged by its content, not its name.
+ * full: the whole file (batch mode); otherwise the usual limits (Excel 200 rows and 5 sheets, PDF pages). */
+export async function readOffice(path, p = {}, { full = false } = {}) {
+	const buf = readFileSync(path);
+	const kind = sniffOffice(buf);
+	let what;
+	let text;
+	if (kind === "zip") {
+		const names = [];
+		try {
+			unzipSync(buf, { filter: (f) => { names.push(f.name); return false; } });
+		} catch (e) {
+			throw new Error(`damaged or incomplete file (zip: ${e.message})`);
+		}
+		const has = (n) => names.includes(n);
+		if (has("word/document.xml")) [what, text] = ["docx", readDocx(buf, { revisions: p.revisions })];
+		else if (has("xl/workbook.xml")) [what, text] = ["xlsx", readXlsx(buf, full ? { maxRows: Infinity, maxSheets: Infinity } : p)];
+		else if (has("ppt/presentation.xml")) [what, text] = ["pptx", readPptx(buf)];
+		else throw new Error("a zip file, not a Word, Excel or PowerPoint document");
+	} else if (kind === "pdf") [what, text] = ["pdf", await readPdf(buf, full ? undefined : p.pages)];
+	else if (kind === "ole") {
+		const cfb = readCfb(buf);
+		if (cfb.names.some((n) => /DRM/i.test(n))) throw IRM();
+		if (cfb.names.includes("EncryptedPackage") || cfb.names.includes("EncryptionInfo")) throw PASSWORD();
+		if (cfb.stream("WordDocument")) [what, text] = ["doc", readDoc(cfb)];
+		else if (cfb.stream("Workbook") || cfb.stream("Book")) [what, text] = ["xls", readXls(cfb, { maxRows: full ? Infinity : 200 })];
+		else if (cfb.stream("PowerPoint Document")) [what, text] = ["ppt", readPpt(cfb)];
+		else throw new Error(`an OLE compound file with no Word, Excel or PowerPoint document inside (it holds: ${cfb.names.slice(0, 8).join(", ")})`);
+	} else throw new Error(OTHER[kind]);
+	const [label, ext] = KINDS[what];
+	return ext.test(path) ? text : `(${basename(path)} is really a ${label} file; read as that)\n\n${text}`;
+}
+
+// ---------- many files at once ----------
+
+const INPUT_EXT = /\.(docx?|docm|dot[xm]?|xlsx?|xlsm|xlt[xm]?|pptx?|pptm|pps[xm]?|pot[xm]?|pdf)$/i;
+const hasGlob = (s) => /[*?{]/.test(s);
+
+function globRegex(pattern) {
+	let re = "";
+	let braces = 0;
+	for (let i = 0; i < pattern.length; i++) {
+		const c = pattern[i];
+		if (c === "*" && pattern[i + 1] === "*") {
+			i++;
+			if (pattern[i + 1] === "/") { i++; re += "(?:.*/)?"; } else re += ".*";
+		} else if (c === "*") re += "[^/]*";
+		else if (c === "?") re += "[^/]";
+		else if (c === "{") { braces++; re += "(?:"; }
+		else if (c === "}" && braces) { braces--; re += ")"; }
+		else if (c === "," && braces) re += "|";
+		else re += c.replace(/[.+^$()|\\[\]{}]/g, "\\$&");
+	}
+	return new RegExp(`^${re}$`, "i");
+}
+
+/** The files a batch reads: a folder gives its Office/PDF files (all subfolders), a glob every file it matches. */
+export function batchInputs(cwd, path, outDir) {
+	const norm = String(path).replace(/\\/g, "/");
+	let base;
+	let want;
+	const glob = hasGlob(norm);
+	if (glob) {
+		const segs = norm.split("/");
+		const k = segs.findIndex(hasGlob);
+		base = resolve(cwd, segs.slice(0, k).join("/") || (norm.startsWith("/") ? "/" : "."));
+		const rx = globRegex(segs.slice(k).join("/"));
+		want = (rel) => rx.test(rel);
+	} else {
+		base = resolve(cwd, norm);
+		if (!statSync(base).isDirectory()) return { base: dirname(base), files: [base], skipped: 0 };
+		want = (rel) => INPUT_EXT.test(rel);
+	}
+	const files = [];
+	let skipped = 0;
+	const walk = (dir) => {
+		let list;
+		try { list = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+		for (const d of list) {
+			const full = join(dir, d.name);
+			if (d.isDirectory()) { if (full !== outDir) walk(full); continue; }
+			if (!d.isFile()) continue;
+			if (!want(relative(base, full).replace(/\\/g, "/"))) { if (!glob) skipped++; }
+			else if (d.name.startsWith("~$")) skipped++; // Office's lock file for a document someone has open
+			else files.push(full);
+		}
+	};
+	walk(base);
+	return { base, files: files.sort(), skipped };
+}
+
+/** Convert many files to .txt under out (same relative paths); returns a short summary for the agent. */
+export async function convertBatch(cwd, path, out, { signal, onProgress } = {}) {
+	const outDir = resolve(cwd, out);
+	const { base, files, skipped } = batchInputs(cwd, path, outDir);
+	if (!files.length) throw new Error(`No Office or PDF files found in ${path}`);
+	let ok = 0;
+	const empty = [];
+	const enc = [];
+	const failed = [];
+	let done = 0;
+	for (const f of files) {
+		if (signal?.aborted) break;
+		const rel = relative(base, f).replace(/\\/g, "/");
+		try {
+			const text = await readOffice(f, {}, { full: true });
+			const dest = join(outDir, `${rel}.txt`);
+			mkdirSync(dirname(dest), { recursive: true });
+			writeFileSync(dest, `${text}\n`);
+			ok++;
+			if (!text.replace(/^\d+ pages$|^--- page \d+ ---$|^\(.* is really a .* file; read as that\)$/gm, "").trim()) empty.push(rel);
+		} catch (e) {
+			if (e.code === "ENCRYPTED") enc.push(`- ${rel}: ${e.short}`);
+			else failed.push(`- ${rel}: ${String(e.message).split("\n")[0].slice(0, 200)}`);
+		}
+		if (++done % 10 === 0) onProgress?.(`${done}/${files.length} files`);
+	}
+	const list = (a) => (a.length > 100 ? [...a.slice(0, 100), `... ${a.length - 100} more`] : a);
+	const lines = [
+		`${done < files.length ? `Stopped after ${done} of ${files.length} files. ` : ""}Text files are in ${outDir} (each file as <its relative path>.txt).`,
+		`ok ${ok}, encrypted ${enc.length}, failed ${failed.length}, skipped ${skipped} (not Office/PDF, or ~$ lock files)`,
+	];
+	if (enc.length) lines.push("", "Encrypted: cannot be read without the owner; tell the user, do not try other ways:", ...list(enc));
+	if (failed.length) lines.push("", "Failed:", ...list(failed));
+	if (empty.length) lines.push("", `No text (scanned or pictures only?): ${list(empty).join(", ")}`);
+	lines.push("", "Next: grep or read the .txt files you need.");
+	return lines.join("\n");
 }
 
 // ---------- new files ----------
@@ -400,13 +912,21 @@ export function createOffice() {
 		pi.registerTool({
 			name: "office_read",
 			label: "Read Office/PDF",
-			description: "Read a Word (.docx), Excel (.xlsx), PowerPoint (.pptx) or PDF file as text. Word: headings, lists and " +
-				"tables as Markdown, tracked changes as {+inserted+} {-deleted-} and comments listed at the end. Excel: sheets " +
-				"as tables with row numbers and column letters (sheet, range, formulas). PDF: text per page (pages: \"3-7\"). " +
-				"Use this instead of read for these files.",
-			promptSnippet: "Read Word, Excel, PowerPoint and PDF files (with tracked changes and comments)",
+			description: "Read Word, Excel, PowerPoint or PDF files as text, without Office: .docx and old .doc, .xlsx and " +
+				"old .xls, .pptx and old .ppt, .pdf. The format is judged by the file's content, so a file with the wrong " +
+				"extension is still read. Word: headings, lists and tables as Markdown, tracked changes as {+inserted+} " +
+				"{-deleted-} and comments listed at the end. Excel: sheets as tables with row numbers and column letters " +
+				"(sheet, range, formulas). PDF: text per page (pages: \"3-7\"). Use this instead of read for these files.\n" +
+				"Many files (more than a few): give a folder or a glob as path (\"D:/docs\" or \"D:/docs/**/*.doc*\") and out " +
+				"(a folder): every file becomes a .txt under out with the same relative path, and you get back only a summary " +
+				"(ok / failed / encrypted counts, failed files with reasons); then grep or read the .txt files. Do not write " +
+				"python scripts for this.\nNever drive Word, Excel or PowerPoint with COM automation (win32com, " +
+				"New-Object -ComObject): many company PCs block it. Encrypted (IRM or password) files cannot be read by any " +
+				"tool: tell the user.",
+			promptSnippet: "Read Word, Excel, PowerPoint and PDF files, old formats too, one file or a whole folder into .txt files",
 			parameters: Type.Object({
-				path: Type.String(),
+				path: Type.String({ description: "A file; or, with out, a folder or a glob" }),
+				out: Type.Optional(Type.String({ description: "Batch: folder for the .txt files (one per file read)" })),
 				sheet: Type.Optional(Type.String({ description: "Excel: one sheet by name" })),
 				range: Type.Optional(Type.String({ description: "Excel: e.g. A1:H50" })),
 				formulas: Type.Optional(Type.Boolean({ description: "Excel: show formulas instead of values" })),
@@ -414,16 +934,20 @@ export function createOffice() {
 				revisions: Type.Optional(Type.String({ description: "Word: show (default, marks tracked changes) or accepted (as if all were accepted)" })),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false },
-			async execute(_id, p, _signal, _onUpdate, ctx) {
-				const path = resolve(ctx?.cwd ?? process.cwd(), p.path);
-				const ext = extname(path).toLowerCase();
-				let text;
-				if (ext === ".docx" || ext === ".docm") text = readDocx(path, { revisions: p.revisions });
-				else if (ext === ".xlsx" || ext === ".xlsm") text = readXlsx(path, { sheet: p.sheet, range: p.range, formulas: p.formulas });
-				else if (ext === ".pptx") text = readPptx(path);
-				else if (ext === ".pdf") text = await readPdf(path, p.pages);
-				else if (ext === ".doc" || ext === ".xls" || ext === ".ppt") throw new Error(`${ext} is the old binary format: save it as ${ext}x in Office first`);
-				else throw new Error("office_read reads .docx, .xlsx, .pptx and .pdf; use read for other files");
+			async execute(_id, p, signal, onUpdate, ctx) {
+				const cwd = ctx?.cwd ?? process.cwd();
+				if (p.out) {
+					const summary = await convertBatch(cwd, p.path, p.out, {
+						signal, onProgress: (s) => onUpdate?.({ content: [{ type: "text", text: `office_read: ${s}` }], details: {} }),
+					});
+					return { content: [{ type: "text", text: summary }], details: undefined };
+				}
+				const path = resolve(cwd, p.path);
+				if (hasGlob(p.path) || statSync(path).isDirectory()) {
+					throw new Error(`${p.path} is ${hasGlob(p.path) ? "a glob" : "a folder"}: to read many files, call office_read again with ` +
+						"out (a folder for the text files, e.g. out: \"office-text\"). Each file becomes a .txt there and you get a summary back.");
+				}
+				const text = await readOffice(path, p);
 				return { content: [{ type: "text", text: cut(text) }], details: undefined };
 			},
 		});

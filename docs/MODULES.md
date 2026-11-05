@@ -52,7 +52,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 搜索和读网页 | `web_search` 经服务端搜（模型自带的搜索，或 Tavily、Brave、博查），`web_fetch` 带问题时由服务端的模型读 | `server/ferry_server/search.py`；客户端在 `web.mjs` | 管理页 → 设置 → 网页搜索；不设就读 Bing 的结果页 | F66、F67 |
 | 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
-| Office | 读写 Word、Excel、PowerPoint、PDF | `client/lib/office.mjs`、`client/skills/office/` | — | F50 |
+| Office | 读写 Word、Excel、PowerPoint、PDF；读旧版 .doc/.xls/.ppt；整个文件夹转成文本 | `client/lib/office.mjs`、`client/skills/office/` | — | F50、F75–F77 |
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
 | 团队 | Paperclip 看板上的成员 | `client/lib/team.mjs`、`teamcli.mjs` | 由 Paperclip 启动时才生效 | F54 |
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |
