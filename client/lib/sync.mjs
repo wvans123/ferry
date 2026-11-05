@@ -70,7 +70,11 @@ export function modelDef(m, cfg) {
 		name: m.via ? `Ferry ${m.id} (${m.via})` : `Ferry ${m.id}`, // via: a provider kept apart from same-named models
 		reasoning: thinks,
 		...(thinks && known.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}),
-		...(thinks && anthropic && known.compat ? { compat: known.compat } : {}),
+		// pi sends Claude's newest models a fixed effort "low" at the top and the chosen level as system messages
+		// inside the conversation (a newer API feature). Relays drop those messages, so the model ran at "low" whatever
+		// /thinking showed (#9). Ferry asks for the chosen level at the top, and keeps other in-conversation extras off.
+		...(thinks && anthropic && known.compat ? { compat: { ...known.compat, supportsMidConvoEffort: false,
+			supportsMidConvoSystemMessages: false, supportsMidConvoToolChanges: false } } : {}),
 		// pictures go to models that take them (the agent reads image files with the read tool)
 		input: m.vision ? ["text", "image"] : ["text"],
 		// USD per million tokens, from the server's price list: pi adds up the cost (/cost, the footer)

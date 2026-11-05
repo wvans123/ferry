@@ -80,19 +80,26 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 | `DEEPSEEK_API_KEY` 等 | 用环境变量给 Key，优先于管理页里填的 |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
 | `FERRY_GITHUB_TOKEN` / `FERRY_GITHUB_REPO` | 问题报告用的 GitHub 令牌和仓库（优先于管理页） |
-| `FERRY_SEARCH` / `FERRY_SEARCH_KEY` | 网页搜索用的搜索 API（`tavily`、`brave`、`bocha`）和它的 Key（优先于管理页） |
+| `FERRY_SEARCH` / `FERRY_SEARCH_KEY` | 网页搜索来源（`deepseek`、`tavily`、`brave`、`bocha`、`model:<模型名>` 用模型自带的搜索，`bing` 不用服务端搜索；不设就是自动）和搜索 API 的 Key（优先于管理页） |
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
 
 ## 网页搜索
 
-agent 的 `web_search` 默认在工作电脑上读 Bing 的结果页。搜索引擎给程序的结果页质量差（实测搜"agent memory open source github"，前几条是字典里 agent 的释义），所以 agent 搜得笨。接一个搜索 API 就好了：
+搜索引擎给程序看的结果页质量差（实测搜"agent memory open source github"，Bing 前几条是字典里 agent 的释义），所以 agent 的 `web_search` 尽量由服务端去搜。
 
-1. 选一家注册拿 Key。[Tavily](https://app.tavily.com) 是给 AI agent 用的，每月有免费额度；[Brave Search](https://api-dashboard.search.brave.com) 有自己的索引；[博查](https://open.bochaai.com) 中文网页多，国内能直接访问。
-2. 管理页 → 设置 → 网页搜索，选这家，贴 Key，保存，点"测试"。Key 存在数据目录的 `search-key` 文件里，管理页不再显示它。
-3. 工作电脑下次启动 ferry 时生效。
+默认是"自动"：服务端接了 DeepSeek（模型地址是 api.deepseek.com），就用 DeepSeek 自家的搜索 API，用的是同一个 Key，不用另外注册。DeepSeek Harness 默认也用它。每千次 0.75 美元，只有返回结果的才收费；结果带摘要（几百字）、日期和权威度，支持 `site:`、`after:` 这些写法。没接 DeepSeek 时，工作电脑读 Bing 的结果页。
 
-工作电脑只把搜索词发给服务端（几百字节），拿回标题、地址、日期和摘要；网页还是在工作电脑上打开。搜索 API 出错（额度用完、Key 失效）时，工作电脑自动改用 Bing，并告诉 agent 原因。每次搜索在调用记录里记一行（`search`），不记搜索词。
+想换别的，在管理页 → 设置 → 网页搜索里选，有两类：
+
+- 模型自带的搜索，和 Claude Code、Codex 的做法一样：服务端用这个模型的 Key 请它搜一下，只把搜到的网页（标题、地址、日期、引用的那句话）交回工作电脑。列表里出现的是能这样搜的模型：走 Claude 官方接口（Anthropic 格式）的 Claude，和走 OpenAI Responses 接口的 GPT。不用另注册，但每次搜索除了 token 另有费用（Claude 官方是每千次 10 美元）。中转多半不支持，选好后点"测试"。
+- 搜索 API：[Tavily](https://app.tavily.com) 是给 AI agent 用的，每月有免费额度；[Brave Search](https://api-dashboard.search.brave.com) 有自己的索引；[博查](https://open.bochaai.com) 中文网页多，国内能直接访问。注册拿 Key，选这家，贴 Key，保存，点"测试"。Key 存在数据目录的 `search-key` 文件里，管理页不再显示它。
+
+工作电脑下次启动 ferry 时生效。工作电脑只把搜索词发给服务端（几百字节），网页还是在工作电脑上打开。服务端搜索出错（额度用完、Key 失效、模型不支持）时，工作电脑自动改用 Bing，并告诉 agent 原因。每次搜索在调用记录里记一行（`search`），不记搜索词。
+
+### 读网页
+
+agent 带着问题读网页时（`web_fetch` 加 `prompt`，和 Claude Code 的 WebFetch 一样），工作电脑把网页文字（最多 10 万字，几百 KB）发过来，服务端让"写摘要用"的模型读（没设就用默认模型，它拒绝或出错时换另一个），只把回答交回去。调用记录里这类调用标着 `extract`，花费照常统计。读网页只是从一页里找出和问题有关的内容，用便宜的模型就够；想更准就把"写摘要用"设成好一点的模型。
 
 ## 问题报告
 

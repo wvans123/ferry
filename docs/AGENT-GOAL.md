@@ -399,3 +399,21 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | 没有搜索 API 时搜不准 | Bing 结果不对题时，agent 用本机浏览器（agent-browser）打开搜索引擎去搜 | 系统提示 |
 | team 不知道去哪看 | `ferry team start` 等看板起来后自动在浏览器打开 | 客户端单元测试 |
 | pi 1.5.0 | 跟进 pi 新版本（流式输出更快、图片缩小时优先 JPEG、Windows 路径大小写等修复） | 全部测试 |
+
+## v0.30：照 Claude Code 的做法搜索和读网页
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 读几个网页对话就满了 | `web_fetch` 加 `prompt`：网页在工作电脑上抓，文字（≤10 万字）交给服务端"写摘要用"的模型（没设用默认模型）按问题读，对话里只放回答，和 Claude Code 的 WebFetch 一样。要原文时不带问题，照旧分段给全文 | F67、客户端和服务端单元测试 |
+| 同一个网页反复下载；PDF 直接报错 | 15 分钟内读过的不再下载；PDF、Word、Excel、PowerPoint 存进 `downloads`，告诉 agent 用 office_read | 客户端单元测试 |
+| 搜索还能不能更好 | 服务端可以用模型自带的搜索（Claude 官方接口的 web_search、OpenAI Responses 的 web_search），和 Claude Code、Codex 一样由模型厂商去搜，不用另注册搜索 API；只把网页列表交回工作电脑 | 服务端单元测试 |
+| 只想搜某个网站 | `web_search` 加 `allowed_domains` / `blocked_domains`：交给服务端的搜索来源，Bing 时写成 `site:` / `-site:` | 客户端和服务端单元测试 |
+| 查最新的东西搜到旧的；回答不写出处 | 系统提示：会变的东西在搜索词里带上今年的年份；回答末尾列出处 | 系统提示 |
+| #9 界面上选了 high，中转收到的是 low | pi 1.5 给 Claude 新模型发请求时，顶层的思考程度固定写 low，选的级别放在对话中间的系统消息里（Anthropic 的新功能），中转把它们丢了。Ferry 改为把选的级别直接写在顶层，也不再用对话中间的系统消息和工具改动 | 客户端单元测试（用 pi 自己的请求构造，选 high 发出去就是 high） |
+| #9 不同服务商的同名模型分不开 | 0.29 已加"这家的模型单独列出"（服务端 0.29 起才有）；勾上后 `/model` 里单独出现、带服务商名 | 服务端单元测试 |
+| #8 浏览器的活做一半就停；改去下载网页 | 浏览器技能改成"看、做、查"的循环：先想清楚做到什么算完，每步查结果，做到拿到为止，卡住要说清卡在哪；操作网站时不中途换成 web_fetch 或 curl | 技能说明 |
+| #8 #10 想默认后台跑，登录时再弹窗 | `browserHeadless` 默认改成 true；要登录时 agent 用 `--headed` 打开一个窗口请你登录，登录完关掉，回到后台接着做（同一个资料夹，登录还在）；网站要权限时不替你同意 | 客户端单元测试、F36 |
+| #8 #10 全部放行时，浏览器读 cookie、上传文件等也不问 | 碰隐私的 agent-browser 命令（cookies、storage、state、clipboard、upload、auth、connect、set credentials、network har，和 --profile、--cdp、--auto-connect、--state）在任何模式下都问，"以后都允许"也不算；撤不回的操作（提交、发送、下单、发帖、改设置、删除）先用 ask_user 问 | 客户端单元测试 |
+| Google 不让登录 | Google、Microsoft 拒绝被程序控制的浏览器登录。`ferry browser login [地址]` 用同一个浏览器和资料夹以普通方式打开，登录完关窗口，之后 agent 的浏览器带着登录 | 客户端单元测试 |
+| #10 没装对应服务端的电脑上，客户端测试卡两分钟 | `update.test.mjs` 里重启服务端那项在没有对应版本服务端时跳过，失败时也关掉测试用的服务器 | 客户端单元测试 |
+| 搜索还是要自己去注册 | 服务端接了 DeepSeek 时，默认用 DeepSeek 自家的搜索 API（同一个 Key，每千次 0.75 美元，DeepSeek Harness 默认也用它），结果带长摘要、日期；管理页可以改成 Bing、搜索 API 或模型自带的搜索 | 服务端单元测试 |

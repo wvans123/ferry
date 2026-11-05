@@ -30,7 +30,11 @@ test("a normal server install is told apart from one run from a source folder", 
 	assert.deepEqual(serverIn(join(home, "no-such-python")), { version: "", installed: false });
 });
 
-test("an older server still running is replaced by the new one", { timeout: 60000 }, async () => {
+// needs a Python with this version's server installed (CI and a developer's checkout with pip install -e server)
+const serverPython = allPythons({}).find((p) => serverIn(p).version === VERSION);
+
+test("an older server still running is replaced by the new one", { timeout: 60000,
+	skip: serverPython ? false : `no Python here has Ferry server ${VERSION} (pip install -e server)` }, async () => {
 	// the old server: answers /health with an old version and stops when asked (as Ferry servers do)
 	let stopped = false;
 	const old = http.createServer((req, res) => {
@@ -48,9 +52,8 @@ test("an older server still running is replaced by the new one", { timeout: 6000
 	const port = old.address().port;
 	process.env.FERRY_SERVER_HOME = join(home, "server");
 	process.env.DEEPSEEK_API_KEY ??= "test-key";
-	const py = allPythons({}).find((p) => serverIn(p).version === VERSION);
-	assert.ok(py, `no Python here has Ferry server ${VERSION}`);
-	const line = await restartLocalServer(VERSION, py, port);
+	const py = serverPython;
+	const line = await restartLocalServer(VERSION, py, port).finally(() => !stopped && old.close());
 	assert.ok(stopped, "the old server was not asked to stop");
 	assert.equal(line, `restarted: 0.1.0 -> ${VERSION} on port ${port}`);
 	// nothing running: nothing to say; already the new version: says so

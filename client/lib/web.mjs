@@ -3,6 +3,8 @@
 // They run on this computer, through the company proxy like a browser, so the company gateway's rules apply. A gateway
 // warning page ("are you sure you want to visit this site?") is reported with the address to confirm in a browser;
 // Ferry never clicks through it. cfg.web = "off": no web tools.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Type } from "typebox";
 import { serverHeaders } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
@@ -10,7 +12,10 @@ import { gatewayPage } from "./gateway.mjs";
 export { gatewayPage };
 
 const MAX_BYTES = 3_000_000;
+const FILE_BYTES = 50_000_000; // a PDF or Office file web_fetch saves for office_read
 const PAGE_CHARS = 40_000;
+const READ_CHARS = 100_000; // the most of a page sent to the server to be read with a question (like Claude Code)
+const CACHE_MS = 15 * 60_000; // a page read again within 15 minutes is not fetched again
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 Ferry";
 
 /** The entry of the user's blocked-sites list that url falls under (the site or a subdomain of it), or "". */
@@ -95,13 +100,18 @@ async function get(url, signal, init = {}) {
 		}
 		const chunks = [];
 		let size = 0;
+		const limit = isTextType(res.headers.get("content-type")) ? MAX_BYTES : FILE_BYTES;
+		let cut = false;
 		for await (const c of res.body ?? []) {
 			chunks.push(c);
 			size += c.length;
-			if (size > MAX_BYTES) break;
+			if (size > limit) {
+				cut = true;
+				break;
+			}
 		}
 		const buf = Buffer.concat(chunks);
-		return { res, url: current, buf, text: decode(buf, res.headers.get("content-type")) };
+		return { res, url: current, buf, cut, text: isTextType(res.headers.get("content-type")) ? decode(buf, res.headers.get("content-type")) : "" };
 	}
 	throw new Error("too many redirects");
 }
@@ -115,19 +125,70 @@ export class GatewayError extends Error {
 	}
 }
 
-export async function fetchPage(url, offset = 0, signal) {
+const isTextType = (ctype) => !ctype || /text|html|json|xml|javascript/i.test(ctype);
+const pages = new Map(); // address -> { at, page }
+
+/** The whole page as text: { url, status, title, text, sparse }, or { file } for a PDF / Office file / archive. */
+export async function readPage(url, signal) {
 	if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+	const hit = pages.get(url);
+	if (hit && Date.now() - hit.at < CACHE_MS) return hit.page;
 	const r = await get(url, signal);
 	const ctype = r.res.headers.get("content-type") ?? "";
 	if (gatewayPage(r.url, r.buf.length < 30000 ? r.text : "")) throw new GatewayError(r.url, url); // such pages are small
-	if (ctype && !/text|html|json|xml|javascript/i.test(ctype)) throw new Error(`${ctype} is not text: download the file with a command (curl -L -o <file> <url>), then read it (office_read for Word, Excel, PowerPoint, PDF)`);
-	const isHtml = /html/i.test(ctype) || /^\s*<(!doctype html|html)/i.test(r.text.slice(0, 200));
-	const { title, text } = isHtml ? htmlToText(r.text, r.url) : { title: "", text: r.text };
-	const part = text.slice(offset, offset + PAGE_CHARS);
-	// a page whose content is built by JavaScript reads as (almost) nothing here
-	const sparse = isHtml && text.replace(/\s+/g, " ").length < 300 && /<script\b/i.test(r.text);
-	return { url: r.url, status: r.res.status, title, chars: text.length, text: part,
-		next_offset: text.length > offset + PAGE_CHARS ? offset + PAGE_CHARS : null, sparse };
+	let page;
+	if (!isTextType(ctype)) {
+		page = { url: r.url, status: r.res.status, file: { ctype, buf: r.buf, cut: r.cut, name: fileName(r.url, r.res.headers, ctype) } };
+	} else {
+		const isHtml = /html/i.test(ctype) || /^\s*<(!doctype html|html)/i.test(r.text.slice(0, 200));
+		const { title, text } = isHtml ? htmlToText(r.text, r.url) : { title: "", text: r.text };
+		// a page whose content is built by JavaScript reads as (almost) nothing here
+		const sparse = isHtml && text.replace(/\s+/g, " ").length < 300 && /<script\b/i.test(r.text);
+		page = { url: r.url, status: r.res.status, title, text, sparse };
+	}
+	if (r.res.status < 400) {
+		pages.set(url, { at: Date.now(), page });
+		if (pages.size > 50) pages.delete(pages.keys().next().value);
+	}
+	return page;
+}
+
+/** A file name for what an address sent: Content-Disposition, else the address's last part, else by type. */
+function fileName(url, headers, ctype) {
+	const cd = headers.get("content-disposition") ?? "";
+	let name = /filename\*=UTF-8''([^;]+)/i.exec(cd)?.[1] ?? /filename="?([^";]+)"?/i.exec(cd)?.[1] ?? "";
+	try {
+		name = decodeURIComponent(name || new URL(url).pathname.split("/").filter(Boolean).pop() || "");
+	} catch {
+		// keep it as it is
+	}
+	name = name.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(-120);
+	const ext = { "application/pdf": ".pdf", "application/zip": ".zip", "application/msword": ".doc",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx" }[ctype.split(";")[0].trim()] ?? "";
+	if (!name) name = `download${ext || ".bin"}`;
+	return ext && !/\.[a-z0-9]{2,5}$/i.test(name) ? name + ext : name;
+}
+
+export async function fetchPage(url, offset = 0, signal) {
+	const p = await readPage(url, signal);
+	if (p.file) throw new Error(`${p.file.ctype} is not text`);
+	return { url: p.url, status: p.status, title: p.title, chars: p.text.length, text: p.text.slice(offset, offset + PAGE_CHARS),
+		next_offset: p.text.length > offset + PAGE_CHARS ? offset + PAGE_CHARS : null, sparse: p.sparse };
+}
+
+/** Ask the Ferry server to read the page with a question (only the answer comes back). null when it cannot. */
+export async function readOnServer(cfg, page, prompt, signal) {
+	if (!(cfg.features ?? []).includes("extract")) return null;
+	const res = await fetch(`${cfg.server}/v1/ferry/extract`, {
+		method: "POST", redirect: "manual", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000),
+		headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
+		body: JSON.stringify({ url: page.url, title: page.title, prompt, text: page.text.slice(0, READ_CHARS) }),
+	});
+	const out = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+	if (!res.ok || !out?.answer) throw new Error(out?.error ?? `HTTP ${res.status}`);
+	return out;
 }
 
 function bingTarget(u) {
@@ -158,16 +219,22 @@ export function parseBing(html) {
  * Search through the Ferry server's search API (Tavily, Brave or Bocha; its key stays on the server). Only the query
  * leaves this computer; the results' pages are still read here. null when the server has no search engine set.
  */
-export async function searchServer(cfg, query, count = 8, recent = "", signal) {
+export async function searchServer(cfg, query, count = 8, recent = "", signal, sites = {}) {
 	if (!(cfg.features ?? []).includes("search")) return null;
 	const res = await fetch(`${cfg.server}/v1/ferry/search`, {
-		method: "POST", redirect: "manual", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(45000)]) : AbortSignal.timeout(45000),
+		method: "POST", redirect: "manual", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(100000)]) : AbortSignal.timeout(100000),
 		headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
-		body: JSON.stringify({ query, count, recent }),
+		body: JSON.stringify({ query, count, recent, allowed_domains: sites.allowed ?? [], blocked_domains: sites.blocked ?? [] }),
 	});
 	const out = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
 	if (!res.ok || !Array.isArray(out?.results)) throw new Error(out?.error ?? `HTTP ${res.status}`);
 	return { results: out.results, engine: out.engine };
+}
+
+/** Domain limits written into the query (site: / -site:), for Bing's page. */
+export function withSites(query, allowed = [], blocked = []) {
+	if (allowed.length) return `${query} ${allowed.length > 1 ? `(${allowed.map((d) => `site:${d}`).join(" OR ")})` : `site:${allowed[0]}`}`;
+	return [query, ...blocked.map((d) => `-site:${d}`)].join(" ");
 }
 
 export async function searchWeb(query, count = 8, signal, base = process.env.FERRY_TEST_SEARCH_BASE) {
@@ -181,12 +248,17 @@ export async function searchWeb(query, count = 8, signal, base = process.env.FER
 
 const FetchParams = Type.Object({
 	url: Type.String({ description: "The full address, e.g. https://github.com/owner/repo" }),
-	offset: Type.Optional(Type.Number({ description: "Continue a long page from this character (next_offset of the previous call)" })),
+	prompt: Type.Optional(Type.String({ description: "What you want from the page. The page is then read for you and only " +
+		"the answer comes back, much shorter than the page; use it for most reading. Leave it out when you need the " +
+		"page's own text (code, a table, exact wording, a list of links to follow)." })),
+	offset: Type.Optional(Type.Number({ description: "Without prompt: continue a long page from this character (next_offset of the previous call)" })),
 });
 const SearchParams = Type.Object({
 	query: Type.String({ description: "What to search for" }),
 	count: Type.Optional(Type.Number({ description: "How many results, default 8" })),
 	recent: Type.Optional(Type.String({ description: "Only pages from the last day, week, month or year" })),
+	allowed_domains: Type.Optional(Type.Array(Type.String(), { description: "Only results from these sites, e.g. [\"3gpp.org\"]" })),
+	blocked_domains: Type.Optional(Type.Array(Type.String(), { description: "Never results from these sites" })),
 });
 
 /** Whether the web tools are on ("off" or false turns them off; "server" from before 0.26 counts as on). */
@@ -200,6 +272,24 @@ export function commandSites(command) {
 	const urls = c.match(/https?:\/\/[^\s"'<>|;&)]+/gi) ?? [];
 	for (const m of c.matchAll(/\bagent-browser(?:\.exe)?\b[^|;&\n]*?\b(?:open|goto|navigate|read|new)\s+["']?([^\s"'|;&]+)/gi)) urls.push(m[1]);
 	return urls;
+}
+
+/** A PDF, Office file or archive web_fetch got: into the project's downloads folder, for office_read. */
+function saveFile(page, cwd) {
+	const f = page.file;
+	if (f.cut) {
+		return { content: [{ type: "text", text: `${page.url} is a file (${f.ctype}) bigger than ${FILE_BYTES / 1e6} MB: download it ` +
+			"with a command (curl -L --retry 3 -C - -o <file> <url>)." }], details: { url: page.url } };
+	}
+	const dir = join(cwd, "downloads");
+	mkdirSync(dir, { recursive: true });
+	let file = join(dir, f.name);
+	for (let i = 2; existsSync(file) && readFileSync(file).compare(f.buf) !== 0; i++) file = join(dir, f.name.replace(/(\.[^.]*)?$/, `-${i}$1`));
+	writeFileSync(file, f.buf);
+	const office = /\.(pdf|docx?|xlsx?|pptx?)$/i.test(file);
+	return { content: [{ type: "text", text: `${page.url} is a file (${f.ctype}, ${Math.round(f.buf.length / 1024)} KB). Saved as ${file}` +
+		(office ? "; read it with office_read." : /\.zip$/i.test(file) ? "; unpack it with unzip (or Expand-Archive in PowerShell)." : ".") }],
+		details: { url: page.url, path: file } };
 }
 
 export function createWeb(cfg) {
@@ -232,19 +322,42 @@ export function createWeb(cfg) {
 		pi.registerTool({
 			name: "web_fetch",
 			label: "Web page",
-			description: `Read a web page as text. ${where} Long pages come in parts: call again with offset to read on.`,
-			promptSnippet: "Read a web page as text",
+			description: `Read a web page. ${where} With prompt, the page is read for you and only the answer comes back ` +
+				"(like Claude Code's WebFetch); without it you get the page's text, long pages in parts (call again with " +
+				"offset). A PDF, Word, Excel or PowerPoint file is saved into the downloads folder for office_read. Pages " +
+				"read in the last 15 minutes are not fetched again.",
+			promptSnippet: "Read a web page, or ask a question about it",
 			parameters: FetchParams,
 			annotations: { readOnlyHint: true, openWorldHint: true },
-			async execute(_id, params, signal) {
+			async execute(_id, params, signal, _onUpdate, ctx) {
 				notBlocked(params.url);
-				let r = await fetchPage(params.url, params.offset ?? 0, signal);
-				if (r.sparse && !params.offset) {
-					r = { ...r, text: `${r.text}\n\n[This page is probably built by JavaScript, so it reads almost empty here. ` +
-						(cfg.browser === false ? "Another source may have the same information; otherwise tell the user.]"
-							: "Open it in the browser (agent-browser, see the browser skill) to read it after its scripts ran.]") };
+				const page = await readPage(params.url, signal);
+				if (page.file) return saveFile(page, ctx?.cwd ?? process.cwd());
+				if (page.sparse) {
+					return show({ url: page.url, title: page.title, text: `${page.text}\n\n[This page is probably built by JavaScript, ` +
+						"so it reads almost empty here. " + (cfg.browser === false ? "Another source may have the same information; otherwise tell the user.]"
+							: "Open it in the browser (agent-browser, see the browser skill) to read it after its scripts ran.]") });
 				}
-				return show(r);
+				const prompt = String(params.prompt ?? "").trim();
+				if (prompt && !params.offset) {
+					let note = "";
+					try {
+						const out = await readOnServer(cfg, page, prompt, signal);
+						if (out) {
+							const more = page.text.length > READ_CHARS ? ` Only the first ${READ_CHARS} of its ${page.text.length} characters were read.` : "";
+							return { content: [{ type: "text", text: `${page.title ? `# ${page.title}\n` : ""}${page.url}\n\n${out.answer}\n\n` +
+								`[Answered from the page by ${out.model}.${more} For exact wording, code or tables, call web_fetch without prompt.]` }],
+								details: { url: page.url, status: page.status, chars: page.text.length, answeredBy: out.model } };
+						}
+						note = "[The Ferry server cannot read pages for you, so this is the page's text; look for the answer to your question in it.]\n\n";
+					} catch (e) {
+						if (signal?.aborted) throw e;
+						note = `[Reading the page on the Ferry server failed (${String(e.message).slice(0, 200)}); this is the page's text.]\n\n`;
+					}
+					const r = await fetchPage(params.url, 0, signal);
+					return show({ ...r, text: note + r.text });
+				}
+				return show(await fetchPage(params.url, params.offset ?? 0, signal));
 			},
 		});
 		pi.registerTool({
@@ -260,14 +373,18 @@ export function createWeb(cfg) {
 				const recent = ["day", "week", "month", "year"].includes(params.recent) ? params.recent : "";
 				let r = null;
 				let note = "";
+				const clean = (v) => (Array.isArray(v) ? v : []).map((d) => String(d).trim().replace(/^[a-z]+:\/\//i, "").replace(/\/+$/, ""))
+					.filter((d) => /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(d)).slice(0, 20);
+				const allowed = clean(params.allowed_domains);
+				const blocked = allowed.length ? [] : clean(params.blocked_domains);
 				try {
-					r = await searchServer(cfg, params.query, count, recent, signal);
+					r = await searchServer(cfg, params.query, count, recent, signal, { allowed, blocked });
 				} catch (e) {
 					if (signal?.aborted) throw e;
 					note = `\n\n[The server's search engine failed (${String(e.message).slice(0, 200)}); these results are Bing's page.]`;
 				}
 				if (!r) {
-					r = await searchWeb(params.query, count, signal);
+					r = await searchWeb(withSites(params.query, allowed, blocked), count, signal);
 					if (recent) note += `\n\n[Bing's page cannot limit results to the last ${recent}: check the dates yourself.]`;
 					if (cfg.browser !== false) note += "\n\n[These come from Bing's page as a program sees it. If they are off-topic, " +
 						"search in the browser (agent-browser) instead.]";
