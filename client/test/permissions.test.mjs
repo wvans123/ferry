@@ -195,6 +195,15 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	mkdirSync(join(proj, "new", "deep"), { recursive: true });
 	writeFileSync(join(proj, "new", "deep", "a.txt"), "x");
 	assert.equal(v("rm -rf new").action, "allow");
+	assert.equal(v(`rm ${join(proj, "new", "deep", "a.txt")}`).action, "allow"); // absolute paths are paths, not /switches
+	assert.equal(v(`rm ${join(proj, "old.txt")}`).action, "ask");
+	assert.equal(v("del /s /q old.txt").action, "ask");
+	assert.deepEqual(P.deleteTargets("rm /c/x/new.txt"), ["/c/x/new.txt"]);
+	assert.deepEqual(P.deleteTargets("del /s /q old"), ["old"]);
+	assert.equal(P.gitBashPath("/c/Users/me/a.txt", true), "c:/Users/me/a.txt");
+	assert.equal(P.gitBashPath("/d", true), "d:/");
+	assert.equal(P.gitBashPath("/cd/x", true), "/cd/x");
+	assert.equal(P.gitBashPath("/c/x", false), "/c/x");
 	assert.equal(v("rm old.txt", { start: 0, made: new Set() }).action, "allow"); // born after the session started
 	assert.equal(v("rm -rf mixed", { start: 0, made: new Set() }).action, "allow");
 	P.noteCreated(session, join(proj, "mixed2"));

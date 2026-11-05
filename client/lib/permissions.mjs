@@ -228,16 +228,20 @@ export function deleteTargets(cmd) {
 		if (w.some((x) => prog(x) === "rimraf") || NET_DELETE.test(seg)) return null;
 		if (/^(python[\d.]*|py|node|deno|bun)$/.test(c) && args.some((a) => /^(-c|-e|-p|--eval|--print|eval)$/.test(a)) && SCRIPT_DELETE.test(seg)) return null;
 		if (!DELETERS.has(c)) continue;
-		if (moved || !args.some((a) => !/^[-/]/.test(a))) return null; // no target named: a pipeline feeds it (ls | Remove-Item)
+		if (moved) return null;
+		// -rf, -Recurse, -Path; /s /q only for cmd's own del/rd (elsewhere /c/Users/... is a Git Bash path)
+		const isSwitch = (a) => a.startsWith("-") || (/^(del|erase|rd|rmdir)$/.test(c) && /^\/[a-z](:\S*)?$/i.test(a));
+		const before = out.length;
 		let opts = true;
 		for (let i = 0; i < args.length; i++) {
 			const a = args[i];
 			if (opts && a === "--") opts = false;
 			else if (opts && /^-(include|exclude|filter)$/i.test(a)) return null;
 			else if (opts && /^-(erroraction|ea|warningaction|wa|stream)$/i.test(a)) i++;
-			else if (opts && (a.startsWith("-") || /^\/[a-z](:\S*)?$/i.test(a))) continue; // -rf, -Recurse, -Path, /s /q
+			else if (opts && isSwitch(a)) continue;
 			else out.push(...(c === "rm" || c === "unlink" ? [a] : a.split(","))); // PowerShell: a,b
 		}
+		if (out.length === before) return null; // no target named: a pipeline feeds it (ls | Remove-Item)
 	}
 	if (out.some((t) => !t || /[*?[\]{}$%`~]|^\(/.test(t))) return null;
 	if (!out.length && DELETES.some((re) => re.test(String(cmd ?? "")))) return null; // a delete inside cmd /c, sh -c...
@@ -247,6 +251,8 @@ export function deleteTargets(cmd) {
 /** A new ferry session: in bypass, what it makes may be deleted without asking. */
 export const newSession = () => ({ start: Date.now() - 50, made: new Set() }); // file clocks lag Date.now() by a few ms
 const keyOf = (p) => (WIN ? resolve(p).toLowerCase() : resolve(p));
+/** Git Bash writes C:\x as /c/x; on Windows that is what it means */
+export const gitBashPath = (t, win = WIN) => (win ? t.replace(/^\/([a-z])(\/|$)/i, "$1:/") : t);
 
 /** Remember a path a file tool is about to create, with the folders it creates for it. */
 export function noteCreated(session, abs) {
@@ -277,7 +283,7 @@ export function unsafeDeleteOf(cmd, cwd, dirs, session = { start: Infinity, made
 	const targets = deleteTargets(cmd);
 	if (targets === null) return "deletes files Ferry cannot list (a pattern, a variable, find/xargs, a script, another folder or git clean)";
 	for (const t of targets) {
-		const abs = resolve(cwd, t);
+		const abs = resolve(cwd, gitBashPath(t));
 		if (!dirs.some((d) => insideProject(d, abs))) return `deletes ${t}, which is outside the project`;
 		if (!madeThisSession(abs, session)) return `deletes ${t}, which Ferry did not create in this session`;
 	}
