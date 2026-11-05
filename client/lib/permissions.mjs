@@ -5,16 +5,17 @@
 //   default     ask before changing files and before commands that are not read-only
 //   acceptEdits file changes inside the project folder go ahead; commands still ask
 //   plan        read-only: reading, searching and read-only commands only; the agent presents a plan
-//   bypass      nothing asks (blocked paths and deny rules still apply)
+//   bypass      nothing asks but uploads and deletes of what this session did not make (blocked paths, deny rules apply)
 //
 // Rules: "allow", "ask" and "deny" lists of entries like  bash(git log*)  edit(src/**)  powershell  web_fetch
 //   user level      <FERRY_HOME>/permissions.json                      (every project)
 //   project, yours  <FERRY_HOME>/projects/<folder>-<hash>/permissions.json   ("always allow" answers go here)
 //   project, team   <project>/.ferry/permissions.json                  (read only; can be committed to the repo)
 // deny beats ask beats allow. Read-only commands (git status, dir, ls, rg...) are allowed without a rule;
-// dangerous ones (rm -rf, git push --force, ...) always ask unless the mode is bypass.
+// dangerous ones (rm -rf, git push --force, ...) always ask unless the mode is bypass. Uploads ask in every mode; in
+// bypass a delete goes ahead only when everything it deletes was made in this ferry session.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FERRY_HOME } from "./config.mjs";
 
@@ -154,6 +155,8 @@ const DANGERS = [
 	[/:\(\)\s*\{\s*:\|:&\s*\};:/, "fork bomb"],
 ];
 
+const DELETES = DANGERS.filter(([, why]) => why.startsWith("deletes")).map(([re]) => re);
+
 /** Why a command is dangerous, or "" when it is not. */
 export function dangerOf(cmd) {
 	for (const [re, why] of DANGERS) if (re.test(cmd)) return why;
@@ -166,6 +169,126 @@ export function prefixRule(tool, seg) {
 	const multi = /^(git|npm|pnpm|yarn|npx|python3?|py|pip3?|node|cargo|go|dotnet|mvn|gradlew?|make|docker|kubectl|uv|poetry)$/i;
 	const take = w.length > 1 && multi.test(w[0]) && !w[1].startsWith("-") ? 2 : 1;
 	return `${tool}(${w.slice(0, take).join(" ")}*)`;
+}
+
+// ---------- uploads and deletes ----------
+
+const URL_RE = /\b(?:https?|ftps?|sftp|scp|rsync):\/\/[^\s"'<>]+/i;
+const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i; // data sent there stays on this computer
+const CURL_ARG = new Set("AbcCdDeEFHKmoPQrtTuUwxXyYz"); // curl short options that take a value
+const prog = (w) => w.replace(/^.*[\\/(]/, "").toLowerCase().replace(/\.exe$/, "");
+const urlHost = (a) => hostOf(URL_RE.exec(a)?.[0] ?? "");
+// user@host:path (scp, rsync), not C:\path
+const remoteHost = (a) => urlHost(a) || (/^(?:[^@\s/\\]+@)?([\w.-]{2,}|\[[^\]]+\]):/.exec(a)?.[1] ?? "");
+
+/** Where a command sends local data, as "sends data from this computer to <host>", or "". Downloads are not uploads. */
+export function uploadOf(cmd) {
+	for (const seg of splitCommand(String(cmd ?? ""))) {
+		const w = words(seg);
+		const at = w.findIndex((x) => /^(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|scp|rsync|sftp|ftp)$/.test(prog(x)));
+		if (at < 0) continue;
+		const c = prog(w[at]);
+		const args = w.slice(at + 1);
+		const plain = args.filter((a) => !a.startsWith("-"));
+		let host = "";
+		if (c === "scp" || c === "rsync") host = plain.length > 1 ? remoteHost(plain.at(-1)) : ""; // the destination is remote
+		else if (c === "sftp" || c === "ftp") host = plain.map(remoteHost).find(Boolean) || hostOf(plain[0] ?? "");
+		else {
+			const sends = args.some((a, i) => /^--(data|form|upload-file|json|post-data|post-file|body-data|body-file)/i.test(a)
+				|| (c === "curl" && /^-[a-zA-Z]+$/.test(a) && "dFT".includes([...a.slice(1)].find((ch) => CURL_ARG.has(ch)) ?? "x"))
+				|| /^-(infile|body|form)(:|$)/i.test(a) // PowerShell
+				|| (/^-method(:|$)/i.test(a) && /\b(post|put|patch)$/i.test(a.includes(":") ? a : (args[i + 1] ?? ""))));
+			const hosts = args.map(urlHost).filter(Boolean);
+			const proxied = args.some((a) => /^(-x|--proxy|-proxy)$/i.test(a));
+			if (sends) host = hosts.find((h) => !LOCAL.test(h)) || (proxied || !hosts.length ? "a network address" : "");
+		}
+		if (host && !LOCAL.test(host)) return `sends data from this computer to ${host}`;
+	}
+	return "";
+}
+
+const DELETERS = new Set(["rm", "rmdir", "rd", "del", "erase", "unlink", "remove-item", "ri"]);
+// deletes inside a one-liner: python -c, node -e, PowerShell .NET calls
+const SCRIPT_DELETE = /shutil\.rmtree|\bos\.(remove|unlink|rmdir|removedirs)\b|\.(unlink|rmdir)\(|\b(rmSync|unlinkSync|rmdirSync)\b|\bfs(\.promises)?\.(rm|unlink|rmdir)\b/;
+const NET_DELETE = /\[(system\.)?io\.(file|directory)\]::delete/i;
+
+/** The paths a command deletes, as written: [] when it deletes nothing, null when it deletes something it cannot list. */
+export function deleteTargets(cmd) {
+	const out = [];
+	let moved = false; // after a cd, relative paths no longer mean what they say
+	for (const seg of splitCommand(String(cmd ?? ""))) {
+		let w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+		while (/^(sudo|doas|nohup|nice|time|command|exec|env)$/.test(prog(w[0] ?? ""))) w = w.slice(1).filter((x, i, a) => !a.slice(0, i + 1).every((y) => y.startsWith("-")));
+		const c = prog(w[0] ?? "");
+		const args = w.slice(1);
+		if (/^(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)$/.test(c)) moved = true;
+		if (c === "git" && args.includes("clean") && args.some((a) => /^-[a-z]*f|^--force/i.test(a))) return null;
+		if (c === "find" && args.some((a, i) => a === "-delete" || (/^-(exec|execdir|ok|okdir)$/.test(a) && DELETERS.has(prog(args[i + 1] ?? ""))))) return null;
+		if (c === "xargs" && args.some((a) => DELETERS.has(prog(a)))) return null;
+		if (w.some((x) => prog(x) === "rimraf") || NET_DELETE.test(seg)) return null;
+		if (/^(python[\d.]*|py|node|deno|bun)$/.test(c) && args.some((a) => /^(-c|-e|-p|--eval|--print|eval)$/.test(a)) && SCRIPT_DELETE.test(seg)) return null;
+		if (!DELETERS.has(c)) continue;
+		if (moved) return null;
+		// -rf, -Recurse, -Path; /s /q only for cmd's own del/rd (elsewhere /c/Users/... is a Git Bash path)
+		const isSwitch = (a) => a.startsWith("-") || (/^(del|erase|rd|rmdir)$/.test(c) && /^\/[a-z](:\S*)?$/i.test(a));
+		const before = out.length;
+		let opts = true;
+		for (let i = 0; i < args.length; i++) {
+			const a = args[i];
+			if (opts && a === "--") opts = false;
+			else if (opts && /^-(include|exclude|filter)$/i.test(a)) return null;
+			else if (opts && /^-(erroraction|ea|warningaction|wa|stream)$/i.test(a)) i++;
+			else if (opts && isSwitch(a)) continue;
+			else out.push(...(c === "rm" || c === "unlink" ? [a] : a.split(","))); // PowerShell: a,b
+		}
+		if (out.length === before) return null; // no target named: a pipeline feeds it (ls | Remove-Item)
+	}
+	// ~ only at the start is the home folder; inside a name it is a Windows short name (C:/Users/RUNNER~1/...)
+	if (out.some((t) => !t || /[*?[\]{}$%`]|^~|^\(/.test(t))) return null;
+	if (!out.length && DELETES.some((re) => re.test(String(cmd ?? "")))) return null; // a delete inside cmd /c, sh -c...
+	return out;
+}
+
+/** A new ferry session: in bypass, what it makes may be deleted without asking. */
+export const newSession = () => ({ start: Date.now() - 50, made: new Set() }); // file clocks lag Date.now() by a few ms
+const keyOf = (p) => (WIN ? resolve(p).toLowerCase() : resolve(p));
+/** Git Bash writes C:\x as /c/x; on Windows that is what it means */
+export const gitBashPath = (t, win = WIN) => (win ? t.replace(/^\/([a-z])(\/|$)/i, "$1:/") : t);
+
+/** Remember a path a file tool is about to create, with the folders it creates for it. */
+export function noteCreated(session, abs) {
+	for (let p = resolve(abs); !existsSync(p); p = resolve(p, "..")) {
+		session.made.add(keyOf(p));
+		if (p === resolve(p, "..")) break;
+	}
+}
+
+/** True when ferry made this path in this session (born after it started, or created by a file tool) and, for a
+ *  folder, everything in it. A path that does not exist yet can only be made by this command. Symlinks: never. */
+export function madeThisSession(p, session, budget = { n: 5000 }) {
+	if (--budget.n < 0) return false;
+	let st;
+	try {
+		st = lstatSync(p);
+	} catch (e) {
+		return e.code === "ENOENT";
+	}
+	if (st.isSymbolicLink()) return false;
+	// no birth time (some Linux file systems): only what the file tools noted counts, since ctime changes on every edit
+	if (!session.made.has(keyOf(p)) && !(st.birthtimeMs > 0 && st.birthtimeMs >= session.start)) return false;
+	return !st.isDirectory() || readdirSync(p).every((e) => madeThisSession(join(p, e), session, budget));
+}
+
+/** Why a delete in bypass mode still needs the user, or "" when it only deletes what this session made. */
+export function unsafeDeleteOf(cmd, cwd, dirs, session = { start: Infinity, made: new Set() }) {
+	const targets = deleteTargets(cmd);
+	if (targets === null) return "deletes files Ferry cannot list (a pattern, a variable, find/xargs, a script, another folder or git clean)";
+	for (const t of targets) {
+		const abs = resolve(cwd, gitBashPath(t));
+		if (!dirs.some((d) => insideProject(d, abs))) return `deletes ${t}, which is outside the project`;
+		if (!madeThisSession(abs, session)) return `deletes ${t}, which Ferry did not create in this session`;
+	}
+	return "";
 }
 
 // ---------- rules ----------
@@ -313,7 +436,7 @@ export function browserPrivacyOf(cmd) {
 	return "";
 }
 
-export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [] }) {
+export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [], session }) {
 	const shell = SHELL.has(tool);
 	const target = PATH_TOOLS.has(tool) ? input.path : shell ? input.command : undefined;
 	const low = typeof target === "string" ? target.toLowerCase() : "";
@@ -334,9 +457,13 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
 			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
 	}
-	const privacy = shell ? browserPrivacyOf(cmd) : "";
-	if (privacy) return { action: "ask", danger: privacy, segments }; // even in full access; no "always allow"
-	if (mode === "bypass") return { action: "allow" };
+	// asked every time, even in full access and over allow rules; a "danger" prompt has no "always allow"
+	const always = shell ? browserPrivacyOf(cmd) || uploadOf(cmd) : "";
+	if (always) return { action: "ask", danger: always, segments, always: true };
+	if (mode === "bypass") {
+		const del = shell ? unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session) : "";
+		return del ? { action: "ask", danger: del, segments, always: true } : { action: "allow" };
+	}
 
 	const danger = shell ? dangerOf(cmd) : "";
 	if (danger) return { action: "ask", danger, segments };
