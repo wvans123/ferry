@@ -208,19 +208,27 @@ export function uploadOf(cmd) {
 }
 
 const DELETERS = new Set(["rm", "rmdir", "rd", "del", "erase", "unlink", "remove-item", "ri"]);
+// deletes inside a one-liner: python -c, node -e, PowerShell .NET calls
+const SCRIPT_DELETE = /shutil\.rmtree|\bos\.(remove|unlink|rmdir|removedirs)\b|\.(unlink|rmdir)\(|\b(rmSync|unlinkSync|rmdirSync)\b|\bfs(\.promises)?\.(rm|unlink|rmdir)\b/;
+const NET_DELETE = /\[(system\.)?io\.(file|directory)\]::delete/i;
 
 /** The paths a command deletes, as written: [] when it deletes nothing, null when it deletes something it cannot list. */
 export function deleteTargets(cmd) {
 	const out = [];
 	let moved = false; // after a cd, relative paths no longer mean what they say
 	for (const seg of splitCommand(String(cmd ?? ""))) {
-		const w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+		let w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+		while (/^(sudo|doas|nohup|nice|time|command|exec|env)$/.test(prog(w[0] ?? ""))) w = w.slice(1).filter((x, i, a) => !a.slice(0, i + 1).every((y) => y.startsWith("-")));
 		const c = prog(w[0] ?? "");
 		const args = w.slice(1);
 		if (/^(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)$/.test(c)) moved = true;
 		if (c === "git" && args.includes("clean") && args.some((a) => /^-[a-z]*f|^--force/i.test(a))) return null;
+		if (c === "find" && args.some((a, i) => a === "-delete" || (/^-(exec|execdir|ok|okdir)$/.test(a) && DELETERS.has(prog(args[i + 1] ?? ""))))) return null;
+		if (c === "xargs" && args.some((a) => DELETERS.has(prog(a)))) return null;
+		if (w.some((x) => prog(x) === "rimraf") || NET_DELETE.test(seg)) return null;
+		if (/^(python[\d.]*|py|node|deno|bun)$/.test(c) && args.some((a) => /^(-c|-e|-p|--eval|--print|eval)$/.test(a)) && SCRIPT_DELETE.test(seg)) return null;
 		if (!DELETERS.has(c)) continue;
-		if (moved) return null;
+		if (moved || !args.some((a) => !/^[-/]/.test(a))) return null; // no target named: a pipeline feeds it (ls | Remove-Item)
 		let opts = true;
 		for (let i = 0; i < args.length; i++) {
 			const a = args[i];
@@ -267,7 +275,7 @@ export function madeThisSession(p, session, budget = { n: 5000 }) {
 /** Why a delete in bypass mode still needs the user, or "" when it only deletes what this session made. */
 export function unsafeDeleteOf(cmd, cwd, dirs, session = { start: Infinity, made: new Set() }) {
 	const targets = deleteTargets(cmd);
-	if (targets === null) return "deletes files Ferry cannot check (a pattern, a variable, another folder or git clean)";
+	if (targets === null) return "deletes files Ferry cannot list (a pattern, a variable, find/xargs, a script, another folder or git clean)";
 	for (const t of targets) {
 		const abs = resolve(cwd, t);
 		if (!dirs.some((d) => insideProject(d, abs))) return `deletes ${t}, which is outside the project`;

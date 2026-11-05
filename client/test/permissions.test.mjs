@@ -161,8 +161,19 @@ test("delete targets are listed, or null when they cannot be", () => {
 	assert.deepEqual(P.deleteTargets("Remove-Item -Path 'my file.txt'"), ["my file.txt"]);
 	assert.deepEqual(P.deleteTargets("npm test"), []);
 	for (const c of ["rm -rf *.log", "rm -rf $DIR", "rm -rf ~/x", "cd .. && rm -rf x", "git clean -fdx", "Remove-Item x -Include *.tmp",
-		"cmd /c \"rd /s /q out\"", "del %TEMP%\\x"]) {
+		"cmd /c \"rd /s /q out\"", "del %TEMP%\\x",
+		"find . -name '*.pyc' -delete", "find build -type f -exec rm {} +", "find . -execdir /bin/rm -f {} ;", "npx rimraf dist",
+		"rimraf build", "ls *.log | xargs rm", "find . -name x | xargs -0 rm -f", "Get-ChildItem *.tmp | Remove-Item",
+		"python -c \"import shutil; shutil.rmtree('build')\"", "python3 -c 'import os; os.remove(\"a.txt\")'",
+		"py -c \"from pathlib import Path; Path('a').unlink()\"", "node -e \"require('fs').rmSync('dist', {recursive: true})\"",
+		"node -e \"fs.unlinkSync('a')\"", "[System.IO.File]::Delete('C:\\x\\a.txt')"]) {
 		assert.equal(P.deleteTargets(c), null, c);
+	}
+	assert.deepEqual(P.deleteTargets("sudo rm old.txt"), ["old.txt"]);
+	for (const c of ["find . -name x", "find . -name '*.js' -exec grep -l foo {} +", "ls | xargs wc -l", "python -c \"print(1)\"",
+		"node -e \"console.log(require('fs').readdirSync('.'))\"", "python script.py", "grep -r shutil.rmtree src",
+		"rg 'fs.rmSync' client"]) {
+		assert.deepEqual(P.deleteTargets(c), [], c);
 	}
 });
 
