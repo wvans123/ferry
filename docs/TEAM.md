@@ -29,7 +29,7 @@ Ferry 服务端（家里电脑）── 每次上传不超过 1 MB，key 只在�
    ```
    ferry team start
    ```
-   第一次它会从 npm 下载 Paperclip 并完成设置（一分钟左右，数据放在 `~/.paperclip`，自带数据库，不用另装），以后每次就是启动。看板在 http://127.0.0.1:3100 ，只在本机打开、不用登录。这个窗口开着团队就在，Ctrl+C 停止。
+   第一次它会从 npm 下载 Paperclip 并完成设置（一分钟左右，数据放在 `~/.paperclip`，自带数据库，不用另装），以后每次就是启动。看板在 http://127.0.0.1:3100 ，起来后自动在浏览器里打开（不想自动打开加 `--no-open`），只在本机打开、不用登录。这个窗口开着团队就在，Ctrl+C 停止。
    它会自动关掉 Paperclip 的统计上报和公告拉取。用的是 Ferry 测过的 Paperclip 版本；想用最新版：`ferry team start --version latest`。
 
 Paperclip 自己不调用模型；所有模型调用都由 ferry 发给你的 Ferry 服务端。

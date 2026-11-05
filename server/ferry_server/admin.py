@@ -29,6 +29,7 @@ from . import presets as presets_mod
 from .config import (Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
 from . import globalmem
 from . import report as reports
+from . import search as web_search
 
 PAGE = Path(__file__).with_name("admin.html")
 PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded")
@@ -143,6 +144,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
             "shared_memory": cfg.shared_memory,
             "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "github_repo": cfg.github_repo, "github_token": bool(reports.github_token(cfg)),
+            "search_engine": web_search.engine(cfg), "search_key": bool(web_search.api_key(cfg)),
+            "search_engines": web_search.ENGINES,
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
             "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "expose": cfg.expose_models},
@@ -265,6 +268,10 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.github_repo = str(b["github_repo"]).strip()
         if "github_token" in b:
             reports.save_github_token(cfg, str(b["github_token"] or ""))
+        if "search_engine" in b and (b["search_engine"] or "") in ("", *web_search.ENGINES):
+            cfg.search_engine = b["search_engine"] or ""
+        if "search_key" in b:
+            web_search.save_key(cfg, str(b["search_key"] or ""))
         if "record_details" in b:
             cfg.record_details = bool(b["record_details"])
             if not cfg.record_details:
@@ -417,6 +424,21 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             lnk.unlink(missing_ok=True)
         return status()
 
+    @app.post("/admin/api/search/test")
+    async def test_search(request: Request):
+        if not allowed(request, True):
+            return denied()
+        if not web_search.ready(cfg):
+            return {"ok": False, "error": "先选搜索服务并填 Key"}
+        try:
+            async with httpx.AsyncClient() as c:
+                got = await web_search.search(cfg, c, "Ferry coding agent", 3)
+        except httpx.HTTPStatusError as e:
+            return {"ok": False, "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:300]}
+        return {"ok": bool(got), "results": got[:3], **({} if got else {"error": "没有结果"})}
+
     @app.post("/admin/api/open-folder")
     async def open_folder(request: Request):
         if not allowed(request, True):
@@ -445,6 +467,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             key = p.api_key
             views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url, "api": p.api,
                            "max_concurrent": p.max_concurrent, "rpm": p.rpm, "cooldown": p.cooldown, "fallback": p.fallback,
+                           "separate": p.separate,
                            "api_key_env": p.api_key_env, "no_key": p.no_key,
                            "key_tail": key[-4:] if key else "", "key_source": (
                                "env" if p.api_key_env and os.environ.get(p.api_key_env) else
@@ -541,7 +564,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                             (pre.get("api", "openai") == "openai" and p.get("api") in ("openai", "openai-responses")) else pre.get("api", "openai"),
                      "max_concurrent": max(0, int(p.get("max_concurrent") or 0)),
                      "rpm": max(0, int(p.get("rpm") or 0)), "cooldown": max(1, int(p.get("cooldown") or 60)),
-                     "fallback": str(p.get("fallback") or ""),
+                     "fallback": str(p.get("fallback") or ""), "separate": bool(p.get("separate")),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:
                 return JSONResponse({"error": f"{entry['name']}：接口地址不能为空"}, 400)

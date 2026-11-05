@@ -25,3 +25,18 @@ test("a team member has a memory of its own besides the shared project memory", 
 	assert.match(memorySection(cwd), /shared by the whole team/);
 	delete process.env.PAPERCLIP_AGENT_ID;
 });
+
+test("ferry team start opens the board once it answers, and gives up when Paperclip stops", async () => {
+	const { whenUp } = await import("../lib/teamcli.mjs");
+	const http = await import("node:http");
+	let calls = 0;
+	const s = http.createServer((req, res) => {
+		calls++;
+		res.writeHead(calls < 3 ? 503 : 200).end("{}");
+	});
+	await new Promise((r) => s.listen(0, "127.0.0.1", r));
+	assert.equal(await whenUp(`http://127.0.0.1:${s.address().port}`, () => true, 10), true);
+	assert.equal(calls, 3);
+	s.close();
+	assert.equal(await whenUp("http://127.0.0.1:9", () => false, 10), false);
+});

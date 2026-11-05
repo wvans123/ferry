@@ -9,7 +9,7 @@ A Claude-Code-style coding agent for locked-down Windows PCs. The agent runs on 
 ```
 C:\my-project> ferry
 
-  Ferry v0.28.0  server ferry.example.com
+  Ferry v0.29.0  server ferry.example.com
   Files and history stay on this machine. The server builds the prompt and calls the model.
   memory: 3 (/memory)  ·  subagents on  ·  /help for commands (/goal /tasks /cost /rewind)
 
@@ -114,7 +114,7 @@ agent 自己会用的能力：
 - 读、搜、改代码，跑命令；长输出存成文件，只给模型看头尾。
 - 多步的活先列待办清单，做一步勾一步；大的搜索交给子 agent，几十个文件可以批量派给多个子 agent。
 - 后台跑开发服务器、长时间的测试。
-- 在工作电脑上搜索、读网页，用 curl 下载文件（比如 3GPP 的规范和文稿），走公司代理和证书。
+- 上网查资料：换几种说法搜、读原文、写出处，大问题交给调研子 agent 并行查；网页在工作电脑上读，走公司代理和证书。服务端可以接一个搜索 API（[网页搜索](docs/SERVER.md#网页搜索)）。用 curl 下载文件，断了能续。
 - 用电脑上的 Edge 打开靠 JavaScript 生成内容的网页，点击、填表、登录后操作。
 - 读写 Word（含修订和批注）、Excel、PowerPoint、PDF，不需要装 Office。
 - 看图片，画图片。

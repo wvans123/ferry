@@ -33,6 +33,7 @@ from .config import Config, refresh_models
 from .devices import Devices
 from . import globalmem
 from . import report as reports
+from . import search as web_search
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
@@ -334,7 +335,9 @@ def create_app(cfg: Config) -> FastAPI:
     def describe(m, mid=None) -> dict:
         return {"id": mid or m.id, "contextWindow": limit_of(m), "maxTokens": m.max_tokens,
                 "ready": m.ready, "keyEnv": m.api_key_env, "model": m.model, "api": m.api, "vision": m.vision,
-                "price": m.price}
+                "price": m.price,
+                # listed on its own next to a same-named model: the client shows whose it is
+                **({"via": cfg.providers[m.provider].name} if m.separate and m.provider in cfg.providers else {})}
 
     def reload() -> None:
         err = refresh_models(cfg)
@@ -369,7 +372,8 @@ def create_app(cfg: Config) -> FastAPI:
             auto["providers"] = len(shared[d.id])
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
         return {"models": listed, "sessionStore": cfg.session_store,
-                "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])}
+                "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
+                + (["search"] if web_search.ready(cfg) else [])}
 
     @app.post("/v1/ferry/image")
     async def image(request: Request):
@@ -944,4 +948,5 @@ def create_app(cfg: Config) -> FastAPI:
     from .admin import mount_admin
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
     reports.mount(app, cfg, client, lambda **row: write(audit_log, **row))
+    web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     return app

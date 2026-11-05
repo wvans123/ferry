@@ -41,7 +41,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模块 | 做什么 | 代码 | 开关 | 自测 |
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端 | `client/lib/memory.mjs`、`server/ferry_server/globalmem.py` | `memory`；全局记忆在管理页 | F28、F56 |
-| 子 agent | `task`、`task_batch` | `client/lib/subagent.mjs` | `subagents`、`maxParallel` | F29、F49 |
+| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、general | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49 |
 | 工具输出 | 待办、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48 |
 | /goal | 一直做到完成 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41 |
 | 后台任务 | `job_start` 等 | `client/lib/jobs.mjs` | — | F42 |
@@ -49,6 +49,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
 | 提问 | `ask_user` | `client/lib/ask.mjs` | — | F65 |
 | 联网 | `web_fetch`、`web_search`、网站黑名单 | `client/lib/web.mjs` | `web`、`blockedSites` | F35、F57、F64 |
+| 搜索服务 | `web_search` 经服务端的搜索 API（Tavily、Brave、博查），Key 在服务端 | `server/ferry_server/search.py`；客户端在 `web.mjs` | 管理页 → 设置 → 网页搜索；不设就读 Bing 的结果页 | F66 |
 | 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
 | Office | 读写 Word、Excel、PowerPoint、PDF | `client/lib/office.mjs`、`client/skills/office/` | — | F50 |
@@ -57,4 +58,4 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |
 | 问题报告 | `/report` 经服务端发 GitHub issue | `client/lib/report.mjs`、`server/ferry_server/report.py` | 服务端设了令牌才发到 GitHub | 单元测试 |
 
-`server/ferry_server/report.py` 是第一个按 `mount()` 写法接入的服务端模块。其他服务端功能的接口还写在 `app.py` 里，以后动到哪个就顺手搬成这个样子。
+`server/ferry_server/report.py` 是第一个按 `mount()` 写法接入的服务端模块，`search.py` 是第二个。其他服务端功能的接口还写在 `app.py` 里，以后动到哪个就顺手搬成这个样子。

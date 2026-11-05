@@ -5,7 +5,7 @@
 // A subagent runs inside this ferry process, talks to the same Ferry server (as its own conversation) and
 // asks for approval in the main window, exactly like the main agent.
 //
-// Built in: explore (read-only search) and general (same tools as the main agent).
+// Built in: explore (read-only search), research (the web) and general (same tools as the main agent).
 // Your own: Markdown files with a name/description/tools header in
 //   <project>/.ferry/agents/, <project>/.claude/agents/ (Claude Code's format) or <FERRY_HOME>/agents/.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -54,6 +54,29 @@ Finish with a compact report for an agent who has not seen these files:
 - short code excerpts only where they matter.`,
 	},
 	{
+		name: "research",
+		description: "Finds something out on the web: searches several ways, reads the sources, follows them to the " +
+			"primary ones, checks dates, and returns the findings with their addresses. Give it one question (or one part " +
+			"of a bigger one); start several with task_batch for independent parts.",
+		tools: ["web_search", "web_fetch", "read", "grep", "find", "ls", "office_read", "bash"],
+		prompt: `You are a researcher answering one question from the web, in a fresh context. Nobody sees the pages you
+read; only your report goes back.
+- Plan two or three different searches before the first one (other words, the other language, the official name,
+  site: for the source that would know). Use recent when the answer changes over time.
+- Open the most promising results with web_fetch; snippets are not evidence. Follow links to the primary source.
+- A page that reads empty is built by JavaScript: open it with agent-browser if the browser skill is there. If the
+  search results stay off-topic, search in the browser instead (open the search engine's address, then read it).
+- Note the date and version of what you read. Look for a second source on the key facts.
+- Use bash only to read (agent-browser, curl to look at something); do not download into the project unless the
+  task says so.
+- Stop when the question is answered, or after about 15 pages if it cannot be.
+Finish with a report for an agent who has read nothing:
+- the answer, in a few sentences;
+- the findings, each with the address it comes from (and its date when it matters);
+- where sources disagree, and what is still unknown.
+Keep facts and your own conclusions apart.`,
+	},
+	{
 		name: "general",
 		description: "Does a self-contained piece of work with the same tools as you (reading, editing, running commands; " +
 			"the user approves changes as usual). Use it for multi-step side tasks whose details the main conversation does not need.",
@@ -69,10 +92,10 @@ function parseAgentFile(file) {
 	if (!m) return null;
 	const head = Object.fromEntries(m[1].split(/\r?\n/).map((l) => /^(\w+)\s*:\s*(.*)$/.exec(l)).filter(Boolean)
 		.map(([, k, v]) => [k.toLowerCase(), v.trim().replace(/^["']|["']$/g, "")]));
-	if (!head.name || !head.description) return null;
+	if (!head.name) return null;
 	const tools = head.tools ? head.tools.split(/[,\s]+/).map((t) => t.trim().toLowerCase()).filter(Boolean)
 		.map((t) => ({ glob: "find", bash: "bash", read: "read", edit: "edit", write: "write", grep: "grep", ls: "ls" })[t] ?? t) : null;
-	// model: a model id the Ferry server lists (e.g. deepseek-flash for cheap searches); empty = the main agent's model
+	// model: a model id the Ferry server lists (e.g. a thinking model for research); empty = the main agent's model
 	return { name: head.name, description: head.description, tools, model: head.model || "", prompt: m[2].trim(), file };
 }
 
@@ -84,7 +107,10 @@ export function discoverAgents(cwd) {
 		for (const f of readdirSync(dir).filter((n) => n.endsWith(".md")).sort()) {
 			try {
 				const a = parseAgentFile(join(dir, f));
-				if (a) byName.set(a.name, a);
+				const had = a && byName.get(a.name);
+				// a file named like a built-in agent with no text of its own only changes its model (or tools)
+				if (had && !a.prompt) byName.set(a.name, { ...had, model: a.model || had.model, tools: a.tools ?? had.tools, file: a.file });
+				else if (a?.description) byName.set(a.name, a);
 			} catch {
 				// unreadable file: skip it
 			}
@@ -94,7 +120,7 @@ export function discoverAgents(cwd) {
 }
 
 const Params = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Which agent: explore, general, or one listed in the description. Default general." })),
+	agent: Type.Optional(Type.String({ description: "Which agent: explore, research, general, or one listed in the description. Default general." })),
 	description: Type.String({ description: "3 to 6 words saying what the subagent does (shown to the user)" }),
 	prompt: Type.String({ description: "The complete task. The subagent sees nothing of this conversation, so include " +
 		"every detail it needs and say exactly what to report back." }),
@@ -267,6 +293,8 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 		resourceLoader: loader,
 		sessionManager: SessionManager.inMemory(cwd),
 		model: pickModel(agent, ctx),
+		// it thinks as much as the main conversation does (pi clamps the level to what the model can do)
+		thinkingLevel: pi.getThinkingLevel?.(),
 		tools,
 	});
 	const steps = [];

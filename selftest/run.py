@@ -896,6 +896,20 @@ def check_web_browser(root: Path, work: Path) -> None:
         (s.home / "config.json").unlink()
         check("F35 联网工具", client_ok and gate_ok and off_ok,
               "在工作电脑上搜索和读网页；公司网关要确认的网站会说明去哪确认；设成 off 时没有联网工具")
+    finally:
+        s.close()
+    # the server has a search API (its key stays there): web_search asks the server, pages are still read here
+    api = {"FERRY_SEARCH": "tavily", "FERRY_SEARCH_KEY": "tvly-test", "FERRY_SEARCH_API_TAVILY": "http://127.0.0.1:9100/tavily"}
+    s = Stack(root.parent / "web-search", work, "agent", server_env={**pages, **api})
+    try:
+        before = len(jsonl(s.upstream))
+        c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)
+        rows = jsonl(s.upstream)[before:]
+        asked = [r for r in rows if r.get("query") == "ferry" and r.get("search_depth")]
+        seen = "Ferry page found by the search API" in json.dumps(rows[-1], ensure_ascii=False)
+        ok = c1 == 0 and "pelican-42" in o1 and asked and seen
+        check("F66 搜索服务", ok, "服务端设了搜索 API（Key 在服务端）：工作电脑的 web_search 只把搜索词发给服务端，拿回结果，"
+              "网页仍在工作电脑上读" if ok else f"code={c1} asked={len(asked)} seen={seen} {o1[-300:]!r}")
         browser = find_browser()
         if not browser:
             print("  SKIP  F36 浏览器（这台机器上没有 Chrome / Edge）")

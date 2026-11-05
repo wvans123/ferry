@@ -27,8 +27,11 @@ LONG_PAUSE = 300      # ... after a key or model problem (401, 402, 403, 404)
 
 
 def members(cfg: Config, m: ModelConfig) -> list[ModelConfig]:
-    """m and the other ready models with the same name and API, m first."""
-    same = [x for x in cfg.models.values() if x.id != m.id and x.api == m.api and norm(x.model) == norm(m.model) and x.ready]
+    """m and the other ready models with the same name and API, m first. A separate model stands alone."""
+    if getattr(m, "separate", False):
+        return [m]
+    same = [x for x in cfg.models.values() if x.id != m.id and not getattr(x, "separate", False) and x.api == m.api
+            and norm(x.model) == norm(m.model) and x.ready]
     return [m, *same]
 
 

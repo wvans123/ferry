@@ -57,7 +57,10 @@ export function prepareBrowser(cfg) {
 		return { on: false, why: "off (ferry config set browser true)" };
 	}
 	const src = packagedBinary();
-	if (!src) return { on: false, why: "agent-browser is not installed with this Ferry (reinstall from the package)" };
+	if (!src) {
+		return { on: false, why: "agent-browser is missing from this Ferry's files. Run from a source folder: npm ci there; " +
+			"installed: ferry update, or install the full ferry-windows zip again" };
+	}
 	const browser = process.env.AGENT_BROWSER_EXECUTABLE_PATH || findBrowser(cfg);
 	if (!browser) return { on: false, why: "no Edge or Chrome found (ferry config set browserPath <path to the browser>)" };
 	try {
@@ -89,7 +92,15 @@ export function prepareBrowser(cfg) {
 /** The pi extension: the browser skill while the browser is on; close the browser when ferry exits. */
 export function createBrowser(status) {
 	return (pi) => {
-		if (!status.on) return;
+		if (!status.on) {
+			// asked for anyway (the user said "use the browser"): say why it is not there instead of "command not found"
+			pi.on("tool_call", (event) => {
+				if (!["bash", "job_start"].includes(event.toolName) || !/\bagent-browser\b/.test(String(event.input?.command ?? ""))) return undefined;
+				return { block: true, reason: `The browser (agent-browser) is not available in this Ferry: ${status.why}. ` +
+					"Tell the user this reason and what to do; read the page with web_fetch if that is enough." };
+			});
+			return;
+		}
 		pi.on("resources_discover", () => ({ skillPaths: [SKILL_DIR] }));
 		let used = false;
 		pi.on("tool_call", (event) => {

@@ -19,6 +19,7 @@ export const steerState = {
 	doing: "",          // what the agent is doing, for the note
 	skipped: 0,         // tool calls not run because of the interruption
 	waiter: null,
+	request: "",        // the user's request the agent was working on (the note quotes it)
 };
 
 const ARGS = ["command", "path", "file_path", "pattern", "url", "query", "description", "agent"];
@@ -29,17 +30,21 @@ function describe(tool, args) {
 }
 
 /** What the agent is told after your message (exported for tests). */
-export function steerNote({ doing, waitedFor, partial }, skipped = 0, todo = currentTodo()) {
+export function steerNote({ doing, waitedFor, partial, request }, skipped = 0, todo = currentTodo()) {
 	const at = waitedFor ? `running ${waitedFor}; it was allowed to finish and its result is above`
 		: doing ? doing : "working";
-	return "[Ferry: the user's message just before this note interrupted you while you were working. " +
+	const asked = request ? request.replace(/\s+/g, " ").trim() : "";
+	return "[Ferry: the user's message just before this note interrupted you while you were working" +
+		(asked ? ` on their request "${asked.length > 300 ? `${asked.slice(0, 300)}…` : asked}"` : "") + ". " +
 		`At that moment you were ${at}${todo ? `, on the to-do item "${todo}"` : ""}. ` +
 		(partial ? `What you had written so far (stopped, so it is not in the conversation): "${partial}". ` : "") +
 		(skipped ? `${skipped} tool call(s) you had started were not run. ` : "") +
-		"Take the message as a change of course: where it conflicts with your earlier plan, it wins. " +
-		"Before more tool calls, say in a sentence or two what you now understand the user wants and what you will do differently. " +
-		"If the user says something you did was wrong, say what was wrong and which of your changes need undoing, then fix them. " +
-		"Update the to-do list if the plan changed. If the message only adds a detail, take it into account and carry on.]";
+		"Read the message together with that request; it is one of these: " +
+		"a question (answer it in a few sentences, then carry on with the task); " +
+		"a correction of direction (say in a sentence or two what you now understand and what you will do differently; if " +
+		"something you did was wrong, say which of your changes need undoing and fix them; update the to-do list); " +
+		"or something the user forgot to say (take it in, adjust what is affected, including work already done, and carry on). " +
+		"Where it conflicts with your earlier plan, it wins; the rest of the request still stands unless it says otherwise.]";
 }
 
 const SKIPPED = "Not run: the user interrupted with new instructions (they follow).";
@@ -48,6 +53,11 @@ const SKIPPED = "Not run: the user interrupted with new instructions (they follo
 export function createSteer() {
 	const st = steerState;
 	return (pi) => {
+		pi.on("before_agent_start", (e) => {
+			// the request being worked on; a message sent by interrupting changes it but does not replace it
+			if (e.messageType === "user" && !st.redirecting && e.prompt) st.request = e.prompt;
+			return undefined;
+		});
 		pi.on("message_start", (e) => {
 			if (e.message?.role === "assistant" && !st.running) st.doing = "writing your next step";
 		});
@@ -82,7 +92,8 @@ async function steerNow(mode) {
 	if (!session.getSteeringMessages().length) return false;
 	const { steering, followUp } = mode.clearAllQueues();
 	for (const t of followUp) await session.followUp(t); // "after it finishes" messages stay where they were
-	const p = { text: steering.join("\n\n"), doing: st.doing, waitedFor: st.running ? st.doing.replace(/^running /, "") : "" };
+	const p = { text: steering.join("\n\n"), doing: st.doing, waitedFor: st.running ? st.doing.replace(/^running /, "") : "",
+		request: st.request };
 	st.pending = p;
 	st.skipped = 0;
 	mode.updatePendingMessagesDisplay();

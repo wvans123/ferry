@@ -4,6 +4,7 @@
 // warning page ("are you sure you want to visit this site?") is reported with the address to confirm in a browser;
 // Ferry never clicks through it. cfg.web = "off": no web tools.
 import { Type } from "typebox";
+import { serverHeaders } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
 
 export { gatewayPage };
@@ -153,6 +154,22 @@ export function parseBing(html) {
 	return out;
 }
 
+/**
+ * Search through the Ferry server's search API (Tavily, Brave or Bocha; its key stays on the server). Only the query
+ * leaves this computer; the results' pages are still read here. null when the server has no search engine set.
+ */
+export async function searchServer(cfg, query, count = 8, recent = "", signal) {
+	if (!(cfg.features ?? []).includes("search")) return null;
+	const res = await fetch(`${cfg.server}/v1/ferry/search`, {
+		method: "POST", redirect: "manual", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(45000)]) : AbortSignal.timeout(45000),
+		headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
+		body: JSON.stringify({ query, count, recent }),
+	});
+	const out = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
+	if (!res.ok || !Array.isArray(out?.results)) throw new Error(out?.error ?? `HTTP ${res.status}`);
+	return { results: out.results, engine: out.engine };
+}
+
 export async function searchWeb(query, count = 8, signal, base = process.env.FERRY_TEST_SEARCH_BASE) {
 	const url = `${base || "https://www.bing.com"}/search?q=${encodeURIComponent(query)}&setlang=zh-Hans`;
 	const r = await get(url, signal);
@@ -169,6 +186,7 @@ const FetchParams = Type.Object({
 const SearchParams = Type.Object({
 	query: Type.String({ description: "What to search for" }),
 	count: Type.Optional(Type.Number({ description: "How many results, default 8" })),
+	recent: Type.Optional(Type.String({ description: "Only pages from the last day, week, month or year" })),
 });
 
 /** Whether the web tools are on ("off" or false turns them off; "server" from before 0.26 counts as on). */
@@ -223,7 +241,8 @@ export function createWeb(cfg) {
 				let r = await fetchPage(params.url, params.offset ?? 0, signal);
 				if (r.sparse && !params.offset) {
 					r = { ...r, text: `${r.text}\n\n[This page is probably built by JavaScript, so it reads almost empty here. ` +
-						"Tell the user; another source may have the same information.]" };
+						(cfg.browser === false ? "Another source may have the same information; otherwise tell the user.]"
+							: "Open it in the browser (agent-browser, see the browser skill) to read it after its scripts ran.]") };
 				}
 				return show(r);
 			},
@@ -231,17 +250,32 @@ export function createWeb(cfg) {
 		pi.registerTool({
 			name: "web_search",
 			label: "Web search",
-			description: `Search the web (Bing); returns titles, addresses and short snippets. ${where} Read a result with web_fetch.`,
+			description: "Search the web; returns titles, addresses and short snippets. Snippets are not enough to answer from: " +
+				"read the best results with web_fetch. Search again with other words when the results miss.",
 			promptSnippet: "Search the web",
 			parameters: SearchParams,
 			annotations: { readOnlyHint: true, openWorldHint: true },
 			async execute(_id, params, signal) {
 				const count = Math.max(1, Math.min(Number(params.count) || 8, 20));
-				const r = await searchWeb(params.query, count, signal);
+				const recent = ["day", "week", "month", "year"].includes(params.recent) ? params.recent : "";
+				let r = null;
+				let note = "";
+				try {
+					r = await searchServer(cfg, params.query, count, recent, signal);
+				} catch (e) {
+					if (signal?.aborted) throw e;
+					note = `\n\n[The server's search engine failed (${String(e.message).slice(0, 200)}); these results are Bing's page.]`;
+				}
+				if (!r) {
+					r = await searchWeb(params.query, count, signal);
+					if (recent) note += `\n\n[Bing's page cannot limit results to the last ${recent}: check the dates yourself.]`;
+					if (cfg.browser !== false) note += "\n\n[These come from Bing's page as a program sees it. If they are off-topic, " +
+						"search in the browser (agent-browser) instead.]";
+				}
 				const text = r.results.length
-					? r.results.map((x, i) => `${i + 1}. ${x.title}\n   ${x.url}\n   ${x.snippet}`).join("\n\n")
-					: `No results for "${params.query}".`;
-				return { content: [{ type: "text", text }], details: { count: r.results.length } };
+					? r.results.map((x, i) => `${i + 1}. ${x.title}${x.date ? ` (${String(x.date).slice(0, 10)})` : ""}\n   ${x.url}\n   ${String(x.snippet ?? "").slice(0, 600)}`).join("\n\n")
+					: `No results for "${params.query}". Try other words.`;
+				return { content: [{ type: "text", text: text + note }], details: { count: r.results.length, engine: r.engine ?? "bing" } };
 			},
 		});
 	};
