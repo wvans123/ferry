@@ -908,6 +908,15 @@ def check_web_browser(root: Path, work: Path) -> None:
         asked = [r for r in rows if r.get("query") == "ferry" and r.get("search_depth")]
         seen = "Ferry page found by the search API" in json.dumps(rows[-1], ensure_ascii=False)
         ok = c1 == 0 and "pelican-42" in o1 and asked and seen
+        # read a page with a question: the page goes to the server, its model answers, only the answer comes back
+        c2, o2 = s.ferry("-p", "FETCHQTEST: what is the secret word", env_extra=pages)
+        rows = jsonl(s.upstream)
+        read = [r for r in rows if "<page>" in json.dumps(r.get("messages", []), ensure_ascii=False)]
+        agent_saw = json.dumps(rows[-1].get("messages", []), ensure_ascii=False)
+        ok67 = (c2 == 0 and "From the page: the secret word is pelican-42" in o2 and read
+                and "Answered from the page by" in agent_saw and "The secret word is pelican-42" not in agent_saw)
+        check("F67 带问题读网页", ok67, "web_fetch 带上问题时，网页在工作电脑上抓下来交给服务端的模型读，对话里只有它的回答，"
+              "不是整页（和 Claude Code 的 WebFetch 一样）" if ok67 else f"code={c2} read={len(read)} {o2[-300:]!r}")
         check("F66 搜索服务", ok, "服务端设了搜索 API（Key 在服务端）：工作电脑的 web_search 只把搜索词发给服务端，拿回结果，"
               "网页仍在工作电脑上读" if ok else f"code={c1} asked={len(asked)} seen={seen} {o1[-300:]!r}")
         browser = find_browser()

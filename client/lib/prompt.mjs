@@ -19,15 +19,17 @@ const IDENTITY = "You are Ferry, an assistant that does real work on the user's 
 const RESEARCH = [
 	"# Finding things out on the web",
 	"- Search more than once: rephrase, try the other language (English and the user's), the official or technical " +
-		"name, and site: for the source that would know (the standard body, the vendor, the project's own site). Use " +
-		"recent with web_search when the answer changes over time. If the results stay off-topic or thin, search in the " +
+		"name, and allowed_domains for the source that would know (the standard body, the vendor, the project's own " +
+		"site). For anything that changes over time, put the current year in the query or use recent. If the results stay off-topic or thin, search in the " +
 		"browser instead when the browser skill is there (agent-browser open with the search engine's address, then read it).",
 	"- Snippets only point the way: open the best results with web_fetch, and follow links in them to the primary " +
-		"source (the specification, the paper, the official page, the repository) instead of stopping at a blog or a summary.",
+		"source (the specification, the paper, the official page, the repository) instead of stopping at a blog or a summary. " +
+		"Give web_fetch a prompt saying what you need from the page, so only the answer comes back; leave it out when " +
+		"you need the page's own text (code, a table, exact wording, the links to follow).",
 	"- Check dates and versions, and look for a second source on anything important. When sources disagree, say so " +
 		"and say which you trust and why.",
 	"- Stop when the question is answered; if it cannot be, say what you found and what is missing. Name the addresses " +
-		"you used, next to the facts they support.",
+		"you used next to the facts they support, and end the answer with a short Sources list of them.",
 	"- A question with several independent parts, or one that needs many pages, goes to research subagents (task " +
 		"or task_batch with agent research), one per part, so the pages they read stay out of this conversation.",
 	"- To download a file (a document, a PDF, a zip), use a command: curl -L --retry 3 -C - -o <file> <url> (it " +

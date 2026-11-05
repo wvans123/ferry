@@ -35,6 +35,10 @@ def decide(msgs):
         return ("text", "OK")
     if msgs and text_of(msgs[-1]).strip().lower().startswith("respond with hello"):  # Paperclip's check of a new agent
         return ("text", "hello")
+    if msgs and text_of(msgs[-1]).startswith("<page>"):  # the Ferry server reads a page with a question
+        page = text_of(msgs[-1])
+        word = re.search(r"secret word is (\S+?)\.", page)
+        return ("text", f"From the page: the secret word is {word.group(1) if word else 'not there'}.")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if MODE == "basic":
@@ -206,6 +210,10 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "read", {"path": "pic.png"})
         return ("text", "IMG: " + ("picture received" if "[an image]" in text_of(tools[-1]) else "no picture: " + text_of(tools[-1])[:80]))
+    if "FETCHQTEST" in first:  # read a page with a question: the server's model answers, not the page itself
+        if not tools:
+            return ("tool", "web_fetch", {"url": "http://127.0.0.1:9100/article.html", "prompt": "What is the secret word?"})
+        return ("text", "FETCHQ: " + text_of(tools[-1]).replace("\n", " ")[:300])
     if "WEBTEST" in first:
         if not tools:
             return ("tool", "web_search", {"query": "ferry"})
@@ -453,6 +461,10 @@ class H(BaseHTTPRequestHandler):
                                   ".textContent='Hello '+document.getElementById('n').value\">Greet</button><p id='o'></p>"
                                   "<script>document.getElementById('x').textContent='The secret word is '+['peli','can-42'].join('')"
                                   "</script></body></html>")
+        if self.path == "/article.html":  # an ordinary page with some length, for reading with a question
+            return self.send_html("<html><head><title>Ferry article</title></head><body><h1>Ferries</h1>"
+                                  + "<p>Ferries carry people and cars across water.</p>" * 20
+                                  + "<p>The secret word is <b>pelican-42</b>.</p></body></html>")
         if self.path == "/page.html":
             return self.send_html("<html><head><title>Ferry page</title><script>var x=1;</script></head><body>"
                                   "<h1>Ferry</h1><p>The secret word is <b>pelican-42</b>.</p>"

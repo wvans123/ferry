@@ -399,3 +399,13 @@ v0.16.2：终端标签页标题改成 `⏳/❓ 对话内容 · 项目 · Ferry`�
 | 没有搜索 API 时搜不准 | Bing 结果不对题时，agent 用本机浏览器（agent-browser）打开搜索引擎去搜 | 系统提示 |
 | team 不知道去哪看 | `ferry team start` 等看板起来后自动在浏览器打开 | 客户端单元测试 |
 | pi 1.5.0 | 跟进 pi 新版本（流式输出更快、图片缩小时优先 JPEG、Windows 路径大小写等修复） | 全部测试 |
+
+## v0.30：照 Claude Code 的做法搜索和读网页
+
+| 问题 | 改了什么 | 自测 |
+|---|---|---|
+| 读几个网页对话就满了 | `web_fetch` 加 `prompt`：网页在工作电脑上抓，文字（≤10 万字）交给服务端"写摘要用"的模型（没设用默认模型）按问题读，对话里只放回答，和 Claude Code 的 WebFetch 一样。要原文时不带问题，照旧分段给全文 | F67、客户端和服务端单元测试 |
+| 同一个网页反复下载；PDF 直接报错 | 15 分钟内读过的不再下载；PDF、Word、Excel、PowerPoint 存进 `downloads`，告诉 agent 用 office_read | 客户端单元测试 |
+| 搜索还能不能更好 | 服务端可以用模型自带的搜索（Claude 官方接口的 web_search、OpenAI Responses 的 web_search），和 Claude Code、Codex 一样由模型厂商去搜，不用另注册搜索 API；只把网页列表交回工作电脑 | 服务端单元测试 |
+| 只想搜某个网站 | `web_search` 加 `allowed_domains` / `blocked_domains`：交给服务端的搜索来源，Bing 时写成 `site:` / `-site:` | 客户端和服务端单元测试 |
+| 查最新的东西搜到旧的；回答不写出处 | 系统提示：会变的东西在搜索词里带上今年的年份；回答末尾列出处 | 系统提示 |

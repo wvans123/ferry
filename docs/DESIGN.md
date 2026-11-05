@@ -226,7 +226,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |
 | 系统提示 | 用 Ferry 自己的开场和工作方式代替 pi 的（不再提 pi 文档，避免模型去翻 agent 自己的配置），保留 pi 的工具说明，加上操作系统、shell、日期、是否 git 仓库 | `client/lib/prompt.mjs` |
 | 联网 | 在客户端执行，走公司代理，识别网关的确认页（按地址和页面文字）并报告，不点击通过；`blockedSites` 里的网站不打开 | `client/lib/web.mjs` |
-| 搜索 | 搜索引擎给程序的结果页质量差，所以服务端可以接一个搜索 API（Tavily、Brave、博查），Key 和模型的 Key 一样只在服务端。`web_search` 先问服务端（`/v1/ferry/search`，只发搜索词），服务端没设或出错就读 Bing 的结果页。网页本身仍在工作电脑上读，和 0.26 删掉的"服务端联网"不是一回事。怎么查资料写在系统提示里，大问题交给内置的 research 子 agent | `server/ferry_server/search.py`、`client/lib/web.mjs`、`prompt.mjs`、`subagent.mjs` |
+| 搜索和读网页 | 照 Claude Code 的做法：搜索由服务端去做（它是模型的客户端，可以请 Claude 或 GPT 用它们自带的搜索，也可以用 Tavily、Brave、博查的 API），Key 都在服务端，工作电脑只发搜索词，没设或出错就读 Bing 的结果页；读网页在工作电脑上抓（走公司代理和网关），带问题时把文字（≤10 万字）交给服务端的摘要模型读，对话里只放回答，15 分钟缓存，PDF 和 Office 文件存进 downloads。和 0.26 删掉的"服务端联网"不是一回事：网页从不经服务端去抓。怎么查资料写在系统提示里，大问题交给内置的 research 子 agent | `server/ferry_server/search.py`、`client/lib/web.mjs`、`prompt.mjs`、`subagent.mjs` |
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，打开确认页、等确认后自动重发（最多等 3 分钟）；`ferry check` 手动查 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 斜杠命令和自定义 | pi 自带命令里用不上的，启动时从它的命令表里拿掉（只是不列出）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户 | `client/lib/trim.mjs`、`client/lib/commands.mjs` |
