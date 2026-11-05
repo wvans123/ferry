@@ -243,7 +243,8 @@ export function deleteTargets(cmd) {
 		}
 		if (out.length === before) return null; // no target named: a pipeline feeds it (ls | Remove-Item)
 	}
-	if (out.some((t) => !t || /[*?[\]{}$%`~]|^\(/.test(t))) return null;
+	// ~ only at the start is the home folder; inside a name it is a Windows short name (C:/Users/RUNNER~1/...)
+	if (out.some((t) => !t || /[*?[\]{}$%`]|^~|^\(/.test(t))) return null;
 	if (!out.length && DELETES.some((re) => re.test(String(cmd ?? "")))) return null; // a delete inside cmd /c, sh -c...
 	return out;
 }

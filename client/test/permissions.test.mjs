@@ -199,6 +199,10 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	assert.equal(v(`rm ${fwd(join(proj, "new", "deep", "a.txt"))}`).action, "allow"); // absolute paths are paths, not /switches
 	assert.equal(v(`rm ${fwd(join(proj, "old.txt"))}`).action, "ask");
 	assert.equal(v("del /s /q old.txt").action, "ask");
+	assert.equal(v("rm ~/old.txt").action, "ask"); // the home folder
+	P.noteCreated(session, join(proj, "RUNNER~1.TXT"));
+	writeFileSync(join(proj, "RUNNER~1.TXT"), "x");
+	assert.equal(v("rm RUNNER~1.TXT").action, "allow"); // a ~ inside a Windows short name is part of the name
 	assert.deepEqual(P.deleteTargets("rm /c/x/new.txt"), ["/c/x/new.txt"]);
 	assert.deepEqual(P.deleteTargets("del /s /q old"), ["old"]);
 	assert.equal(P.gitBashPath("/c/Users/me/a.txt", true), "c:/Users/me/a.txt");
