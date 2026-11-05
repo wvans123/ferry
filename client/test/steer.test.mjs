@@ -12,6 +12,10 @@ test("the note tells the agent it was interrupted, what it was doing, and to re-
 	const m = steerNote({ doing: "writing your next step", partial: "First, I will delete" }, 0, "");
 	assert.match(m, /What you had written so far .*"First, I will delete"/);
 	assert.doesNotMatch(m, /tool call\(s\)/);
+	// the request it was working on is quoted, so "no, in English" is read together with it
+	const r = steerNote({ doing: "running web_search (6G)", request: "写一份 6G 数据开放的调研\n要中文" }, 0, "");
+	assert.match(r, /working on their request "写一份 6G 数据开放的调研 要中文"/);
+	assert.match(r, /the rest of the request still stands/);
 });
 
 test("the input box of this pi version can be patched", async () => {

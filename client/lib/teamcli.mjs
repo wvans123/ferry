@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
 import { readModelsCache } from "./config.mjs";
+import { openInBrowser } from "./gateway.mjs";
 
 const ROLES = ["ceo", "cto", "cmo", "cfo", "security", "engineer", "designer", "pm", "qa", "devops", "researcher", "general"];
 
@@ -75,10 +76,31 @@ function start(opts) {
 		: "Setting up Paperclip the first time (downloads it from npm, about a minute), then starting it at http://127.0.0.1:3100 .");
 	const child = spawn(process.platform === "win32" ? "npx.cmd" : "npx", args, {
 		stdio: "inherit", env: { ...process.env, ...QUIET_ENV }, shell: process.platform === "win32" });
+	let running = true;
+	if (opts.open !== "false" && !opts["no-open"]) {
+		whenUp(BOARD, () => running).then((up) => {
+			if (!up) return;
+			console.log(`\nThe team board is open in your browser: ${BOARD}`);
+			openInBrowser(BOARD);
+		});
+	}
 	return new Promise((done) => child.on("exit", (code) => {
+		running = false;
 		process.exitCode = code ?? 0;
 		done();
 	}));
+}
+
+const BOARD = "http://127.0.0.1:3100";
+
+/** Wait until the board answers (true), or until it stops / 10 minutes pass (false). */
+export async function whenUp(url, still = () => true, wait = 2000, tries = 300) {
+	for (let i = 0; i < tries && still(); i++) {
+		const ok = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(3000) }).then((r) => r.status < 500, () => false);
+		if (ok) return true;
+		await new Promise((r) => setTimeout(r, wait));
+	}
+	return false;
 }
 
 async function run(args) {

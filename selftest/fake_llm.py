@@ -471,6 +471,9 @@ class H(BaseHTTPRequestHandler):
             png = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                                                  "1f15c4890000000d49444154789c6360000002000154a24f5f0000000049454e44ae426082")).decode()
             return self.send_json(200, {"data": [{"b64_json": png, "revised_prompt": body.get("prompt", "")}]})
+        if self.path.endswith("/tavily/search"):  # a search API on the Ferry server's side (Tavily's answer shape)
+            return self.send_json(200, {"results": [{"title": "Ferry page found by the search API", "url": "http://127.0.0.1:9100/page.html",
+                                                     "content": f"Search API result for {body.get('query')}", "published_date": "2026-10-30"}]})
         if self.path.endswith("/bark"):  # a phone notification (Bark)
             return self.send_json(200, {"code": 200, "message": "success"})
         if self.path.endswith("/v1/messages"):

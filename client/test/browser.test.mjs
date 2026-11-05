@@ -30,7 +30,7 @@ test("switched on: the program goes next to fd and rg, pointed at the installed 
 	assert.deepEqual(handlers.resources_discover(), { skillPaths: [SKILL_DIR] });
 	const none = {};
 	createBrowser({ on: false })({ on: (name, fn) => { none[name] = fn; } });
-	assert.deepEqual(none, {});
+	assert.deepEqual(Object.keys(none), ["tool_call"]); // no skill; only the "why not" answer
 });
 
 test("switched off, or no browser: not on the PATH, and the reason is given", () => {
@@ -38,6 +38,14 @@ test("switched off, or no browser: not on the PATH, and the reason is given", ()
 	assert.match(prepareBrowser({ browser: true, browserPath: join(process.env.FERRY_HOME, "nope.exe") }).why, /no Edge or Chrome/);
 	assert.match(prepareBrowser({ browser: false }).why, /off/);
 	assert.equal(existsSync(BROWSER_BIN), false);
+	// the agent tries it anyway: it is told why, and what to do
+	const hooks = {};
+	createBrowser({ on: false, why: "no Edge or Chrome found (ferry config set browserPath <path>)" })({ on: (n, f) => { hooks[n] = f; } });
+	const r = hooks.tool_call({ toolName: "bash", input: { command: "agent-browser open https://example.com" } });
+	assert.equal(r.block, true);
+	assert.match(r.reason, /not available in this Ferry: no Edge or Chrome found \(ferry config set browserPath/);
+	assert.equal(hooks.tool_call({ toolName: "bash", input: { command: "ls" } }), undefined);
+	assert.equal(hooks.resources_discover, undefined); // and no browser skill
 });
 
 test("looking at the page does not ask; opening, clicking and typing do", () => {

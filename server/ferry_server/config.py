@@ -31,6 +31,8 @@ class ModelConfig:
     vision: bool = True                                 # takes images; vision = false for a text-only model
     # USD per million tokens: input, output, cache_read, cache_write. Used for the cost in /cost and the usage page.
     price: dict = field(default_factory=dict)
+    # never grouped with same-named models of other providers (a relay whose "claude-opus" may be something else)
+    separate: bool = False
 
     @property
     def api_key(self) -> str:
@@ -59,6 +61,7 @@ class Provider:
     rpm: int = 0             # calls started per minute at most; more wait (0 = no limit)
     cooldown: int = 60       # after "too many requests" (429): seconds this account is left alone (Retry-After wins)
     fallback: str = ""       # model that answers while this account cools down ("" = wait); another API form: the client asks it
+    separate: bool = False   # its models are listed on their own, never merged with same-named models elsewhere
 
     @property
     def api_key(self) -> str:
@@ -79,6 +82,7 @@ class Config:
     bark_url: str = ""           # Bark push address (https://api.day.app/<key>): notifications to an iPhone
     github_repo: str = "wvans123/ferry"  # where /report opens issues (the token is in <home>/github-token)
     shared_memory: bool = False  # global memory on the server, shared by all of a user's computers
+    search_engine: str = ""      # web_search through a search API: tavily, brave, bocha ("" = Bing's page on the work PC)
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
@@ -121,6 +125,7 @@ def load(path: str | os.PathLike) -> Config:
         bark_url=os.environ.get("FERRY_BARK_URL") or s.get("bark_url", ""),
         github_repo=os.environ.get("FERRY_GITHUB_REPO") or s.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(s.get("shared_memory", False)),
+        search_engine=s.get("search_engine", ""),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -331,7 +336,8 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             rename_params=dict(p.get("rename_params", pre.get("rename_params", {}))),
             no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
             api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0),
-            rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60), fallback=str(p.get("fallback", "") or ""))
+            rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60), fallback=str(p.get("fallback", "") or ""),
+            separate=bool(p.get("separate", False)))
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
         m = dict(m)
@@ -346,6 +352,7 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             m.setdefault("rename_params", prov.rename_params)
             m.setdefault("no_key", prov.no_key)
             m.setdefault("api", prov.api)
+            m.setdefault("separate", prov.separate)
             m["key_value"] = prov.key
         try:
             models[mid] = ModelConfig(id=mid, provider=pid, **m)
@@ -407,7 +414,7 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]
-        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback"):
+        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback", "separate"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
     for m in models:
@@ -479,6 +486,7 @@ def load_default() -> Config:
         bark_url=env("FERRY_BARK_URL") or saved.get("bark_url", ""),
         github_repo=env("FERRY_GITHUB_REPO") or saved.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(saved.get("shared_memory", False)),
+        search_engine=saved.get("search_engine", ""),
         home=home,
         # on this computer the conversation is already in the client's own session files: keep no second copy
         session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
@@ -507,4 +515,5 @@ def save_settings(cfg: Config) -> None:
         f"max_concurrent = {int(cfg.max_concurrent)}\n"
         f"bark_url = {json.dumps(cfg.bark_url)}\n"
         f"github_repo = {json.dumps(cfg.github_repo)}\n"
-        f"shared_memory = {'true' if cfg.shared_memory else 'false'}\n", encoding="utf-8")
+        f"shared_memory = {'true' if cfg.shared_memory else 'false'}\n"
+        f"search_engine = {json.dumps(cfg.search_engine)}\n", encoding="utf-8")

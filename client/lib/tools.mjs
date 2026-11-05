@@ -83,9 +83,9 @@ export function createTodo() {
 		pi.registerTool({
 			name: "todo",
 			label: "Tasks",
-			description: "Keep a task list for work with several steps. Send the whole list every time. Mark an item " +
-				"in_progress before starting it and completed as soon as it is done; keep exactly one in_progress while working. " +
-				"Before your final answer, send the list once more with every finished item completed. Skip it for one-step requests.",
+			description: "Keep a task list for work with three or more distinct steps; skip it for smaller requests. Send " +
+				"the whole list every time. Mark an item in_progress right before you start it and completed right after it " +
+				"is done, one at a time, never several at the end; keep exactly one in_progress while working.",
 			promptSnippet: "Plan and track multi-step work as a task list the user can see",
 			parameters: TodoParams,
 			annotations: { readOnlyHint: true, openWorldHint: false },

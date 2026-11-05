@@ -106,7 +106,16 @@ pi 自带的其他命令（`/tree`、`/fork`、`/export`、`/share`、`/login`�
 - **子 agent**：agent 自己判断要不要把一件事交给子 agent（`task`）。子 agent 用全新的上下文干完，只把报告带回来，主对话不会被撑大。对话里会出现一个小框显示它在做什么。
 - **后台子 agent**：`task` 加上 `background`，做完自动把报告交回来。
 - **批量派活**：比如"把这个文件夹里 40 篇稿件每篇看一遍"，`task_batch` 每篇派一个子 agent，同时最多 3 个（`maxParallel`），报告汇总到一个文件。服务端也限制每个用户同时的模型请求数，多的排队。
-- **待办清单**：多步的活，agent 先列待办（输入框上方的 `To-do (1/3 done)`），做一步勾一步。清单没做完就想停，会被要求接着做完（最多三次，而且清单要有进展）。
+- **调研子 agent**（`research`）：要上网查的问题，agent 交给它。它换几种说法搜，打开来源读，顺着链接找到原始出处，核对日期，最后把结论和每条的出处带回来。读过的网页留在它自己的上下文里，主对话只拿到报告。问题能拆成几块时，几个调研子 agent 同时查。
+- **子 agent 换模型**：调研这种读得多、想得少的活可以交给便宜的模型。在 `%USERPROFILE%\.ferry\agents\research.md` 里写三行就行，提示词和工具照旧：
+  ```
+  ---
+  name: research
+  model: deepseek-flash
+  ---
+  ```
+  `model` 填服务端列出的模型名（`/model` 里能看到）。`explore`、`general` 也一样。
+- **待办清单**：三步以上的活，agent 先列待办（输入框上方的 `To-do (1/3 done)`），开始一项、做完一项马上更新，清单上标着的就是它正在做的。小活不列。清单没做完就想停，会被要求接着做完（最多三次，而且清单要有进展）。
 
 `/tasks` 一次看全：待办、子 agent（在跑的和跑完的）、后台命令，可以看输出、停止。任务结束时会通知你，agent 在你下一条消息时也会知道。退出 ferry 时后台任务一起停掉。
 
@@ -143,8 +152,10 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 
 ### 联网和下载
 
-- `web_search`（Bing）和 `web_fetch`（读网页）在工作电脑上执行，走公司代理，受公司网关管，每个网站第一次会问你。
-- 下载文件（比如 3GPP 的规范和文稿）和在 Cursor 里一样直接交代：agent 用 `web_fetch` 读 https://www.3gpp.org/ftp/ 下的目录页找到文件，用 `curl -L -o` 下载、解压，再用 `office_read` 读。命令也走公司代理，并且和 ferry 用同一份证书（`%USERPROFILE%\.ferry\ca-bundle.pem`，公司检查 HTTPS 用的证书也在里面）。下完它会确认拿到的不是网关的确认页。
+- `web_fetch`（读网页）在工作电脑上执行，走公司代理，受公司网关管，每个网站第一次会问你。
+- `web_search`：服务端设了搜索 API（管理页 → 设置 → 网页搜索，Tavily、Brave 或博查）时，工作电脑只把搜索词发给服务端，拿回标题、地址和摘要；Key 在服务端。没设就在工作电脑上读 Bing 的结果页。Bing 给程序的结果页质量差，常常只按第一个词搜，所以建议设一个。搜索 API 出错时自动改用 Bing，并告诉 agent。
+- 查资料的方法写在 agent 的系统提示里：换几种说法搜，中英文都试，用 `site:` 限定权威来源；只看摘要不算数，要打开来源读，顺着链接找到原始出处；核对日期和版本，重要的事找第二个来源；回答时写出处。问题大的交给调研子 agent。
+- 下载文件和在 Cursor 里一样直接交代：agent 用 `curl -L --retry 3 -C - -o` 下载（断了能续上），大文件放到后台下。没说放哪就放在项目里的 `downloads` 文件夹，下完删掉没用的临时文件。命令也走公司代理，并且和 ferry 用同一份证书（`%USERPROFILE%\.ferry\ca-bundle.pem`，公司检查 HTTPS 用的证书也在里面）。下完它会确认拿到的不是网关的确认页。
 - 不许打开的网站：`ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`。这些网站和它们的子域名，`web_fetch`、浏览器和命令（比如 curl）都不打开，`web_fetch` 跳转过去的也拦下。
 
 ### 浏览器
@@ -157,6 +168,7 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 - 只看页面（`snapshot`、`get`、`screenshot`）不问你；打开网页、点击、填表要先确认，选"以后都允许"就是 `bash(agent-browser*)`。
 - 走公司代理，用这台电脑信任的证书。碰到公司网关的确认页，agent 会告诉你，不会替你点过去。
 - ferry 退出时把浏览器关掉。不想让 agent 用浏览器：`ferry config set browser false`。用别的浏览器：`ferry config set browserPath C:\路径\chrome.exe`。
+- 浏览器用不了时（没找到 Edge 或 Chrome、从源码运行没跑 `npm ci`），agent 一用就会告诉你原因和怎么修。`ferry doctor` 里 `browser:` 那一行也写着。
 
 ### Office 文件
 
@@ -192,8 +204,10 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 ```powershell
 ferry team start                            # 窗口 1：启动看板（第一次会自动装好，需要 Node 24.11+）
 ferry team init                             # 窗口 2，在项目文件夹里：建一个负责人 + 调研 + 分析 + 撰写的团队
-ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目标，然后在 http://127.0.0.1:3100 看进度
+ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目标，然后在看板上看进度
 ```
+
+`ferry team start` 等看板起来后自动在浏览器里打开 http://127.0.0.1:3100 （不想自动打开：`--no-open`）。
 
 成员有 `team` 工具：派子任务，等它完成后被自动叫醒，留言，改状态。项目记忆全队共享，每个成员另有自己的角色记忆。详见 [TEAM.md](TEAM.md)。
 

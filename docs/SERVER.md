@@ -58,6 +58,8 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 - 同时有几个会话时，新会话分给当前最闲的那家。
 - 一家出错（限流、超载、Key 失效、连不上）就自动换另一家，那家先歇一会儿。
 
+名字一样不一定是同一个模型，比如某个中转拿别的模型顶着 `claude-opus-5-5` 的名字。拿不准时，编辑这家服务商，勾"这家的模型单独列出"：它的模型不进组，工作电脑的 `/model` 里单独出现，名字后面带这家的名字（比如 `Ferry my-relay-claude-opus-5-5 (My Relay)`），只有选它时才用它，别家出错也不会换到它。`models.toml` 里是这家 `[providers.x]` 下的 `separate = true`。
+
 ### 限流
 
 每个服务商可以设每分钟调用次数和并发上限。遇到 429，按 Retry-After（或设置里的时间）冷却。可以给它设一个回退模型，接口格式不同也行（比如 Claude 限流时改用 GPT），工作电脑会按回退模型的格式重发这一轮；没设回退时，请求在服务端排队等，工作电脑的状态栏会显示。
@@ -78,8 +80,19 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 | `DEEPSEEK_API_KEY` 等 | 用环境变量给 Key，优先于管理页里填的 |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
 | `FERRY_GITHUB_TOKEN` / `FERRY_GITHUB_REPO` | 问题报告用的 GitHub 令牌和仓库（优先于管理页） |
+| `FERRY_SEARCH` / `FERRY_SEARCH_KEY` | 网页搜索用的搜索 API（`tavily`、`brave`、`bocha`）和它的 Key（优先于管理页） |
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
+
+## 网页搜索
+
+agent 的 `web_search` 默认在工作电脑上读 Bing 的结果页。搜索引擎给程序的结果页质量差（实测搜"agent memory open source github"，前几条是字典里 agent 的释义），所以 agent 搜得笨。接一个搜索 API 就好了：
+
+1. 选一家注册拿 Key。[Tavily](https://app.tavily.com) 是给 AI agent 用的，每月有免费额度；[Brave Search](https://api-dashboard.search.brave.com) 有自己的索引；[博查](https://open.bochaai.com) 中文网页多，国内能直接访问。
+2. 管理页 → 设置 → 网页搜索，选这家，贴 Key，保存，点"测试"。Key 存在数据目录的 `search-key` 文件里，管理页不再显示它。
+3. 工作电脑下次启动 ferry 时生效。
+
+工作电脑只把搜索词发给服务端（几百字节），拿回标题、地址、日期和摘要；网页还是在工作电脑上打开。搜索 API 出错（额度用完、Key 失效）时，工作电脑自动改用 Bing，并告诉 agent 原因。每次搜索在调用记录里记一行（`search`），不记搜索词。
 
 ## 问题报告
 

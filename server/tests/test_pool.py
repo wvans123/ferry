@@ -108,6 +108,36 @@ def test_conversations_spread_stick_and_fail_over(tmp_path, monkeypatch):
     asyncio.run(go())
 
 
+def test_a_separate_provider_keeps_its_same_named_model_apart(tmp_path, monkeypatch):
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req.url.host)
+        return httpx.Response(503, json={"error": {"message": "overloaded"}}) if req.url.host == "a.example.com" else answer()
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    text = (tmp_path / "models.toml").read_text().replace('api_key_env = "KEY_B"', 'api_key_env = "KEY_B"\nname = "Relay B"\nseparate = true')
+    (tmp_path / "models.toml").write_text(text)
+    cfg = load_default()
+    app = app_mod.create_app(cfg)
+    token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            listed = (await c.get("/v1/ferry/models", headers=hdr)).json()["models"]
+            assert [m["id"] for m in listed] == ["auto", "gpt", "gpt-b", "other"]   # listed on its own
+            assert listed[2]["via"] == "Relay B" and "providers" not in listed[1] and "via" not in listed[1]
+            # provider a fails: the request does not move to b's model of the same name
+            body = json.dumps({"append": [json.dumps({"role": "user", "content": "hi"})], "tools": None})
+            ack = (await c.post("/v1/ferry/commit", params={"conv": "s1", "base": 0, "base_hash": ""}, content=body, headers=hdr)).json()
+            r = await c.post("/v1/chat/completions", headers=hdr, json={
+                "model": "gpt", "messages": [], "ferry": {"conv": "s1", "count": ack["count"], "hash": ack["hash"]}})
+            assert r.status_code != 200 and "b.example.com" not in seen
+
+    asyncio.run(go())
+
+
 def test_busy_provider_gets_the_next_conversation():
     class M:
         def __init__(self, i):

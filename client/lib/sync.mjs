@@ -67,7 +67,7 @@ export function modelDef(m, cfg) {
 	const thinks = !!known?.reasoning && (anthropic ? known.provider === "anthropic" : known.provider === "openai");
 	return {
 		id: m.id,
-		name: `Ferry ${m.id}`,
+		name: m.via ? `Ferry ${m.id} (${m.via})` : `Ferry ${m.id}`, // via: a provider kept apart from same-named models
 		reasoning: thinks,
 		...(thinks && known.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}),
 		...(thinks && anthropic && known.compat ? { compat: known.compat } : {}),
