@@ -229,6 +229,11 @@ def check_agent_features(root: Path, work: Path) -> None:
         check("F30 长输出写文件", c4 == 0 and "saved=True" in o4 and "last=True" in o4 and size and int(size.group(1)) < 9000
               and lines >= 2999, f"3000 行输出全文存到客户端文件；模型只收到开头、结尾和路径，约 {size.group(1) if size else '?'} 字符")
 
+        c4b, o4b = s.ferry("-p", "DENOISETEST: print colours and a progress bar")
+        ok = c4b == 0 and "DENOISE: esc=False cr=False red=True bar=True old=False repeated=True same=1" in o4b
+        check("F92 命令输出去噪", ok, "命令输出的颜色代码去掉了，\\r 重画的进度条只留最后一次，连续五行相同的只留一行加一句重复了几次"
+              if ok else o4b[-400:])
+
         c5, o5 = s.ferry("-p", "TODOTEST: plan it")
         check("F31 任务清单", c5 == 0 and "[x] step one | [>] step two" in o5, "todo 工具记下两步，一步完成、一步进行中")
 

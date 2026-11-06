@@ -396,6 +396,14 @@ def decide_agent(msgs):
             return ("tool", "bash", {"command": "for i in $(seq 1 3000); do echo \"output line $i\"; done"})
         t = text_of(tools[-1])
         return ("text", f"BIG: saved={'Full text saved to' in t} size={len(t)} last={'output line 3000' in t}")
+    if "DENOISETEST" in first:  # colours, a progress bar redrawn with \r, the same line five times
+        if not tools:
+            return ("tool", "bash", {"command": "printf '\\033[31mRED\\033[0m \\033[1;32mgreen\\033[m\\n'; "
+                                                "printf 'fetch 10%%\\rfetch 60%%\\rfetch 100%%\\n'; "
+                                                "for i in 1 2 3 4 5; do echo same warning; done; echo end"})
+        t = text_of(tools[-1])
+        return ("text", f"DENOISE: esc={chr(27) in t} cr={chr(13) in t} red={'RED green' in t} bar={'fetch 100%' in t} "
+                        f"old={'fetch 10%' in t} repeated={'(previous line repeated 4 times)' in t} same={t.count('same warning')}")
     if "IMAGETEST" in first:  # the agent draws a picture with image_create
         if not tools:
             return ("tool", "image_create", {"prompt": "a small ferry on a river at dawn", "path": "images/ferry.png"})

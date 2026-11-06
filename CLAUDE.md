@@ -69,7 +69,8 @@ the change needs.
    server/ferry_server/__init__.py) and nothing else. Its CI runs everything on both systems, the Windows self-test
    included. Merging it publishes: CI skips tests that already passed on the PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes release
    v<version>; `ferry update` picks it up. Only a version with no release yet is published, so merging feature PRs
-   publishes nothing.
+   publishes nothing. A new pi version arrives the same way: update-pi.yml tests it and opens a PR
+   (`claude/pi-<version>`, pi only, with pi's release notes); the owner reads the notes and merges.
 6. Feature PR title: what changed for the user; its description is a table 问题 / 改了什么 / 自测. Release PR title
    `Ferry x.y.z: the features in it`; its description is the version's record: the feature PRs with links and one
    line each (versions up to 0.30 are in docs/history/). The release PR updates GOAL.md's "最近一次结果" line.
