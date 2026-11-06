@@ -1,7 +1,8 @@
 // Extra agent tools and context hygiene, all on this computer:
 //   todo          a task list the model keeps up to date (like Claude Code's TodoWrite), shown above the input box
 //   big outputs   a long command or search output is saved to a file; the model gets the start, the end and the
-//                 path, and reads more when it needs to (like Cursor). Keeps every request small.
+//                 path, and reads more when it needs to (like Cursor). Keeps every request small. Command output
+//                 first loses colour codes, progress-bar redraws and runs of the same line.
 //   history_search  after the context was summarized, find exact details from earlier in this conversation in the
 //                 full local record (pi keeps every message on disk), instead of redoing the work (like Cursor).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -163,21 +164,51 @@ export function shrinkOutput(text, toolName, callId, limit) {
 	].join("\n");
 }
 
+// Command output: colours, progress bars redrawn with \r and runs of the same line cost tokens on every later turn
+const COMMANDS = new Set(["bash", "powershell", "job_output"]);
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g; // CSI, OSC, other escapes
+
+/** Command output without escape codes, progress-bar redraws and runs of identical lines. Exported for tests. */
+export function denoise(text) {
+	const out = [];
+	let last;
+	let repeats = 0;
+	const flush = () => {
+		if (repeats > 1) out.push(`(previous line repeated ${repeats} times)`);
+		else if (repeats === 1) out.push(last);
+		repeats = 0;
+	};
+	for (const raw of text.replace(ANSI, "").split("\n")) {
+		const line = raw.replace(/\r+$/, "").split("\r").at(-1);
+		if (line === last) {
+			repeats++;
+			continue;
+		}
+		flush();
+		out.push(line);
+		last = line;
+	}
+	flush();
+	return out.join("\n");
+}
+
 export function createBigOutputs(cfg) {
 	const limit = Number(cfg.bigOutputBytes ?? 8192);
 	return (pi) => {
-		if (!(limit > 0)) return;
-		pi.on("session_start", () => cleanOldFiles(OUTPUTS_DIR));
+		if (limit > 0) pi.on("session_start", () => cleanOldFiles(OUTPUTS_DIR));
 		pi.on("tool_result", (event) => {
 			if (NEVER_CUT.has(event.toolName)) return undefined;
-			const texts = (event.content ?? []).filter((c) => c.type === "text");
+			const clean = COMMANDS.has(event.toolName) ? denoise : (t) => t;
+			const content = (event.content ?? []).map((c) => (c.type === "text" ? { ...c, text: clean(c.text) } : c));
+			const changed = content.some((c, i) => c.text !== event.content[i].text);
+			const texts = content.filter((c) => c.type === "text");
 			let full = texts.map((c) => c.text).join("\n");
-			if (Buffer.byteLength(full) <= limit) return undefined;
+			if (!(limit > 0) || Buffer.byteLength(full) <= limit) return changed ? { content, structuredContent: undefined } : undefined;
 			// pi already cut a very long command output and kept the whole of it in a temp file: start from that
 			const whole = event.details?.fullOutputPath;
 			if (typeof whole === "string" && existsSync(whole)) {
 				try {
-					full = readFileSync(whole, "utf8");
+					full = clean(readFileSync(whole, "utf8"));
 				} catch {
 					// keep what pi showed
 				}

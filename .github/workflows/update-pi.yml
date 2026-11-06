@@ -1,8 +1,12 @@
 name: follow pi updates
 
 # Every Monday (or by hand): if pi (the agent engine inside Ferry) has a new version, move Ferry to it, run every
-# test on Linux and Windows, and only when all pass, commit to main and publish a Ferry release with it.
-# If a test fails, nothing changes and GitHub e-mails the repository owner about the failed run.
+# test on Linux and Windows, and only when all pass, push branch claude/pi-<version> and open a pull request with pi's
+# release notes. The owner reads them and merges; the next batched release ships it (Ferry's version is not bumped).
+# Nothing happens when that branch or a pull request for it already exists. If a test fails, no pull request is opened
+# and GitHub e-mails the repository owner about the failed run.
+# Opening the pull request needs Settings > Actions > General > "Allow GitHub Actions to create and approve pull
+# requests"; without it the branch is still pushed and the run fails with a link to open the pull request by hand.
 on:
   schedule:
     - cron: "17 1 * * 1"
@@ -14,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   check:
@@ -21,6 +26,8 @@ jobs:
     outputs:
       pi: ${{ steps.v.outputs.pi }}
       new: ${{ steps.v.outputs.new }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,7 +40,12 @@ jobs:
           have=$(node -p "require('./package.json').dependencies['@earendil-works/pi-coding-agent']")
           echo "pi $have -> $want"
           echo "pi=$want" >> "$GITHUB_OUTPUT"
-          if [ "$want" != "$have" ]; then echo "new=true" >> "$GITHUB_OUTPUT"; else echo "new=false" >> "$GITHUB_OUTPUT"; fi
+          new=false
+          if [ "$want" = "$have" ]; then echo "already on pi $want"
+          elif git ls-remote --exit-code --heads origin "claude/pi-$want" > /dev/null; then echo "branch claude/pi-$want already exists"
+          elif [ "$(gh pr list --head "claude/pi-$want" --state all --json number --jq length)" != 0 ]; then echo "a pull request for pi $want exists"
+          else new=true; fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
 
   test:
     needs: check
@@ -64,32 +76,45 @@ jobs:
       - name: end-to-end self-test
         run: python selftest/run.py
 
-  publish:
+  pull-request:
     needs: [check, test]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      PI: ${{ needs.check.outputs.pi }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - id: bump
-        run: echo "ferry=$(node scripts/bump_pi.mjs ${{ needs.check.outputs.pi }})" >> "$GITHUB_OUTPUT"
+      - run: node scripts/bump_pi.mjs "$PI"
       - run: npm install
-      - name: commit to main
+      - name: push a branch and open a pull request
         run: |
+          branch="claude/pi-$PI"
+          notes="https://github.com/earendil-works/pi/releases/tag/v$PI"
+          run="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Ferry ${{ steps.bump.outputs.ferry }}: pi ${{ needs.check.outputs.pi }}"
-          git push origin HEAD:main
-      - name: build the offline Windows package
-        run: python scripts/build_bundle.py --platform win
-      - name: publish
-        run: |
-          gh release create "v${{ steps.bump.outputs.ferry }}" dist/ferry-windows-*.zip --target main \
-            --title "Ferry v${{ steps.bump.outputs.ferry }}" \
-            --notes "pi (the agent engine) updated to ${{ needs.check.outputs.pi }}. All tests passed on Linux and Windows before release."
+          git checkout -b "$branch"
+          git commit -am "pi $PI"
+          git push origin "$branch"
+          {
+            echo "pi（Ferry 里的 agent 引擎）出了 $PI。这个 PR 只换 pi 的版本，不改 Ferry 的版本号；合并后跟下一次发布一起出去。"
+            echo
+            echo "| 问题 | 改了什么 | 自测 |"
+            echo "|---|---|---|"
+            echo "| pi 有新版本 | package.json、package-lock.json 里的 pi 换成 $PI | Linux 和 Windows 上全部单元测试和端到端自测通过：[这次运行]($run) |"
+            echo
+            echo "先看 pi 的改动再合并：[pi $PI 发布说明]($notes)"
+            echo
+            echo "<details><summary>pi 的 CHANGELOG（$PI）</summary>"
+            echo
+            awk -v v="$PI" '/^## \[/{on = index($0, "[" v "]") > 0} on' node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md | head -c 50000
+            echo
+            echo "</details>"
+          } > body.md
+          if ! gh pr create --base main --head "$branch" --title "pi 升级到 $PI" --body-file body.md; then
+            echo "::error::Branch $branch is pushed, but the pull request could not be opened (allow GitHub Actions to create pull requests in the repository settings). Open it by hand: ${{ github.server_url }}/${{ github.repository }}/compare/main...$branch?expand=1"
+            exit 1
+          fi

@@ -172,7 +172,7 @@ node client/bin/ferry.mjs               # 直接从源码运行
 
 - 每个 PR，GitHub Actions 在 Linux 和 Windows 上各跑一遍全部测试（只改文档时不跑）。合进 main 时，PR 上已经测过的不再重测，直接打包发布。
 - main 上 `package.json` 的版本号一变，测试通过后自动打包 Windows 离线安装包并发布，`ferry update` 就能取到。
-- 每周一自动检查 pi 的新版本（[update-pi.yml](.github/workflows/update-pi.yml)），换上后全部测试通过才发布。Ferry 只用 pi 公开的扩展接口，不 fork。
+- 每周一自动检查 pi 的新版本（[update-pi.yml](.github/workflows/update-pi.yml)），换上后全部测试通过，就开一个 PR，附上 pi 的发布说明，看过再合并，跟下一次发布一起出去。Ferry 只用 pi 公开的扩展接口，不 fork。
 
 ```
 client/      ferry 命令行（Node.js）

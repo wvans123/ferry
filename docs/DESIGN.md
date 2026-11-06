@@ -207,7 +207,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 
 系统提示变化（记忆更新、工具变化）由 pi 以增量的方式记进对话，第一条系统消息不变，所以 Ferry 的增量同步不受影响。
 
-跟着 pi 更新：Ferry 不 fork pi，只依赖它公开的接口（`main()` 的 `extensionFactories`、扩展事件、SDK）。`update-pi.yml` 每周把依赖换成 pi 最新版，跑全部测试（含伪终端里的界面冒烟测试 F38），通过才发布。接口如果有不兼容的改动，测试会失败，发布就不会发生。
+跟着 pi 更新：Ferry 不 fork pi，只依赖它公开的接口（`main()` 的 `extensionFactories`、扩展事件、SDK）。`update-pi.yml` 每周把依赖换成 pi 最新版，跑全部测试（含伪终端里的界面冒烟测试 F38），通过才开 PR（分支 `claude/pi-<版本>`，正文里有 pi 的发布说明），不改 Ferry 的版本号，合并后跟下一次发布一起出去。接口如果有不兼容的改动，测试会失败，PR 就不会开。
 
 ## 代码地图
 
@@ -222,7 +222,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 服务端存不存对话 | 设置项 `session_store`：存磁盘（省流量）、只存内存、完全不存（每轮整段重传，仍按 512KB 分块，单个请求不超过 1MB） | `server/ferry_server/store.py` |
 | 本地安全底线 | 禁止目录、执行前确认都在客户端执行，服务端无法绕过；拦截原因里不含受保护的名字 | `client/lib/guard.mjs` |
 | 可审计 | 访问日志和审计日志只记大小、模型、用量，不记对话内容 | `server/ferry_server/app.py` |
-| 上下文太长 | 长输出在客户端写文件，只给模型开头结尾；旧的长工具输出超过 `trimOldOutputs` 后换成一行说明；到 `compactAt` 时写摘要（由服务端写，失败会换模型、分段），压缩后能用 `history_search` 找回原文；服务端可以给发给模型的请求设上限（默认不设），超了从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/fit.py`、`prompt.py` |
+| 上下文太长 | 命令输出先去掉颜色代码、进度条的重画和连续重复的行；长输出在客户端写文件，只给模型开头结尾；旧的长工具输出超过 `trimOldOutputs` 后换成一行说明；到 `compactAt` 时写摘要（由服务端写，失败会换模型、分段），压缩后能用 `history_search` 找回原文；服务端可以给发给模型的请求设上限（默认不设），超了从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/fit.py`、`prompt.py` |
 | 记忆放哪 | 客户端：内容本来就是关于这台电脑上的代码和你的习惯；服务端只转发，换服务端不丢记忆。只有目录进系统提示，正文按需读取 | `client/lib/memory.mjs` |
 | 子 agent | 在同一个进程里另起一个 pi 会话（内存里，不存盘），作为一个独立对话同步到服务端；审批对话框借用主窗口 | `client/lib/subagent.mjs` |
 | 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |
@@ -230,7 +230,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 联网 | 在客户端执行，走公司代理，识别网关的确认页（按地址和页面文字）并报告，不点击通过；`blockedSites` 里的网站不打开 | `client/lib/web.mjs` |
 | 搜索和读网页 | 照 Claude Code 的做法，搜索和公开网页都由服务端去做（它是模型的客户端）：搜索默认用 DeepSeek 的搜索 API（服务端有 DeepSeek Key 时），也可以用模型自带的搜索或别的搜索 API；读网页用 DeepSeek 的读网页 API 或服务端自己下载，带问题时由摘要模型读，只交回回答。工作电脑只发搜索词和地址，Key 都在服务端。内网和私有地址、`localSites`、服务端读不到的网页、PDF 和 Office 文件，在工作电脑上读（走公司代理和网关），要登录或操作的用浏览器。服务端拒读私有网络地址（含跳转），工作电脑也不把这类地址发上去。怎么查资料写在系统提示里，大问题交给内置的 research 子 agent | `server/ferry_server/search.py`、`client/lib/web.mjs`、`prompt.mjs`、`subagent.mjs` |
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，打开确认页、等确认后自动重发（最多等 3 分钟）；`ferry check` 手动查 | `client/lib/gateway.mjs` |
-| 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才提交并发布 Ferry 新版本 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
+| 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才开 PR，附 pi 的发布说明；看过再合并，跟下一次发布一起出去 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 斜杠命令和自定义 | pi 自带命令里用不上的，启动时从它的命令表里拿掉（只是不列出）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户 | `client/lib/trim.mjs`、`client/lib/commands.mjs` |
 | 浏览器 | agent-browser（Rust 写的命令行程序，用 CDP 控制浏览器）放进 pi 的 bin 文件夹，agent 用 bash 调用；Ferry 设好用哪个浏览器、自己的资料夹、要不要窗口，技能说明只在浏览器打开时列出；看页面的子命令算只读；ferry 退出时关掉浏览器 | `client/lib/browser.mjs`、`client/browser-skill/` |
 | 问题报告 | 工作电脑只能连服务端：`/report` 让对话里的 agent 写报告（它最清楚出了什么事），用户在终端看过全文再发；只自动附上版本和工具次数。服务端隐去管理页上列的词、内网 IP、邮箱、手机号、Key、路径里的用户名，存一份，再用自己的 GitHub 令牌开 issue | `client/lib/report.mjs`、`server/ferry_server/report.py` |

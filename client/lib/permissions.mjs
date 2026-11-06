@@ -112,12 +112,16 @@ export function isReadOnlySegment(seg) {
 	const cmd = (w[i] ?? "").toLowerCase().replace(/\.exe$/, "");
 	const args = w.slice(i + 1);
 	if (!cmd) return true;
+	// options that make a reading program write a file (sort -o, tree -o, uniq in out) or run another one (rg --pre)
+	if ((cmd === "sort" && args.some((a) => /^-[a-z]*o|^--output/i.test(a))) || (cmd === "tree" && args.includes("-o"))
+		|| (cmd === "uniq" && args.filter((a) => !a.startsWith("-")).length > 1) || (cmd === "rg" && args.some((a) => /^--pre(=|$)/.test(a)))) return false;
 	if (SAFE_ANY_ARGS.has(cmd)) return true;
-	if (cmd === "find") return !args.some((a) => /^-(exec|execdir|delete|ok|fprint)/.test(a));
+	if (cmd === "find") return !args.some((a) => /^-(exec|execdir|delete|ok|fprint|fls)/.test(a));
 	if (cmd === "sed") return !args.some((a) => /^-[a-z]*i/.test(a) || a.startsWith("--in-place"));
 	if (VERSION_ONLY.has(cmd) && args.length === 1 && /^(-v|--version|-V|version)$/.test(args[0])) return true;
 	if (cmd === "git") {
 		const sub = args.find((a) => !a.startsWith("-")) ?? "";
+		if (args.some((a) => /^--output(=|$)/.test(a))) return false; // git diff/log --output=file
 		if (GIT_READ.has(sub)) return true;
 		if (sub === "branch") return !args.some((a) => /^-(d|D|m|M|c|C)$|^--(delete|move|copy|set-upstream)/.test(a));
 		if (sub === "remote") return args.length <= 2 && args.includes("-v");
