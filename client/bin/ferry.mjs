@@ -485,6 +485,7 @@ async function run(args) {
 			{ name: "ferry-title", factory: createTitle(permState), hidden: true },
 			{ name: "ferry-team", factory: createTeam(), hidden: true },
 			{ name: "ferry-side", factory: (await import("../lib/side.mjs")).createSide(cfg), hidden: true },
+			{ name: "ferry-heartbeat", factory: (await import("../lib/heartbeat.mjs")).createHeartbeat(cfg), hidden: true },
 		],
 	});
 }
