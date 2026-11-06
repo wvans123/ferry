@@ -1003,8 +1003,9 @@ def check_v022(root: Path, work: Path) -> None:
               "同一次运行里后面的请求直接问回退模型，冷却期间不再打扰 Claude 账号"
               if ok else f"c={c1},{c2} claude={len(claude_calls)} reroutes={len(reroutes)} o1={o1[-300:]!r} o2={o2[-200:]!r}")
         c3, listed = s.ferry("--list-models")
-        ok3 = c3 == 0 and re.search(r"(?m)^kiro\s+claude\b", listed) and re.search(r"(?m)^ferry\s+auto\b", listed)
-        check("F68 模型按服务商列出", bool(ok3), "服务商 kiro 的模型在工作电脑上显示成 kiro/claude，auto 仍在 ferry 下"
+        ok3 = (c3 == 0 and re.search(r"(?m)^kiro\s+claude\b", listed) and re.search(r"(?m)^ferry\s+main\b", listed)
+               and not re.search(r"(?m)^\S+\s+auto\b", listed))
+        check("F68 模型按服务商列出", bool(ok3), "服务商 kiro 的模型在工作电脑上显示成 kiro/claude；逐个列出模型时不再多一个 auto"
               if ok3 else f"{listed[-400:]!r}")
     finally:
         s.close()
