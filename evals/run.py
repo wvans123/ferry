@@ -93,6 +93,8 @@ def run_one(task, ferry: list[str], base: Path, server_home: Path, env: dict) ->
     (home / "config.json").write_text(json.dumps({
         "permissionMode": "bypass", "updateCheck": False, "notify": False, "phoneNotify": False,
         "browserHeadless": True}), encoding="utf-8")
+    if hasattr(task, "setup_home"):
+        task.setup_home(home, work)
     # the server Ferry starts must be the one prepare() installed for this Python, not another Python on the PATH
     env = {**env, "FERRY_HOME": str(home), "FERRY_SERVER_HOME": str(server_home), "PYTHONUTF8": "1",
            "FERRY_PYTHON": sys.executable}
@@ -182,9 +184,12 @@ def show(result: dict, before: dict | None) -> None:
 def verify(tasks, base: Path) -> int:
     bad = 0
     for t in tasks:
-        work = base / t.ID
+        work = base / t.ID / "project"
         work.mkdir(parents=True)
         t.setup(work)
+        if hasattr(t, "setup_home"):
+            (base / t.ID / "home").mkdir()
+            t.setup_home(base / t.ID / "home", work)
         before, _ = t.check(work, "")
         answer = t.solve(work)
         after, note = t.check(work, answer)
