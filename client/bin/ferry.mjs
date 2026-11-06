@@ -451,7 +451,7 @@ async function run(args) {
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },
 			{ name: "ferry-goal", factory: createGoal(cfg), hidden: true },
-			{ name: "ferry-jobs", factory: createJobs({ todoText }), hidden: true },
+			{ name: "ferry-jobs", factory: createJobs(cfg, { todoText }), hidden: true },
 			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
 			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents,
 				doctor: () => new Promise((done) => {

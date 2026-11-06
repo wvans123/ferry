@@ -44,7 +44,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、general | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49 |
 | 工具输出 | 待办、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48 |
 | /goal | 一直做到完成 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41 |
-| 后台任务 | `job_start` 等 | `client/lib/jobs.mjs` | — | F42 |
+| 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86 |
 | 回退 | `/rewind` | `client/lib/checkpoint.mjs` | — | F38 |
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
 | 提问 | `ask_user` | `client/lib/ask.mjs` | — | F65 |
