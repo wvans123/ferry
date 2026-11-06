@@ -72,47 +72,43 @@ test("blocked sites hold for commands too: the browser and curl", () => {
 	assert.equal(fn({ toolName: "read", input: { path: "mail.corp.com" } }), undefined);
 });
 
-test("ferry browser login: an ordinary window, the agent connects once the user has signed in", async () => {
-	const { browserLogin, browserHide } = await import("../lib/browser.mjs");
+test("ferry browser login: an ordinary window, done when the user has closed it", async () => {
+	const { browserLogin, profileInUse } = await import("../lib/browser.mjs");
 	const { EventEmitter } = await import("node:events");
-	const http = await import("node:http");
-	// a stand-in browser: its debugging port lists the pages the user goes through
-	const fakeBrowser = (pagesSeen) => (exe, args) => {
-		const port = Number(args.find((a) => a.startsWith("--remote-debugging-port=")).split("=")[1]);
-		let n = 0;
-		const s = http.createServer((req, res) => {
-			const url = pagesSeen[Math.min(n++, pagesSeen.length - 1)];
-			if (url === "closed") { s.close(); s.closeAllConnections(); return res.destroy(); }
-			res.end(JSON.stringify([{ type: "page", url }, { type: "service_worker", url: "https://x/sw.js" }]));
-		});
-		s.listen(port, "127.0.0.1");
-		const child = new EventEmitter();
-		child.pid = 0;
-		child.ran = { exe, args, server: s };
-		fakeBrowser.last = child;
-		return child;
-	};
+	const mk = () => { const c = new EventEmitter(); c.kill = () => { c.killed = true; }; return c; };
 	const runs = [];
 	const run = (a) => runs.push(a.join(" "));
-	let r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 20,
-		spawn: fakeBrowser(["https://accounts.google.com/signin", "https://accounts.google.com/challenge/pwd",
-			"https://myaccount.google.com/", "https://myaccount.google.com/"]) });
-	fakeBrowser.last.ran.server.close();
+	// the user closes the window after a while: the process exits and the profile is free
+	let child, lock = true;
+	let r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 10,
+		spawn: () => { child = mk(); setTimeout(() => { child.emit("exit"); }, 50); setTimeout(() => { lock = false; }, 120); return child; },
+		inUse: () => lock });
 	assert.equal(r.state, "signed-in");
-	assert.deepEqual(runs, ["close --all", `connect ${r.port}`], "the agent's browser closed first, connected only after the sign-in");
-	assert.ok(r.args[0].startsWith("--user-data-dir=") && r.args.includes(`--remote-debugging-port=${r.port}`));
-	assert.ok(!r.args.some((a) => /enable-automation|headless/.test(a)), "an ordinary window");
-	// a site that was signed in already
-	runs.length = 0;
-	r = await browserLogin({ browserPath: process.execPath }, "https://app.example.com", { run, every: 20,
-		spawn: fakeBrowser(["https://app.example.com/home"]) });
-	fakeBrowser.last.ran.server.close();
-	assert.equal(r.state, "already");
-	// the user closes the window: nothing to connect to, the sign-in stays in the profile
-	runs.length = 0;
-	r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 20,
-		spawn: fakeBrowser(["https://accounts.google.com/signin", "closed"]) });
-	assert.equal(r.state, "closed");
-	assert.ok(!runs.some((x) => x.startsWith("connect")));
-	assert.equal(browserHide({ run }), false, "nothing left open");
+	assert.equal(lock, false, "waited for the profile lock to go, not only for the process");
+	assert.deepEqual(runs, ["close --all"], "only the agent's own browser is closed first; nothing connects to the window");
+	assert.ok(r.args[0].startsWith("--user-data-dir="));
+	assert.ok(r.args.includes("--no-first-run") && r.args.includes("https://accounts.google.com"));
+	assert.ok(!r.args.some((a) => /remote-debugging-port|enable-automation|headless/.test(a)), "a completely ordinary window");
+	// still open at the limit: the window is closed for the user
+	r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 10, waitMs: 80,
+		spawn: () => (child = mk()), inUse: () => true });
+	assert.equal(r.state, "timeout");
+	assert.ok(child.killed);
+});
+
+test("profileInUse: the browser's lock file", async () => {
+	const { profileInUse } = await import("../lib/browser.mjs");
+	const { mkdtempSync, symlinkSync, rmSync: rm, writeFileSync: wf } = await import("node:fs");
+	const { tmpdir } = await import("node:os");
+	const d = mkdtempSync(join(tmpdir(), "ferry-prof-"));
+	assert.equal(profileInUse(d), false);
+	if (process.platform === "win32") {
+		wf(join(d, "lockfile"), "");
+		assert.equal(profileInUse(d), false, "a stale lockfile nobody holds is removed");
+	} else {
+		symlinkSync("host-1234", join(d, "SingletonLock")); // chromium: a dangling symlink while the browser runs
+		assert.equal(profileInUse(d), true);
+		rm(join(d, "SingletonLock"));
+		assert.equal(profileInUse(d), false);
+	}
 });

@@ -53,7 +53,7 @@
 | `ferry --session <id>` | 接着指定的对话（退出时会打印这一行） |
 | `ferry -p "问题"` | 只问一句，打印回答后退出，适合放进脚本 |
 | `ferry doctor` | 逐项检查网络、令牌、模型、搜索工具；`--upload` 测多大的上传能通过 |
-| `ferry browser login [地址]` | 打开 agent 用的浏览器让你登录（Google、Microsoft 这类不让程序控制的浏览器登录的网站），登录好后 agent 在这个窗口里接着做；`ferry browser hide` 关掉窗口 |
+| `ferry browser login [地址]` | 打开 agent 用的浏览器让你登录（Google、Microsoft 这类不让程序控制的浏览器登录的网站）。登录好后把窗口关掉，agent 再用同一个资料夹接着做 |
 | `ferry check` | 看公司网关要不要确认，要就打开确认页并等到通过。在 ferry 里输入 `!ferry check` 也行 |
 | `ferry config` | 查看和修改客户端设置 |
 | `ferry mcp list` / `import` | 查看用到的 MCP 服务器 / 从 Claude Desktop、Claude Code、Cursor、VS Code、Windsurf 导入 |
@@ -178,9 +178,9 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 - 用的是 Vercel 开源的 [agent-browser](https://github.com/vercel-labs/agent-browser)，随 Ferry 一起装好。agent 用命令调用它（`agent-browser open 网址`、`snapshot -i`、`click @e3`……），不需要另外装东西。
 - 默认在后台跑，不弹窗口。想一直看着它操作：`ferry config set browserHeadless false`。
 - 它用自己的浏览器资料夹（`%USERPROFILE%\.ferry\browser-profile`），和你平时用的浏览器分开，登录过的网站会记住。
-- 碰到要登录的网站，agent 先告诉你要登录哪里，然后弹出一个窗口（同一个浏览器和资料夹，按普通方式打开）。你在里面登录，登录好后 agent 直接在这个窗口里接着做，不用敲命令，也不用关窗口。用完它把窗口关掉，回到后台，登录还在。密码只由你自己输入。
-- 为什么要"按普通方式打开"：Google、Microsoft 等网站能看出浏览器正被程序控制，会拒绝登录（提示"此浏览器或应用可能不安全"），防机器人盗号。所以登录用的窗口不受程序控制，你登录好之后 agent 才连上去。
-- 这两步对应的命令是 `ferry browser login 地址` 和 `ferry browser hide`，你也可以自己运行，比如提前登录好 Google。
+- 碰到要登录的网站，agent 先告诉你要登录哪里，然后弹出一个窗口（同一个浏览器和资料夹，按普通方式打开）。你在里面登录，登录好后把窗口关掉。窗口一关，agent 就在后台接着做，登录还在。最长等 10 分钟。密码只由你自己输入。
+- 为什么要"按普通方式打开"：Google、Microsoft 等网站能看出浏览器正被程序控制，会拒绝登录（提示"此浏览器或应用可能不安全"），防机器人盗号。所以登录用的窗口不受程序控制，你关掉窗口之后 agent 才接手。
+- 对应的命令是 `ferry browser login 地址`，你也可以自己运行，比如提前登录好 Google。
 - 只看页面（`snapshot`、`get`、`screenshot`）不问你；打开网页、点击、填表要先确认，选"以后都允许"就是 `bash(agent-browser*)`。
 - 碰到你隐私的命令每次都问，"全部放行"模式和"以后都允许"也一样：读写 cookie 和网站存储、保存或载入登录状态、读写剪贴板、上传文件、用保存的密码、连到别的浏览器、录网络流量，以及换浏览器资料夹的选项。提交、发送、下单、发帖、改账户设置、删除这类撤不回的操作，agent 会先问你。网站要摄像头、位置等权限时，agent 不会替你同意。
 - 走公司代理，用这台电脑信任的证书。碰到公司网关的确认页，agent 会告诉你，不会替你点过去。
