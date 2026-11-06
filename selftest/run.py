@@ -658,7 +658,7 @@ def check_steer(root: Path, work: Path) -> None:
         typed(b"TURN LEFT instead")
         hinted = wait_for("Enter on an empty line to interrupt now", 10)
         os.write(fd, b"\r")
-        waiting = wait_for("Interrupting (when the running tool finishes): TURN LEFT", 10)
+        waiting = wait_for("Interrupting (waits 3 s for the running command, then stops it): TURN LEFT", 10)
         mark = len(seen)
         first = wait_for("STEERED slow=True order=True ran=True", 40, mark)
         time.sleep(1)
@@ -674,6 +674,19 @@ def check_steer(root: Path, work: Path) -> None:
         os.write(fd, b"\r")
         mark = len(seen)
         second = wait_for("wrote=True gist=True wish=TURN RIGHT", 30, mark) and time.time() - t0 < 8
+        # 4. a command that never finishes (sleep 60): the interruption stops it after about 3 seconds
+        typed(b"/new")
+        time.sleep(1.5)
+        mark = len(seen)
+        typed(b"STEERTEST HANG: run the hanging command")
+        wait_for("sleep 60", 20, mark)
+        typed(b"TURN DOWN")
+        time.sleep(0.5)
+        t1 = time.time()
+        os.write(fd, b"\r")
+        mark = len(seen)
+        hung = wait_for("HUNGSTOP stopped=True marked=True finished=False", 30, mark)
+        hung_secs = time.time() - t1
         # 3. Esc while the interruption waits: the agent stops and the message is back in the input box, not sent
         typed(b"/new")
         time.sleep(1.5)
@@ -682,7 +695,7 @@ def check_steer(root: Path, work: Path) -> None:
         typed(b"TURN UP")
         time.sleep(0.5)
         os.write(fd, b"\r")
-        wait_for("Interrupting (when the running tool finishes): TURN UP", 10, mark)
+        wait_for("Interrupting (waits 3 s for the running command, then stops it): TURN UP", 10, mark)
         os.write(fd, b"\x1b")
         time.sleep(5)
         mark = len(seen)
@@ -703,6 +716,9 @@ def check_steer(root: Path, work: Path) -> None:
               "agent 收到你的话和\"被打断\"说明；正在写长回答时立刻停下改方向；等待中按 Esc，话回到输入框不发出；标签页标题显示对话内容、项目和 ⏳ 工作中" if ok
               else f"started={started} hinted={hinted} waiting={waiting} first={first} not_run={not_run} talking={talking} "
                    f"second={second} back={back} titled={titled}: {re.findall(r'\x1b]0;[^\x07]*', raw)[-5:]!r} {plain(seen)[-400:]!r}")
+        hung_ok = hung and hung_secs < 15
+        check("F79 打断时不等长命令", hung_ok, "正在跑 sleep 60 时空行按 Enter：约 3 秒后命令被停掉，已有输出留着，结果写明被用户打断，agent 收到你的话和\"命令已停掉\"的说明，几秒内接着干" if hung_ok
+              else f"hung={hung} secs={hung_secs:.1f}: {plain(seen)[-400:]!r}")
     finally:
         s.close()
         (work / "steer-wrong.txt").unlink(missing_ok=True)

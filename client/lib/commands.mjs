@@ -39,7 +39,7 @@ Keys           Shift+Tab   permission mode: ask first > auto-edit > plan > allow
                Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
                Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
                @file  attach a file       !command  run a command yourself (its output goes to the agent)
-While it works  Enter  your message goes in at the next step    Enter again on an empty line  interrupt now
+While it works  Enter  your message goes in at the next step    Enter again on an empty line  interrupt now (a running command gets 3 s)
                Alt+Enter  send it after the agent finishes     Alt+Up  take waiting messages back to edit
 Your own commands: Markdown files in .ferry/commands/ or ${join(FERRY_HOME, "commands")} (docs/CUSTOMIZE.md)`;
 
