@@ -93,6 +93,56 @@ def test_bad_requests_and_a_non_json_answer(tmp_path, monkeypatch):
     assert memreview.candidates({"candidates": "nope"}) == [] and memreview.operations({}) == []
 
 
+def test_digest_uses_the_summary_model_and_returns_a_clean_card(tmp_path, monkeypatch):
+    seen = []
+    text = json.dumps({"goal": "fix the build", "category": "code", "outcome": "great",
+                       "feedback": [{"after": "a patch", "type": "accepted", "quote": "works"}, {"after": "x", "type": "maybe"}, "bad"],
+                       "corrections": ["use pnpm", "", 3] + [f"c{i}" for i in range(10)], "friction": ["misunderstood"],
+                       "failures": [{"symptom": "npm failed", "cause": "lockfile", "fix": "pnpm i"}]})
+    cfg, app, token = setup(tmp_path, monkeypatch, seen, {"text": text})
+    d = post(app, token, {"kind": "digest", "today": "2026-11-06", "transcript": "[User]: use pnpm"}).json()
+    c = d["card"]
+    assert d["model"] == "cheap" and c["outcome"] == "unknown" and c["category"] == "code"
+    assert c["feedback"] == [{"after": "a patch", "type": "accepted", "quote": "works"}, {"after": "x", "type": "unknown", "quote": ""}]
+    assert c["corrections"][:2] == ["use pnpm", "3"] and len(c["corrections"]) == 8
+    assert c["failures"] == [{"symptom": "npm failed", "cause": "lockfile", "fix": "pnpm i"}]
+    prompt = seen[0]["messages"][-1]["content"]
+    assert "<transcript>\n[User]: use pnpm" in prompt and '"continue"' in prompt and "copied exactly" in prompt
+    assert "<memories_in_full>" not in prompt and "tools" not in seen[0]
+    assert post(app, token, {"kind": "digest", "transcript": ""}).status_code == 400
+
+
+def test_distill_uses_the_conversation_model_and_checks_items(tmp_path, monkeypatch):
+    seen = []
+    ev = [{"session": "aaaa1111", "date": "2026-11-01", "quote": "path first"}]
+    text = json.dumps({"items": [
+        {"kind": "memory", "op": "add", "target": "user", "name": "Path First", "content": "Give the path first.", "evidence": ev},
+        {"kind": "memory", "target": "global", "name": "x", "content": "y"},
+        {"kind": "rule", "op": "update", "target": "project-agents", "name": "r", "content": "Run tests.", "evidence": ev},
+        {"kind": "skill", "target": "skill:Release Notes", "name": "ignored", "content": "steps", "description": "when"},
+        {"kind": "habit", "content": "say the goal first"},
+        {"kind": "secret", "content": "z"},
+    ] + [{"kind": "skill", "target": f"skill:s{i}", "content": "x"} for i in range(3)],
+        "recurrence": [{"item": "path-first", "seen_again": "yes", "evidence": "x"}, {"item": ""}]})
+    _, app, token = setup(tmp_path, monkeypatch, seen, {"text": text})
+    body = {"kind": "distill", "model": "deepseek", "today": "2026-11-06", "project": "ferry",
+            "cards": [{"session": "aaaa1111", "date": "2026-11-01", "project": "ferry", "new": True, "card": {"goal": "g", "corrections": ["path first"]}},
+                      {"session": "bbbb2222", "date": "2026-09-01", "project": "web", "new": False, "card": {"goal": "old"}}],
+            "agents": {"user": "Reply in Chinese.", "project": ""}, "skills": ["office"], "accepted": [{"name": "path-first"}],
+            "never": ["rule:user-agents:no-emoji"], "memories": [{"scope": "user", "name": "lang", "content": "Chinese"}]}
+    d = post(app, token, body).json()
+    assert d["model"] == "deepseek" and [b["model"] for b in seen] == ["deepseek-flash"]   # not the summary model
+    assert [(i["kind"], i["target"], i["name"]) for i in d["items"]] == [
+        ("memory", "user", "path-first"), ("rule", "project-agents", "r"), ("skill", "skill:release-notes", "release-notes"),
+        ("habit", "", ""), ("skill", "skill:s0", "s0")]                                     # at most 2 skills
+    assert d["items"][0]["evidence"] == ev and d["recurrence"] == [{"item": "path-first", "seen_again": False, "evidence": "x"}]
+    prompt = seen[0]["messages"][-1]["content"]
+    assert "[NEW] session=aaaa1111 date=2026-11-01 project=ferry" in prompt and "[old] session=bbbb2222" in prompt
+    assert "Reply in Chinese." in prompt and "no-emoji" in prompt and 'The current project is "ferry"' in prompt
+    assert "at least 3 different sessions" in prompt and "Zero items is a good answer" in prompt
+    assert post(app, token, {"kind": "distill", "cards": []}).status_code == 400
+
+
 def test_global_index_puts_the_newest_first(tmp_path):
     for i in range(205):
         globalmem.save(tmp_path, "w", f"old-{i}", f"note {i}", "x")

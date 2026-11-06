@@ -102,7 +102,7 @@ export function editableMemories(cwd) {
 	return { memories, editable: new Set(memories.map((m) => `${m.scope}/${m.name}`)) };
 }
 
-async function askServer(cfg, body, timeoutMs) {
+export async function askServer(cfg, body, timeoutMs) {
 	const res = await fetch(`${cfg.server}/v1/ferry/memory-review`, {
 		method: "POST", headers: serverHeaders(cfg, { "Content-Type": "application/json" }), body: JSON.stringify(body),
 		redirect: "manual", signal: AbortSignal.timeout(timeoutMs),

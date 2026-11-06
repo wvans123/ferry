@@ -424,6 +424,111 @@ def check_memory_review(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_memory_distill(root: Path, work: Path) -> None:
+    """/memory distill: a card per past conversation, one proposal applied after you confirm; -p only prints; the notice."""
+    s = Stack(root, work, "agent")
+    try:
+        s.ferry("-p", "DISTSEED: always give the file path first")
+        s.ferry("-c", "-p", "DISTSEED: next step")
+        s.ferry("-p", "DISTSEED: please give the file path first next time")
+        s.ferry("-c", "-p", "DISTSEED: thanks")
+        user = s.home / "memory" / "user"
+        user.mkdir(parents=True, exist_ok=True)
+        style = user / "answer-style.md"
+        style.write_text("---\nupdated: 2026-10-01\n---\nShort answers.\n", encoding="utf-8")
+        (user / "MEMORY.md").write_text("- [answer-style](answer-style.md): how to answer\n", encoding="utf-8")
+        reports = s.home / "memory" / "distill"
+        asks = lambda phrase: sum(phrase in json.dumps(b) for b in jsonl(s.upstream))  # noqa: E731
+        c1, o1 = s.ferry("-p", "/memory distill")
+        ok110 = (c1 == 0 and 'Update memory "answer-style"' in o1 and "Evidence (2 conversations)" in o1 and "needs 3" in o1
+                 and "Nothing was changed" in o1 and asks("Write a short card about it") == 2 and asks("Find what keeps coming up") == 1
+                 and style.read_text(encoding="utf-8").endswith("Short answers.\n") and not list(reports.glob("*.md"))
+                 and not (s.home / "AGENTS.md").exists())
+        check("F110 /memory distill 没有终端时只列出来", ok110, "ferry -p 里 /memory distill：两段旧对话各写一张卡片（摘要模型两次），"
+              "当前模型看卡片提一条记忆更新和一条规则；规则只有两段对话做证据，Ferry 自己丢掉；只打印出来，记忆、AGENTS.md、报告都不动"
+              if ok110 else f"c={c1} cards={asks('Write a short card about it')} style={style.read_text(encoding='utf-8')!r} {o1[-600:]!r}")
+        if WINDOWS:
+            print("  SKIP  F108 /memory distill、F109 开对话时提醒（Windows 上没有伪终端，Linux 上检查）")
+            return
+        import pty
+        import select
+
+        fake = s.home / "agent" / "sessions" / "--elsewhere--"
+        fake.mkdir(parents=True, exist_ok=True)
+        for i in range(10):  # conversations elsewhere, too short for a card; they still count for the notice
+            (fake / f"fake-{i}.jsonl").write_text(json.dumps({"type": "session", "version": 3, "id": f"fake-{i}", "cwd": "/elsewhere",
+                                                              "timestamp": "2026-11-01T00:00:00Z"}) + "\n", encoding="utf-8")
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "state.json").write_text(json.dumps({"last": (time.time() - 8 * 86400) * 1000}), encoding="utf-8")
+        seen = b""
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float, since: int = 0) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[since:]):
+                    return True
+            return False
+
+        try:
+            started = wait_for("shift+tab", 60)
+            noticed = wait_for("conversations since the last distill (8 days)", 20) and "/memory distill looks for" in plain(seen)
+            time.sleep(1)
+            ok109 = started and noticed and asks("Write a short card about it") == 2 and asks("Find what keeps coming up") == 1
+            check("F109 开对话时提醒 /memory distill", ok109, "上次 distill 过了 8 天、之后有 10 段以上新对话：打开 ferry 时提示一行，"
+                  "建议运行 /memory distill；不会自己跑（没有多出模型调用）" if ok109
+                  else f"started={started} noticed={noticed} {plain(seen)[-500:]!r}")
+
+            mark = len(seen)
+            os.write(fd, b"/memory distill")
+            time.sleep(0.4)
+            os.write(fd, b"\r")
+            shown = wait_for("Distill (1 of 1)", 60, mark) and wait_for('Update memory "answer-style"', 5, mark)
+            time.sleep(0.3)
+            mark = len(seen)
+            os.write(fd, b"\r")  # Apply
+            applied = wait_for("Distill: applied 1 of 1", 15, mark)
+            now = style.read_text(encoding="utf-8")
+            report = "".join(p.read_text(encoding="utf-8") for p in reports.glob("*.md"))
+            ok108 = (shown and applied and "Give the file path first." in now and "Old content:" in report and "Short answers.\n~~~~" in report
+                     and '"path-rule": evidence from 2 conversations, needs 3' in report
+                     and asks("Write a short card about it") == 2 and asks("Find what keeps coming up") == 2)
+            check("F108 /memory distill", ok108, "终端里 /memory distill：卡片没变就复用（不再调摘要模型），当前模型提一条记忆更新，"
+                  "带两段对话的原话做证据；选 Apply 后写进记忆；报告里有改之前的内容和被丢掉的那条规则" if ok108
+                  else f"shown={shown} applied={applied} now={now!r} report={report[-400:]!r} {plain(seen)[-500:]!r}")
+        finally:
+            for _ in range(2):  # keep reading while ferry quits, or a full terminal buffer blocks it
+                os.write(fd, b"\x03")
+                wait_for("\0", 0.3)
+            try:
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(50):
+                    if os.waitpid(pid, os.WNOHANG)[0]:
+                        break
+                    wait_for("\0", 0.1)
+                else:
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+            except (ProcessLookupError, ChildProcessError):
+                pass
+    finally:
+        s.close()
+
+
 def check_claude_goal_jobs(root: Path, work: Path) -> None:
     """Claude through the Anthropic Messages API (sync, prompt-cache markers, pictures, cost), /goal, background jobs."""
     (work / "pic.png").write_bytes(PNG_1PX)
@@ -2112,7 +2217,7 @@ STEPS = [
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
     (check_agent_features, "agent"), (check_goal_todo, "goaltodo"), (check_memory_overwrite, "memow"),
-    (check_memory_review, "memrev"), (check_web_browser, "web"), (check_gateway, "gateway"),
+    (check_memory_review, "memrev"), (check_memory_distill, "distill"), (check_web_browser, "web"), (check_gateway, "gateway"),
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_plan_switch, "plan"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
