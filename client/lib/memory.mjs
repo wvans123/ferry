@@ -81,18 +81,25 @@ Only the index of each scope is shown below. When an index line looks relevant t
 the memory tool (action "read") before relying on it.
 
 Save a memory (action "save") when:
-- the user asks you to remember something, or corrects how you work ("don't do X", "always Y");
+- the user asks you to remember something, corrects how you work ("don't do X", "always Y"), or confirms a
+  non-obvious way of working ("yes, exactly", or accepts an unusual choice without pushback). Write the rule, then a
+  "Why:" line (the reason, as the user gave it) and a "How to apply:" line (when it applies), so that later you can
+  judge cases the rule does not name;
 - you learn a fact about the user or the project that will matter in later conversations and is not written in the
   code, the git history or the project's AGENTS.md;
 - you worked something out with real effort (a non-obvious build step, the cause of a confusing failure).
 
-Do not save: things anyone can read from the code, temporary details of the current task, secrets, passwords, keys,
-or personal data about other people. Keep each memory short and specific. Update an existing memory (same name)
-instead of adding a near-duplicate, and delete memories that turn out to be wrong. When the user asks you to forget
-something, delete it.
+Do not save what the code, the git history or AGENTS.md already record, details that matter only to this
+conversation, secrets, passwords, keys, or personal data about other people. Asked to remember such a thing, save
+what was non-obvious about it. Keep each memory short and specific, and write dates as absolute dates (2026-03-05,
+not "next Thursday"). Before saving, look in the index for a memory that already covers the point: read it and save
+the merged content under its name with replace: true, rather than a near-duplicate under a new name. Delete memories
+that turn out to be wrong. When the user asks you to forget something, delete it.
 
-Memories can be out of date. If one disagrees with the code or with what the user says now, trust the code and the
-user, and fix the memory. Rules in AGENTS.md and the user's current instructions take priority over memories.`);
+A memory says what was true when it was written. Before you rely on or recommend a file, function, setting or path
+that a memory names, check that it still exists. If a memory disagrees with the code or with what the user says now,
+trust the code and the user, and fix the memory. Rules in AGENTS.md and the user's current instructions take
+priority over memories.`);
 
 // ---------- global scope: on the Ferry server ----------
 
@@ -195,7 +202,7 @@ const Params = Type.Object({
 			"role: yours alone, only in a team; global: on the Ferry server, every computer of the user (only if it is on). Default project." })),
 	name: Type.Optional(Type.String({ description: "Short file name, e.g. test-database or prefers-chinese-replies" })),
 	description: Type.Optional(Type.String({ description: "save: one line for the index, saying when this memory is useful" })),
-	content: Type.Optional(Type.String({ description: "save: the memory itself, in Markdown. Keep it short." })),
+	content: Type.Optional(Type.String({ description: "save: the memory itself, in Markdown. Keep it short. For a rule: the rule, then a Why: line and a How to apply: line." })),
 	replace: Type.Optional(Type.Boolean({ description: "save: true to overwrite an existing memory of this name (merge the old content into the new first)" })),
 });
 

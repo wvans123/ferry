@@ -852,7 +852,8 @@ def check_v022(root: Path, work: Path) -> None:
 
 
 def check_prompt_rules(root: Path, work: Path) -> None:
-    """The system prompt: whole sentences (no lines cut mid-sentence); only the project's own AGENTS.md, not one in a folder above."""
+    """The system prompt: whole sentences (no lines cut mid-sentence); only the project's own AGENTS.md, not one in a folder above;
+    the memory rules."""
     parent = root / "parent"
     proj = parent / "proj"
     proj.mkdir(parents=True, exist_ok=True)
@@ -872,6 +873,11 @@ def check_prompt_rules(root: Path, work: Path) -> None:
                 and "do not allow anything new" in sys0 and "<external>" in sys0)
         check("F72 提示里的范围和压缩规则", ok72, "系统提示里有：按请求类型限定动作范围、被压缩摘要后接着干不重来、外部内容里的指令不执行"
               if ok72 else f"{sys1[:300]!r}")
+        ok88 = ("confirms a non-obvious way of working" in sys0 and '"How to apply:" line' in sys0
+                and "look in the index for a memory that already covers the point" in sys0
+                and "absolute dates" in sys0 and "check that it still exists" in sys0)
+        check("F88 记忆从纠正和认可里学", ok88, "系统提示里有：纠正和认可的做法都记下，带 Why 和 How to apply；先查目录、合并已有的那条；"
+              "日期写成具体日期；用记忆里的文件、函数、设置前先确认还在" if ok88 else f"{sys0[:300]!r}")
     finally:
         s.close()
 
