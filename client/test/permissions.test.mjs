@@ -56,7 +56,7 @@ test("modes decide what asks", () => {
 	assert.equal(d("bash", { command: "npm test" }, "acceptEdits"), "ask");
 	assert.equal(d("edit", { path: join(tmpdir(), "elsewhere.txt") }, "acceptEdits"), "ask"); // outside the project
 	assert.equal(d("bash", { command: "rm -rf build" }, "acceptEdits"), "allow"); // nothing there yet: only this command could have made it
-	assert.equal(d("bash", { command: "rm -rf *.o" }, "acceptEdits"), "ask");
+	assert.equal(d("bash", { command: "rm -rf $SOMETHING_UNKNOWN" }, "acceptEdits"), "ask");
 	assert.equal(d("edit", { path: "a.js" }, "plan"), "deny");
 	assert.equal(d("bash", { command: "npm test" }, "plan"), "deny");
 	assert.equal(d("bash", { command: "git log" }, "plan"), "allow");
@@ -173,8 +173,15 @@ test("delete targets are listed, or null when they cannot be", () => {
 	assert.deepEqual(P.deleteTargets("Remove-Item -Recurse -Force a,b -ErrorAction SilentlyContinue"), ["a", "b"]);
 	assert.deepEqual(P.deleteTargets("Remove-Item -Path 'my file.txt'"), ["my file.txt"]);
 	assert.deepEqual(P.deleteTargets("npm test"), []);
-	for (const c of ["rm -rf *.log", "rm -rf $DIR", "rm -rf ~/x", "cd .. && rm -rf x", "git clean -fdx", "Remove-Item x -Include *.tmp",
-		"cmd /c \"rd /s /q out\"", "del %TEMP%\\x",
+	// wildcards, variables and a simple cd chain are listed as written (expandTarget resolves them)
+	assert.deepEqual(P.deleteTargets("rm -rf *.log"), ["*.log"]);
+	assert.deepEqual(P.deleteTargets("rm -rf $DIR ~/x"), ["$DIR", "~/x"]);
+	assert.deepEqual(P.deleteTargets("del %TEMP%\\x"), ["%TEMP%\\x"]);
+	assert.deepEqual(P.deleteTargets("cd .. && rm -rf x"), ["../x"]);
+	assert.deepEqual(P.deleteTargets("cd a; cd b && rm c d"), ["a/b/c", "a/b/d"]);
+	assert.deepEqual(P.deleteTargets("Set-Location C:\\x; Remove-Item *.tmp"), ["C:\\x/*.tmp"]);
+	for (const c of ["cd a | rm x", "cd a && rm x & echo", "cd $(pwd) && rm x", "cd - && rm x", "git clean -fdx", "Remove-Item x -Include *.tmp",
+		"cmd /c \"rd /s /q out\"",
 		"find . -name '*.pyc' -delete", "find build -type f -exec rm {} +", "find . -execdir /bin/rm -f {} ;", "npx rimraf dist",
 		"rimraf build", "ls *.log | xargs rm", "find . -name x | xargs -0 rm -f", "Get-ChildItem *.tmp | Remove-Item",
 		"python -c \"import shutil; shutil.rmtree('build')\"", "python3 -c 'import os; os.remove(\"a.txt\")'",
@@ -212,7 +219,7 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	assert.equal(v(`rm ${fwd(join(proj, "new", "deep", "a.txt"))}`).action, "allow"); // absolute paths are paths, not /switches
 	assert.equal(v(`rm ${fwd(join(proj, "old.txt"))}`).action, "ask");
 	assert.equal(v("del /s /q old.txt").action, "ask");
-	assert.equal(v("rm ~/old.txt").action, "ask"); // the home folder
+	assert.equal(v("rm $SOMETHING_UNKNOWN/old.txt").action, "ask"); // a variable Ferry does not know
 	P.noteCreated(session, join(proj, "RUNNER~1.TXT"));
 	writeFileSync(join(proj, "RUNNER~1.TXT"), "x");
 	assert.equal(v("rm RUNNER~1.TXT").action, "allow"); // a ~ inside a Windows short name is part of the name
