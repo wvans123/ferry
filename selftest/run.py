@@ -121,7 +121,8 @@ class Stack:
                     "DEEPSEEK_API_KEY": "x", "FERRY_TEST_DROP_EVERY": str(drop_every), "FERRY_HOME": str(self.home),
                     "FERRY_TEST_DROP_BEFORE_CHAT": str(drop_before_chat), "FERRY_AUTO_APPROVE": "1",
                     "FERRY_SERVER_HOME": str(root / "zero-config-home"), "FERRY_PYTHON": PY,
-                    "FERRY_UPSTREAM_BASE_URL": "http://127.0.0.1:9100/v1", "FERRY_NO_UPDATE_CHECK": "1"}
+                    "FERRY_UPSTREAM_BASE_URL": "http://127.0.0.1:9100/v1", "FERRY_NO_UPDATE_CHECK": "1",
+                    "FERRY_SEARCH_API_EXA": "http://127.0.0.1:9100/exa"}  # never the real Exa
         self.env.update(server_env or {})
         local = "127.0.0.1,localhost"
         for k in ("NO_PROXY", "no_proxy"):
@@ -1223,7 +1224,7 @@ def find_browser() -> str:
 
 def check_web_browser(root: Path, work: Path) -> None:
     pages = {"FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100"}
-    s = Stack(root, work, "agent", server_env=pages)
+    s = Stack(root, work, "agent", server_env={**pages, "FERRY_SEARCH": "bing"})
     try:
         c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)
         client_ok = c1 == 0 and "pelican-42" in o1
@@ -1242,16 +1243,41 @@ def check_web_browser(root: Path, work: Path) -> None:
               "在工作电脑上搜索和读网页；公司网关要确认的网站会说明去哪确认；设成 off 时没有联网工具")
     finally:
         s.close()
-    # the server has a search API (its key stays there): web_search asks the server, pages are still read here
-    api = {"FERRY_SEARCH": "tavily", "FERRY_SEARCH_KEY": "tvly-test", "FERRY_SEARCH_API_TAVILY": "http://127.0.0.1:9100/tavily"}
+    # the server has search APIs (their keys stay there) and Exa's free search: web_search asks the server, which
+    # asks all of them at once; pages are still read here
+    api = {"FERRY_SEARCH": "tavily", "FERRY_SEARCH_KEY": "tvly-test", "FERRY_SEARCH_API_TAVILY": "http://127.0.0.1:9100/tavily",
+           "FERRY_SEARCH_KEY_DEEPSEEK": "ds-test", "FERRY_SEARCH_API_DEEPSEEK": "http://127.0.0.1:9100/deepseek"}
     s = Stack(root.parent / "web-search", work, "agent", server_env={**pages, **api})
     try:
         before = len(jsonl(s.upstream))
         c1, o1 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)
         rows = jsonl(s.upstream)[before:]
         asked = [r for r in rows if r.get("query") == "ferry" and r.get("search_depth")]
-        seen = "Ferry page found by the search API" in json.dumps(rows[-1], ensure_ascii=False)
+        result = next((m.get("content") for m in rows[-1].get("messages", []) if m.get("role") == "tool"), "")
+        result = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        seen = "Ferry page found by the search API" in result
         ok = c1 == 0 and "pelican-42" in o1 and asked and seen
+        # F98: DeepSeek, Tavily and Exa each found the same page under a different address: it is listed once
+        exa = [r for r in rows if r.get("method") == "tools/call"]
+        ds = [r for r in rows if r.get("ori_question") == "ferry"]
+        ok98 = (bool(exa) and bool(ds) and result.count("127.0.0.1:9100/page.html") == 1 and "[2] A second ferry page" in result
+                and "utm_source" not in result and "Searched by the server with deepseek+tavily+exa" in result)
+        check("F98 几家一起搜", ok98, "服务端同时问 DeepSeek、Tavily 和 Exa 免费搜索，按排名合并；同一个网页（地址带 # 或"
+              "跟踪参数）只列一次，结果带 [n] 编号" if ok98 else f"exa={len(exa)} deepseek={len(ds)} {result[:600]!r}")
+        # F99: the server read the top pages (DeepSeek's Fetch here) and quoted the passages about the query
+        fetched = [r for r in rows if set(r) == {"url"} and "127.0.0.1:9100" in r["url"]]
+        ok99 = (bool(fetched) and "> The ferry leaves pier 3 every 20 minutes." in result and "Sunny and warm" not in result
+                and "> The ferry museum opens at nine." in result)
+        check("F99 搜索结果带原文段落", ok99, "服务端读前几个结果页，把和搜索词相关的段落原样摘出来放在结果下面（> 开头），"
+              "无关的段落不带；读不到的页用搜索来源给的原文" if ok99 else f"fetched={len(fetched)} {result[:900]!r}")
+        # F100: the same search again within 10 minutes: answered from the server's cache, no source asked again
+        n_before = len(jsonl(s.upstream))
+        c3, o3 = s.ferry("-p", "WEBTEST: look it up", env_extra=pages)
+        again = [r for r in jsonl(s.upstream)[n_before:] if r.get("search_depth") or r.get("method") == "tools/call"
+                 or r.get("ori_question")]
+        ok100 = c3 == 0 and "pelican-42" in o3 and not again
+        check("F100 搜索缓存", ok100, "10 分钟内同样的搜索直接用服务端的缓存，不再去问搜索来源"
+              if ok100 else f"code={c3} asked again={len(again)} {o3[-300:]!r}")
         # read a page with a question: the page goes to the server, its model answers, only the answer comes back
         c2, o2 = s.ferry("-p", "FETCHQTEST: what is the secret word", env_extra=pages)
         rows = jsonl(s.upstream)

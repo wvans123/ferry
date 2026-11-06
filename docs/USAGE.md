@@ -191,7 +191,7 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 - 和 Claude Code 的 WebFetch 一样，agent 可以带一个问题去读（比如"5.1 节规定了什么"）：读到的文字（最多 10 万字）交给服务端的模型，对话里只放它的回答。这样一次能读十几个网页，对话也不会被撑满。要原文（代码、表格、原话、页面里的链接）时不带问题，拿到的是网页文字，长的分段读。读网页用服务端"写摘要用"的模型，没设就用默认模型。
 - 只在工作电脑上读的网站：`ferry config set localSites wiki.corp.com,jira.corp.com`，这些地址不会发给服务端。
 - 15 分钟内读过的网页不再重新下载。`web_fetch` 碰到 PDF、Word、Excel、PowerPoint 文件，存进项目的 `downloads` 文件夹，agent 接着用 `office_read` 读。
-- `web_search`：由服务端去搜，工作电脑只把搜索词发过去，拿回标题、地址、日期和摘要。服务端接了 DeepSeek 时默认用 DeepSeek 自家的搜索 API，不用另外设置；也可以换成别的（管理页 → 设置 → 网页搜索，见 [SERVER.md](SERVER.md#网页搜索)）。服务端没有搜索来源时，工作电脑读 Bing 的结果页，质量差很多。服务端搜索出错时自动改用 Bing，并告诉 agent。agent 可以只搜某些网站（`allowed_domains`，比如 3gpp.org），或者排除某些网站（`blocked_domains`）。
+- `web_search`：由服务端去搜，工作电脑只把搜索词发过去。服务端同时问几家（Exa 的免费搜索，接了 DeepSeek 就加上 DeepSeek 搜索，管理页填了 Key 的搜索 API），合并去重，再读前 3 个网页，拿回带编号的结果：标题、地址、日期、摘要，以及从网页里原样摘出的相关段落。不用设置就能用，见 [SERVER.md](SERVER.md#网页搜索)。服务端搜索出错或什么都没搜到时自动改用 Bing 的结果页，并告诉 agent。agent 可以只搜某些网站（`allowed_domains`，比如 3gpp.org），或者排除某些网站（`blocked_domains`）。
 - 查资料的方法写在 agent 的系统提示里：换几种说法搜，中英文都试，限定权威网站；查会变的东西时搜索词里带上今年的年份；只看摘要不算数，要打开来源读，顺着链接找到原始出处；核对日期和版本，重要的事找第二个来源；回答末尾列出处。问题大的交给调研子 agent。没设搜索来源、Bing 的结果又不对题时，agent 会用本机浏览器打开搜索引擎去搜，和你自己搜一样。
 - 下载文件和在 Cursor 里一样直接交代：agent 用 `curl -L --retry 3 -C - -o` 下载（断了能续上），大文件放到后台下。放哪：你说了放哪就放哪；没说就放在合适的地方（和它相关的文件旁边，或者当前文件夹）；都不合适就放项目里的 `downloads` 文件夹。下完删掉没用的临时文件。命令也走公司代理，并且和 ferry 用同一份证书（`%USERPROFILE%\.ferry\ca-bundle.pem`，公司检查 HTTPS 用的证书也在里面）。下完它会确认拿到的不是网关的确认页。
 - 不许打开的网站：`ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`。这些网站和它们的子域名，`web_fetch`、浏览器和命令（比如 curl）都不打开，`web_fetch` 跳转过去的也拦下。

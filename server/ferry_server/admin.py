@@ -144,9 +144,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
             "shared_memory": cfg.shared_memory,
             "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "github_repo": cfg.github_repo, "github_token": bool(reports.github_token(cfg)),
-            "search_engine": cfg.search_engine, "search_in_use": web_search.engine(cfg),
-            "search_key": bool(web_search.api_key(cfg)), "deepseek_key": bool(web_search.deepseek_key(cfg)),
-            "search_engines": web_search.ENGINES,
+            "search_engine": cfg.search_engine, "search_sources": [web_search.label(s) for s in web_search.sources(cfg)],
+            "search_keys": {n: bool(web_search.engine_key(cfg, n)) for n in web_search.ENGINES},
+            "deepseek_key": bool(web_search.deepseek_key(cfg)), "search_engines": web_search.ENGINES,
             # models that can search the web themselves (Claude's API, OpenAI's Responses API)
             "search_models": [{"id": m.id, "model": m.model, "api": m.api} for m in cfg.models.values()
                               if web_search.search_model(cfg, f"model:{m.id}")],
@@ -276,7 +276,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                                      or web_search.search_model(cfg, str(b["search_engine"]))):
             cfg.search_engine = b["search_engine"] or ""
         if "search_key" in b:
-            web_search.save_key(cfg, str(b["search_key"] or ""))
+            web_search.save_key(cfg, str(b.get("search_key_for") or cfg.search_engine), str(b["search_key"] or ""))
         if "record_details" in b:
             cfg.record_details = bool(b["record_details"])
             if not cfg.record_details:
@@ -435,15 +435,12 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         if not allowed(request, True):
             return denied()
         if not web_search.ready(cfg):
-            return {"ok": False, "error": "先选搜索服务并填 Key（用模型自带的搜索时，那个模型要能用）"}
-        try:
-            async with httpx.AsyncClient() as c:
-                got = await web_search.search(cfg, c, "Ferry coding agent", 3)
-        except httpx.HTTPStatusError as e:
-            return {"ok": False, "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
-        except Exception as e:
-            return {"ok": False, "error": repr(e)[:300]}
-        return {"ok": bool(got), "results": got[:3], **({} if got else {"error": "没有结果"})}
+            return {"ok": False, "error": "现在不用服务端搜索"}
+        async with httpx.AsyncClient() as c:
+            got, report = await web_search.search_all(cfg, c, "Ferry coding agent", 3)
+        each = {web_search.label(s): r if isinstance(r, str) else f"{r} 条" for s, r in report.items()}
+        return {"ok": bool(got), "results": [web_search.public(x) for x in got[:3]], "sources": each,
+                **({} if got else {"error": "没有结果"})}
 
     @app.post("/admin/api/open-folder")
     async def open_folder(request: Request):

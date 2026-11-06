@@ -50,7 +50,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
 | 提问 | `ask_user` | `client/lib/ask.mjs` | — | F65 |
 | 联网 | `web_fetch`、`web_search`、网站黑名单 | `client/lib/web.mjs` | `web`、`blockedSites` | F35、F57、F64 |
-| 搜索和读网页 | `web_search` 经服务端搜（模型自带的搜索，或 Tavily、Brave、博查），`web_fetch` 带问题时由服务端的模型读 | `server/ferry_server/search.py`；客户端在 `web.mjs` | 管理页 → 设置 → 网页搜索；不设就读 Bing 的结果页 | F66、F67 |
+| 搜索和读网页 | `web_search` 经服务端搜：几家同时查（Exa 免费搜索、DeepSeek、填了 Key 的 Tavily / Brave / 博查、可选模型自带的搜索），合并去重，摘出前几页的相关段落，缓存 10 分钟；`web_fetch` 带问题时由服务端的模型读 | `server/ferry_server/search.py`；客户端在 `web.mjs`；评测 `evals/search_eval.py` | 管理页 → 设置 → 网页搜索；选"不用服务端搜索"就读 Bing 的结果页 | F66、F67、F98–F100 |
 | 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
 | Office | 读写 Word、Excel、PowerPoint、PDF；读旧版 .doc/.xls/.ppt；整个文件夹转成文本 | `client/lib/office.mjs`、`client/skills/office/` | — | F50、F75–F77 |

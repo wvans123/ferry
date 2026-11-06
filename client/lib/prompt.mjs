@@ -22,7 +22,8 @@ const RESEARCH = [
 		"name, and allowed_domains for the source that would know (the standard body, the vendor, the project's own " +
 		"site). For anything that changes over time, put the current year in the query or use recent. If the results stay off-topic or thin, search in the " +
 		"browser instead when the browser skill is there (agent-browser open with the search engine's address, then read it).",
-	"- Snippets only point the way: open the best results with web_fetch, and follow links in them to the primary " +
+	"- Snippets only point the way. Passages under a result (lines starting with >) are quoted from the page itself " +
+		"and can be cited by the result's [n]; when they do not settle it, open the best results with web_fetch, and follow links in them to the primary " +
 		"source (the specification, the paper, the official page, the repository) instead of stopping at a blog or a summary. " +
 		"Give web_fetch a prompt saying what you need from the page, so only the answer comes back; leave it out when " +
 		"you need the page's own text (code, a table, exact wording, the links to follow).",

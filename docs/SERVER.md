@@ -88,30 +88,36 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 | `DEEPSEEK_API_KEY` 等 | 用环境变量给 Key，优先于管理页里填的 |
 | `FERRY_SESSION_STORE` | 服务端存不存对话：`memory`（默认）/ `disk` / `none` |
 | `FERRY_GITHUB_TOKEN` / `FERRY_GITHUB_REPO` | 问题报告用的 GitHub 令牌和仓库（优先于管理页） |
-| `FERRY_SEARCH` / `FERRY_SEARCH_KEY` | 网页搜索来源（`deepseek`、`tavily`、`brave`、`bocha`、`model:<模型名>` 用模型自带的搜索，`bing` 不用服务端搜索；不设就是自动）和搜索 API 的 Key（优先于管理页） |
+| `FERRY_SEARCH` | 网页搜索：不设就是自动（所有能用的来源一起查），`model:<模型名>` 另加这个模型自带的搜索，`bing` 不用服务端搜索 |
+| `FERRY_SEARCH_KEY_<来源>` | 搜索 API 的 Key，比如 `FERRY_SEARCH_KEY_TAVILY`、`FERRY_SEARCH_KEY_BOCHA`（优先于管理页） |
+| `FERRY_SEARCH_EXA` | 设成 `off` 不用 Exa 的免费搜索 |
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
 
 ## 网页搜索
 
-搜索引擎给程序看的结果页质量差（实测搜"agent memory open source github"，Bing 前几条是字典里 agent 的释义），所以 agent 的 `web_search` 尽量由服务端去搜。
+搜索引擎给程序看的结果页质量差（实测搜"agent memory open source github"，Bing 前几条是字典里 agent 的释义），所以 agent 的 `web_search` 由服务端去搜。
 
-默认是"自动"：服务端接了 DeepSeek（模型地址是 api.deepseek.com），就用 DeepSeek 自家的搜索 API，用的是同一个 Key，不用另外注册。DeepSeek Harness 默认也用它。每千次 0.75 美元，只有返回结果的才收费；结果带摘要（几百字）、日期和权威度，支持 `site:`、`after:` 这些写法。没接 DeepSeek 时，工作电脑读 Bing 的结果页。
+服务端把一个搜索同时发给所有能用的来源：
 
-想换别的，在管理页 → 设置 → 网页搜索里选，有两类：
+- Exa 的免费搜索：不用 Key，不用设置。opencode 没有 Key 时也用它。同时搜得太多会被它限流，这时只少了它这一家的结果。
+- DeepSeek 搜索：服务端接了 DeepSeek（模型地址是 api.deepseek.com）就自动加上，用同一个 Key。每千次 0.75 美元，结果带几百字的摘要和日期。
+- 填了 Key 的搜索 API：[Tavily](https://app.tavily.com) 是给 AI agent 用的，每月有免费额度；[Brave Search](https://api-dashboard.search.brave.com) 有自己的索引；[博查](https://open.bochaai.com) 中文网页多，搜中文时它的结果排得更靠前。在管理页 → 设置 → 网页搜索的第二行选一家，贴 Key，点"保存 Key"。可以填好几家，都会用上。Key 存在数据目录的 `search-keys.json` 里，管理页不显示。
+- 模型自带的搜索（可选），和 Claude Code、Codex 的做法一样：在第一行选"另加某某自带的搜索"。服务端用这个模型的 Key 请它搜，让它给每个结果原样摘一两句话。列表里出现的是能这样搜的模型：走 Claude 官方接口的 Claude，和走 OpenAI Responses 接口的 GPT。每次搜索除了 token 另有费用（Claude 官方是每千次 10 美元），也慢，最多等一分钟。kiro 这类中转多半不支持，选好后点"测试"看看。
 
-- 模型自带的搜索，和 Claude Code、Codex 的做法一样：服务端用这个模型的 Key 请它搜一下，只把搜到的网页（标题、地址、日期、引用的那句话）交回工作电脑。列表里出现的是能这样搜的模型：走 Claude 官方接口（Anthropic 格式）的 Claude，和走 OpenAI Responses 接口的 GPT。不用另注册，但每次搜索除了 token 另有费用（Claude 官方是每千次 10 美元）。中转多半不支持，选好后点"测试"。
-- 搜索 API：[Tavily](https://app.tavily.com) 是给 AI agent 用的，每月有免费额度；[Brave Search](https://api-dashboard.search.brave.com) 有自己的索引；[博查](https://open.bochaai.com) 中文网页多，国内能直接访问。注册拿 Key，选这家，贴 Key，保存，点"测试"。Key 存在数据目录的 `search-key` 文件里，管理页不再显示它。
+几家的结果按排名合并（RRF），同一个网页只留一条。然后服务端同时读排在前面的 3 个网页，从正文里挑出和搜索词最相关的段落，原样摘出来（不改写），放在那条结果下面。网页读不到时（PDF、拒绝访问），用搜索来源自己给的原文。整个结果一般在 3k 到 5k token。主模型据此回答，要细看哪个页面再用 `web_fetch` 读。同样的搜索 10 分钟内直接用缓存，几台电脑共用。
 
-选 `model:<模型名>` 的取舍：搜得比 API 准，结果由模型挑过；但慢，一次搜索可能要几十秒，最长约 90 秒。经 Cloudflare Tunnel 访问服务端时，隧道可能等不到就超时，工作电脑收到一个 502 网页（不是搜索引擎出的错，提示里会写明来自 Cloudflare）。搜索多、要快，选 DeepSeek 或 Tavily 这类 API；偶尔搜一次、重质量，才选模型自带的搜索。
+管理页上点"测试"，能看到每一家各搜到几条、哪家出错。第一行选"不用服务端搜索"，就回到工作电脑读 Bing 的结果页。
 
-工作电脑下次启动 ferry 时生效。工作电脑只把搜索词发给服务端（几百字节），网页还是在工作电脑上打开。服务端搜索出错（额度用完、Key 失效、模型不支持）时，工作电脑自动改用 Bing（带严格安全搜索），并告诉 agent 原因。遇到 502、503、504 会先重试一次；回复不是 JSON 时，提示里写明是哪一层回的（Cloudflare 带 cf-ray，别的显示网页标题）。搜索成功时，结果后面会注明用的是哪个搜索来源。每次搜索在调用记录里记一行（`search`），不记搜索词。
+工作电脑下次启动 ferry 时生效。工作电脑只把搜索词发给服务端（几百字节）。所有来源都出错，或者什么都没搜到时，工作电脑自动改用 Bing（带严格安全搜索），并告诉 agent 原因。遇到 502、503、504 会先重试一次；回复不是 JSON 时，提示里写明是哪一层回的（Cloudflare 带 cf-ray，别的显示网页标题）。搜索成功时，结果后面会注明用了哪几家。每次搜索在调用记录里记一行（`search`），不记搜索词。
+
+搜索质量用 `evals/search_eval.py` 量，见 [evals/README.md](../evals/README.md#搜索评测)。
 
 ### 读网页
 
 agent 读公开的网页（`web_fetch`）时，工作电脑只把地址发过来，由服务端去读：
 
-- 服务端接了 DeepSeek 时用 DeepSeek 的读网页 API（返回整理好的 Markdown，不少靠脚本生成的网页也能读，每千次 0.75 美元），否则服务端自己下载、转成文字。15 分钟内读过的不再重读。
+- 服务端接了 DeepSeek 时用 DeepSeek 的读网页 API（返回整理好的 Markdown，不少靠脚本生成的网页也能读，每千次 0.75 美元），否则服务端自己下载、转成文字，只留正文（`<main>` 或 `<article>`），去掉导航、侧栏、页脚、Cookie 提示和评论。GitHub 上的文件页（`/blob/`）直接读文件本身。15 分钟内读过的不再重读，搜索时读过的也算。
 - agent 带着问题读时（和 Claude Code 的 WebFetch 一样），服务端让"写摘要用"的模型（没设就用默认模型）按问题读，只把回答交回去；不带问题时分段交回网页文字。调用记录里标着 `read` 和 `extract`。
 - 服务端不读私有网络上的地址（包括跳转过去的），这样碰不到你家里或公司的内网；工作电脑也不会把内网地址发过来。这些、服务端读不到的网页、PDF 和 Office 文件，由工作电脑自己读或下载。
 - 读网页只是从一页里找出和问题有关的内容，用便宜的模型就够；想更准就把"写摘要用"设成好一点的模型。

@@ -40,11 +40,16 @@ function searchTool(cfg) {
 }
 
 test("web_search asks the server's search engine when it has one; only the query leaves", async () => {
-	const srv = await servers((b) => [200, { engine: "tavily", results: [{ title: "Agent memory", url: "https://github.com/x/mem", snippet: `about ${b.query}`, date: "2026-10-01T00:00:00Z" }] }]);
+	const srv = await servers((b) => [200, { engine: "tavily+exa", results: [
+		{ title: "Agent memory", url: "https://github.com/x/mem", snippet: `about ${b.query}`, date: "2026-10-01T00:00:00Z",
+			passages: ["# Memory\nNotes are kept between sessions.", "Second passage."] },
+		{ title: "Other", url: "https://o.example", snippet: "" }] }]);
 	const cfg = { server: srv.base, token: "tok", features: ["search"] };
 	const r = await searchTool(cfg).execute("1", { query: "agent memory", recent: "month" });
-	assert.match(r.content[0].text, /Agent memory \(2026-10-01\)\n {3}https:\/\/github.com\/x\/mem\n {3}about agent memory/);
-	assert.equal(r.details.engine, "tavily");
+	const text = r.content[0].text;
+	assert.match(text, /\[1\] Agent memory \(2026-10-01\)\n {3}https:\/\/github.com\/x\/mem\n {3}about agent memory\n {3}> # Memory\n {5}Notes are kept between sessions\.\n {3}> Second passage\.\n\n\[2\] Other/);
+	assert.match(text, /\[Searched by the server with tavily\+exa\.\]/);
+	assert.equal(r.details.engine, "tavily+exa");
 	assert.deepEqual(JSON.parse(srv.seen[0].body), { query: "agent memory", count: 8, recent: "month", allowed_domains: [], blocked_domains: [] });
 	assert.equal(srv.seen[0].auth, "Bearer tok");
 	srv.close();
@@ -59,6 +64,11 @@ test("without a search engine on the server, or when it fails, web_search reads 
 	assert.match(r.content[0].text, /From Bing[\s\S]*search engine failed \(Tavily answered HTTP 432: out of credits\)[\s\S]*last week/);
 	assert.equal(await searchServer({ server: srv.base, features: [] }, "q"), null);
 	srv.close();
+	const empty = await servers(() => [200, { engine: "exa", results: [] }]);
+	r = await searchTool({ server: empty.base, features: ["search"] }).execute("1", { query: "q" });
+	assert.match(r.content[0].text, /From Bing[\s\S]*The server's search found nothing; these results are Bing's page/);
+	assert.equal(r.details.engine, "bing");
+	empty.close();
 });
 
 test("a research subagent is built in; a short agent file only changes its model", () => {

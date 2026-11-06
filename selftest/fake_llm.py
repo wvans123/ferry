@@ -653,6 +653,26 @@ class H(BaseHTTPRequestHandler):
         if self.path.endswith("/tavily/search"):  # a search API on the Ferry server's side (Tavily's answer shape)
             return self.send_json(200, {"results": [{"title": "Ferry page found by the search API", "url": "http://127.0.0.1:9100/page.html",
                                                      "content": f"Search API result for {body.get('query')}", "published_date": "2026-10-30"}]})
+        if self.path.endswith("/deepseek/v1/tools/search"):  # DeepSeek's Search API: the same page, written differently
+            return self.send_json(200, {"results": [{"title": "Ferry page found by the search API", "url": "http://127.0.0.1:9100/page.html#top",
+                                                     "summary": "DeepSeek summary about ferries", "date": "2026-10-29"}]})
+        if self.path.endswith("/deepseek/v1/tools/fetch"):  # DeepSeek's Fetch API, for the passages under the results
+            if "/page.html" not in body.get("url", ""):
+                return self.send_json(404, {"error": "not found"})
+            return self.send_json(200, {"title": "Ferry page", "content": "The ferry leaves pier 3 every 20 minutes.\n\n# Weather\n"
+                                        + "Sunny and warm. " * 40})
+        if self.path.endswith("/exa"):  # Exa's free search (its MCP server), one server-sent event
+            text = ("Title: Ferry page\nURL: http://127.0.0.1:9100/page.html?utm_source=exa\nPublished: N/A\nAuthor: N/A\n"
+                    "Highlights:\nFerry page highlights.\n\n---\n\nTitle: A second ferry page\nURL: http://127.0.0.1:9100/second.html\n"
+                    "Published: 2026-10-01\nAuthor: N/A\nHighlights:\nThe ferry museum opens at nine.")
+            data = json.dumps({"jsonrpc": "2.0", "id": body.get("id"), "result": {"content": [{"type": "text", "text": text}]}})
+            out = f"event: message\ndata: {data}\n\n".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            return
         if self.path.endswith("/bark"):  # a phone notification (Bark)
             return self.send_json(200, {"code": 200, "message": "success"})
         if self.path.endswith("/v1/messages"):
