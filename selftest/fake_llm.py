@@ -329,14 +329,16 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "bash", {"command": "curl -sSL -o got.zip http://127.0.0.1:9100/ftp/23501-j40.zip && echo downloaded"})
         return ("text", "UPLOAD: " + text_of(tools[0])[:300].replace("\n", " ") + " || " + text_of(tools[1])[:80])
-    if "DELETETEST" in first:  # in full access: delete a file made in this session, then one that was there before
-        if not tools:
-            return ("tool", "write", {"path": "made-now.txt", "content": "made by the agent\n"})
-        if len(tools) == 1:
-            return ("tool", "bash", {"command": "rm made-now.txt && echo removed-new"})
-        if len(tools) == 2:
-            return ("tool", "bash", {"command": "rm old.txt && echo removed-old"})
-        return ("text", "DELETE: " + text_of(tools[1])[:80] + " || " + text_of(tools[2])[:300].replace("\n", " "))
+    if "DELETETEST" in first:  # delete a file made in this session (also one in the temp folder with "TMP"), then one that was there before
+        tmp = (__import__("tempfile").gettempdir() + "/ferry-f70-scratch.txt").replace("\\", "/")
+        steps = [("write", {"path": "made-now.txt", "content": "made by the agent\n"}),
+                 ("bash", {"command": "rm made-now.txt && echo removed-new"})]
+        if "TMP" in first:
+            steps += [("bash", {"command": f"echo scratch > {tmp}"}), ("bash", {"command": f"rm {tmp} && echo removed-tmp"})]
+        steps.append(("bash", {"command": "rm old.txt && echo removed-old"}))
+        if len(tools) < len(steps):
+            return ("tool", steps[len(tools)][0], steps[len(tools)][1])
+        return ("text", "DELETE: " + " || ".join(text_of(t)[:160].replace("\n", " ") for t in tools[1:]))
     if "ASKTEST" in first:  # ask the user; with no terminal the tool says to go on with the recommendation
         if not tools:
             return ("tool", "ask_user", {"questions": [{"question": "Which format?", "options": [{"label": "Word"}, {"label": "PPT"}],

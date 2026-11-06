@@ -911,11 +911,20 @@ def check_upload_delete(root: Path, work: Path) -> None:
                and "downloaded" in o1 and (proj / "got.zip").exists() and "SECRET-PAYLOAD-69" not in up)
         check("F69 上传每次都问", ok1, "全部放行模式加上 bash(curl*) 规则，curl 上传本机文件仍要确认（没有终端时拦下，说明规则和模式都放不行），"
               "文件没发出去；curl 下载照常不问" if ok1 else f"code={c1} {o1[-400:]!r}")
-        c2, o2 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra=full)
-        ok2 = (c2 == 0 and "DELETE:" in o2 and "removed-new" in o2 and not (proj / "made-now.txt").exists()
+        # every mode: what this session made goes (project folder, temp folder); what was there before always asks
+        tmpf = Path(tempfile.gettempdir()) / "ferry-f70-scratch.txt"
+        c2, o2 = s.ferry("-p", "DELETETEST-TMP: clean up", cwd=proj, env_extra=full)
+        ok2 = (c2 == 0 and "removed-new" in o2 and "removed-tmp" in o2 and not (proj / "made-now.txt").exists() and not tmpf.exists()
                and "did not create in this session" in o2 and "removed-old" not in o2 and (proj / "old.txt").exists())
-        check("F70 删除只放行本次新建的", ok2, "全部放行模式下，删除本次会话里 agent 新建的文件直接执行；删除原来就有的文件要确认"
-              if ok2 else f"code={c2} {o2[-400:]!r}")
+        c3, o3 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "acceptEdits"})
+        c4, o4 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "default"})
+        # default mode asks for the write itself (no terminal here), so only the old file is checked there
+        ok3 = (c3 == 0 and "removed-new" in o3 and "did not create in this session" in o3 and "removed-old" not in o3 and (proj / "old.txt").exists())
+        ok4 = (c4 == 0 and "removed-old" not in o4 and (proj / "old.txt").exists())
+        check("F70 删除只放行本次新建的", ok2 and ok3 and ok4,
+              "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样（全部放行、自动接受编辑已验证）；"
+              "删除原来就有的文件在每个模式下都要确认，也没有\"以后都允许\""
+              if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r}")
     finally:
         s.close()
 

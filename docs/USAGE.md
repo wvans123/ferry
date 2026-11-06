@@ -141,7 +141,7 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 - 确认框里可以选"以后都允许这类命令"，比如以 `npm test` 开头的命令。规则按项目记住。
 - 危险操作（删整个目录、`git push --force`、`git reset --hard`、`curl … | sh`……）除了"全部放行"以外都会问，并说明危险在哪。
 - 把本机文件或数据发到网络上的命令，每次都问，"全部放行"也问，已有的 `bash(curl*)` 这类规则也放不过去，确认框里没有"以后都允许"。比如 `curl -d/-F/-T/--json`、`wget --post-file`、PowerShell 的 `Invoke-WebRequest -InFile/-Body/-Method Post`、往远程主机的 `scp`/`rsync`/`sftp`/`ftp`。提示是"Careful: this sends data from this computer to 主机名"。普通下载（`curl -L -o 文件 网址`）和发给本机 `localhost` 的请求不算。
-- "全部放行"下删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`、`git clean -f`）：要删的东西都是这次 ferry 启动后 agent 新建的，才直接删；原来就有的文件、项目外的路径、带通配符或变量的路径、`cd` 之后的删除、`git clean`，以及列不出要删什么的写法（`find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），都会问，也没有"以后都允许"。删文件夹时，里面每个文件都得是这次新建的。其他模式和以前一样。
+- 删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`）：所有模式下规则都一样。要删的东西都是这次 ferry 启动后 agent 自己新建的，就直接删，不问，不管在项目文件夹、%TEMP% 还是 D:\tmp。只要有一个不是这次新建的（原来就有的文件、带通配符或变量的路径、`cd` 之后的删除、`git clean`，以及列不出要删什么的写法，比如 `find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），就每次都问，也没有"以后都允许"。删文件夹时，里面每个文件都得是这次新建的。命令里除了删除还有别的操作时，其余部分按当前模式判断。计划模式仍然只读。
 - 改项目文件夹以外的文件，总要先确认。
 - `.env`、`.ssh` 这类路径永远不碰（`blockedPaths` 可改）。
 - 启动时用哪种模式：`ferry config set permissionMode acceptEdits`。

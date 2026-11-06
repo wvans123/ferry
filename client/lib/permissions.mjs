@@ -280,12 +280,11 @@ export function madeThisSession(p, session, budget = { n: 5000 }) {
 }
 
 /** Why a delete in bypass mode still needs the user, or "" when it only deletes what this session made. */
-export function unsafeDeleteOf(cmd, cwd, dirs, session = { start: Infinity, made: new Set() }) {
+export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }) {
 	const targets = deleteTargets(cmd);
 	if (targets === null) return "deletes files Ferry cannot list (a pattern, a variable, find/xargs, a script, another folder or git clean)";
 	for (const t of targets) {
 		const abs = resolve(cwd, gitBashPath(t));
-		if (!dirs.some((d) => insideProject(d, abs))) return `deletes ${t}, which is outside the project`;
 		if (!madeThisSession(abs, session)) return `deletes ${t}, which Ferry did not create in this session`;
 	}
 	return "";
@@ -462,10 +461,17 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	// asked every time, even in full access and over allow rules; a "danger" prompt has no "always allow"
 	const always = shell ? browserPrivacyOf(cmd) || uploadOf(cmd) : "";
 	if (always) return { action: "ask", danger: always, segments, always: true };
-	if (mode === "bypass") {
-		const del = shell ? unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session) : "";
-		return del ? { action: "ask", danger: del, segments, always: true } : { action: "allow" };
+	// Deletes, in every mode: what Ferry made in this session goes ahead without asking, wherever it is (project, temp
+	// folder, any drive); anything else, or anything that cannot be listed, asks every time (no "always allow")
+	if (shell) {
+		const t = deleteTargets(cmd);
+		if (t === null || t.length) {
+			const del = unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session);
+			if (del) return { action: "ask", danger: del, segments, always: true };
+			if (segments.every((s) => { const x = deleteTargets(s); return (x && x.length) || isReadOnlySegment(s); })) return { action: "allow" };
+		}
 	}
+	if (mode === "bypass") return { action: "allow" };
 
 	const danger = shell ? dangerOf(cmd) : "";
 	if (danger) return { action: "ask", danger, segments };
