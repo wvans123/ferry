@@ -4,14 +4,13 @@
 //                 path, and reads more when it needs to (like Cursor). Keeps every request small.
 //   history_search  after the context was summarized, find exact details from earlier in this conversation in the
 //                 full local record (pi keeps every message on disk), instead of redoing the work (like Cursor).
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { FERRY_HOME, parseTokens } from "./config.mjs";
+import { cleanOldFiles, FERRY_HOME, parseTokens } from "./config.mjs";
 
 export const OUTPUTS_DIR = join(FERRY_HOME, "outputs");
-const KEEP_DAYS = 7;
 // Tools whose output is data the model asked for on purpose: never cut (read has its own paging)
 const NEVER_CUT = new Set(["read", "edit", "write", "memory", "todo", "task", "history_search", "past_conversations"]);
 
@@ -101,18 +100,6 @@ export function createTodo() {
 
 // ---------- big outputs ----------
 
-function cleanOld() {
-	try {
-		const cutoff = Date.now() - KEEP_DAYS * 86400_000;
-		for (const day of readdirSync(OUTPUTS_DIR)) {
-			const p = join(OUTPUTS_DIR, day);
-			if (statSync(p).mtimeMs < cutoff) rmSync(p, { recursive: true, force: true });
-		}
-	} catch {
-		// nothing saved yet
-	}
-}
-
 function cutLines(lines, fromEnd, maxBytes) {
 	const out = [];
 	let bytes = 0;
@@ -151,7 +138,7 @@ export function createBigOutputs(cfg) {
 	const limit = Number(cfg.bigOutputBytes ?? 8192);
 	return (pi) => {
 		if (!(limit > 0)) return;
-		pi.on("session_start", () => cleanOld());
+		pi.on("session_start", () => cleanOldFiles(OUTPUTS_DIR));
 		pi.on("tool_result", (event) => {
 			if (NEVER_CUT.has(event.toolName)) return undefined;
 			const texts = (event.content ?? []).filter((c) => c.type === "text");

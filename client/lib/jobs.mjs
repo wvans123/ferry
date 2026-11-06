@@ -10,13 +10,41 @@ import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { FERRY_HOME, findBash } from "./config.mjs";
+import { cleanOldFiles, FERRY_HOME, findBash } from "./config.mjs";
 
 const jobs = new Map(); // id -> job, shared by the main agent and its subagents
 let nextId = 1;
 let hooks = { ui: null, wake: false, tell: () => {} };
 const WAKE_NOTE = "\n(From Ferry, not the user: use the result now; if nothing else needs doing, tell the user briefly what came of it.)";
 const DIR = join(FERRY_HOME, "jobs", String(process.pid));
+
+// A subagent's job gets from subagent.mjs: agent (its name), steps (its tool calls so far), transcript (file path).
+
+/** The "Running" line for a job, cut to `width`: a subagent shows what it is doing now. */
+export function widgetLine(j, width = 80) {
+	const line = j.kind !== "subagent" ? `  #${j.id} command: ${j.name}`
+		: j.steps?.length && j.agent ? `  #${j.id} ${j.agent}: ${j.steps.at(-1)}` : `  #${j.id} subagent: ${j.name}`;
+	return line.length > width ? `${line.slice(0, width - 3)}...` : line;
+}
+
+/** What a subagent did so far (while it runs) or its report, and where its transcript is. */
+export function subagentText(j) {
+	const body = j.status === "running"
+		? (j.steps?.length ? `Steps so far (${j.steps.length}):\n${j.steps.slice(-15).map((s) => `  ${s}`).join("\n")}` : "(starting)")
+		: (j.report ?? j.error ?? "");
+	return j.transcript ? `${body}\n\nTranscript: ${j.transcript}` : body;
+}
+
+/** The last `lines` lines of a subagent's transcript. */
+export function transcriptTail(j, lines = 30) {
+	try {
+		return tailOf(readFileSync(j.transcript, "utf8"), lines);
+	} catch {
+		return "(no transcript yet)";
+	}
+}
+
+export const redrawJobs = () => refresh();
 
 function tailOf(text, lines = 40, maxBytes = 8000) {
 	let t = text.split(/\r?\n/).slice(-lines).join("\n");
@@ -135,6 +163,7 @@ export const describeJob = (j) => `#${j.id} ${j.kind === "subagent" ? (j.foregro
 	`${j.status} ${age(j)}  ${j.name}`;
 
 export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
+	cleanOldFiles(join(FERRY_HOME, "jobs"), [String(process.pid)]);
 	return (pi) => {
 		// steer: at the next step while the agent works; triggerTurn: a run of its own when it is idle
 		hooks.tell = (text, wake) => pi.sendMessage({ customType: "ferry-job", content: text, display: false },
@@ -146,8 +175,9 @@ export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
 			hooks.wake = cfg.wakeOnJobEnd !== false;
 			refresh = () => {
 				const running = [...jobs.values()].filter((j) => j.status === "running");
+				const width = Math.max(30, (process.stdout.columns || 80) - 2);
 				ctx.ui.setWidget("ferry-jobs", running.length ? [`Running (${running.length}, /tasks to see them):`,
-					...running.slice(-4).map((j) => `  #${j.id} ${j.kind === "subagent" ? "subagent" : "command"}: ${j.name}`)] : undefined);
+					...running.slice(-4).map((j) => widgetLine(j, width))] : undefined);
 			};
 		});
 		pi.on("session_shutdown", () => {
@@ -192,7 +222,7 @@ export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
 				}
 				const job = jobs.get(Number(p.id));
 				if (!job) throw new Error(`No job ${p.id}. Jobs: ${listJobs().map((j) => j.id).join(", ") || "none"}`);
-				const body = job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), p.lines ?? 40) || "(no output yet)";
+				const body = job.kind === "subagent" ? subagentText(job) : tailOf(output(job), p.lines ?? 40) || "(no output yet)";
 				return { content: [{ type: "text", text: `${describeJob(job)}${job.code !== undefined ? ` (exit ${job.code})` : ""}\n${body}` }], details: undefined };
 			},
 		});
@@ -232,11 +262,20 @@ export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
 						[...labels, "Back to the conversation"]);
 					const job = all[labels.indexOf(pick)];
 					if (!job) return;
+					const TAIL = "Show the latest part of the transcript";
 					for (;;) {
-						const out = job.kind === "subagent" ? (job.report ?? job.error ?? "(still working)") : tailOf(output(job), 40) || "(no output yet)";
-						const what = await ctx.ui.select(`${describeJob(job)}\n\n${out}\n`,
-							job.status === "running" ? ["Refresh", "Stop it", "Back to the list"] : ["Back to the list"]);
+						const out = job.kind === "subagent" ? subagentText(job) : tailOf(output(job), 40) || "(no output yet)";
+						const what = await ctx.ui.select(`${describeJob(job)}\n\n${out}\n`, [
+							...(job.status === "running" ? ["Refresh", "Stop it"] : []),
+							...(job.transcript ? [TAIL] : []),
+							"Back to the list",
+						]);
 						if (what === "Stop it") stopJob(job);
+						if (what === TAIL) {
+							const rows = Math.max(10, (process.stdout.rows || 30) - 8);
+							await ctx.ui.select(`${job.transcript} (the last ${rows} lines)\n\n${transcriptTail(job, rows)}\n`, ["Back"]);
+							continue;
+						}
 						if (what !== "Refresh" && what !== "Stop it") break;
 					}
 				}

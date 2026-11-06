@@ -213,6 +213,15 @@ def check_agent_features(root: Path, work: Path) -> None:
               "主对话先用 task 派子 agent 读文件写报告，再用 task 的 resume 追问同一个子 agent；第二次请求带着第一次的任务、"
               "读到的文件和报告，主对话拿到第二份报告" if c9 == 0 and carried else o9[-400:])
 
+        logs = {p.name: p.read_text(encoding="utf-8") for p in (s.home / "subagents").glob("*/*.md")}
+        first = next((t for n, t in logs.items() if "-explore-look-at-the-data-folder" in n), "")
+        resumed = next((t for n, t in logs.items() if "-explore-first-look" in n), "")
+        ok = ("List the data folder" in first and "### Tool call: ls" in first and "Result (ls)" in first
+              and "## Report" in first and "EXPLORE REPORT" in first
+              and resumed.count("## Task") == 2 and "RESUMESECOND" in resumed and "SECOND REPORT" in resumed)
+        check("F91 子 agent 过程记录", ok, "子 agent 的整个过程写进 FERRY_HOME/subagents/日期/编号-agent-描述.md："
+              "任务、工具调用和结果、报告都在；用 resume 追问时接着写在同一个文件里" if ok else f"{list(logs)} | {first[:300]}")
+
         c4, o4 = s.ferry("-p", "BIGTEST: print a long output")
         saved = list((s.home / "outputs").rglob("bash-*.txt"))
         lines = saved[0].read_text(encoding="utf-8").count("\n") if saved else 0

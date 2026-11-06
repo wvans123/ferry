@@ -16,6 +16,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 规矩：
 
 - 模块之间不互相调用内部函数。要共享的东西放进 `cfg`，或者通过 pi 的事件；公用的小工具（读设置、发请求头）放在 `config.mjs`。
+- 模块自己的工作文件放在 FERRY_HOME 下它自己的文件夹，启动时用 `config.mjs` 的 `cleanOldFiles` 删掉 7 天没改过的。
 - 能用命令行工具加一份技能说明（`SKILL.md`）解决的，就不要写成新工具：agent 用 bash 调用，Ferry 只负责把程序带上、把设置（代理、证书、浏览器路径）传进去。浏览器模块就是这样：程序放进 pi 的 bin 文件夹（每条命令的 PATH 上都有），技能只在浏览器打开时列出。Claude Code 和 Cursor 都是这么接外部能力的，也不会让每次请求多带一堆工具定义。
 - 删一个模块：删它的代码、接入的那一行、它的设置、测试、F 检查和文档那一节，在 CLAUDE.md 的"故意删掉的"表里记一行原因。
 
@@ -41,10 +42,10 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模块 | 做什么 | 代码 | 开关 | 自测 |
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端 | `client/lib/memory.mjs`、`server/ferry_server/globalmem.py` | `memory`；全局记忆在管理页 | F28、F56、F78、F88 |
-| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个） | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89 |
+| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89、F91 |
 | 工具输出 | 待办、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48 |
 | /goal | 一直做到完成 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41 |
-| 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86 |
+| 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干；`/tasks` 和 Running 一行显示子 agent 正在做的步骤，能看过程记录的最后一屏 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86、单元测试 |
 | 回退 | `/rewind` | `client/lib/checkpoint.mjs` | — | F38 |
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
 | 提问 | `ask_user` | `client/lib/ask.mjs` | — | F65 |
