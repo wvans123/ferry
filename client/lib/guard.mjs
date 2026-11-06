@@ -39,22 +39,29 @@ async function ask(ui, verdict, event, cwd, who) {
 		else options.push(scope === "user" ? `Always allow this site: ${hostOf(input.url)}` : `Always allow in this project: ${rules.join(", ")}`);
 	}
 	options.push("Deny", "Deny, and tell the agent what to do instead");
+	// a subagent (who is set) asks through the main window, maybe while you look elsewhere: leave one line in the
+	// conversation view with who asked, what, and why, and another with the answer (shown only, never sent to the model)
+	const line = who ? short(detail.replace(/\s+/g, " "), 100) : "";
+	if (who) ui.notify(`Subagent${who} asks to run ${tool}: ${line}${verdict.danger ? ` (it ${verdict.danger})` : verdict.outside ? " (outside the project)" : ""}`, "warning");
+	const answered = (text) => who && ui.notify(`Subagent${who}: ${tool} ${line}: ${text}`, "info");
 	const choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options);
-	if (choice === "Allow once") return undefined;
+	if (choice === "Allow once") return answered("allowed once"), undefined;
 	if (choice?.startsWith("Allow all file changes")) {
 		state.mode = "acceptEdits";
 		state.onModeChange?.();
-		return undefined;
+		return answered("allowed, file changes now go ahead"), undefined;
 	}
 	if (choice?.startsWith("Always allow")) {
 		for (const r of rules) addRule(cwd, "allow", r, scope);
 		ui.notify(`Saved: ${rules.join(", ")} (/status shows the rule files)`, "info");
-		return undefined;
+		return answered("always allowed"), undefined;
 	}
 	if (choice === "Deny, and tell the agent what to do instead") {
 		const note = await ui.input("What should the agent do instead?", "");
+		answered("denied");
 		return { block: true, reason: `The user denied this. ${note ? `They said: ${note}` : ""}`.trim() };
 	}
+	answered("denied");
 	return { block: true, reason: "The user denied this action" };
 }
 

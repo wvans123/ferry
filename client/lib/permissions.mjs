@@ -435,11 +435,59 @@ export function browserPrivacyOf(cmd) {
 	return "";
 }
 
+/**
+ * The blocked name this text refers to, or "". A blocked name matches a path-like token when it is a whole path segment
+ * ("config/.env", "C:\\x\\.ssh\\id_rsa", "secrets/key.pem") or a file name with an extension ("secrets.json",
+ * ".env.local"). Plain words do not match: not the "credentials" in {credentials:'include'}, not a sentence in quotes, not
+ * a heredoc's body. An unquoted word that is exactly a blocked name still does (cat secrets). A path tool's path is
+ * one token; in a command, quoted text counts only where a token in it looks like a path.
+ */
+export function blockedHit(text, names, isCommand = true) {
+	const list = names.map((n) => String(n).toLowerCase()).filter(Boolean);
+	if (!list.length) return "";
+	const segHit = (tok) => {
+		for (const seg of tok.toLowerCase().split(/[\\/]+/)) {
+			const n = list.find((b) => seg === b || seg.startsWith(`${b}.`));
+			if (n) return n;
+		}
+		return "";
+	};
+	if (!isCommand) return segHit(text);
+	const body = text.replace(/<<-?\s*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, " ");
+	const pathLike = (t) => /[\\/]/.test(t) || /^[.~]/.test(t) || /^[a-z]:/i.test(t) || /\.[a-z0-9]{1,8}$/i.test(t);
+	const tokens = []; // [text, quoted]
+	let cur = "";
+	let quote = "";
+	const flush = (q) => {
+		if (cur) tokens.push([cur, q]);
+		cur = "";
+	};
+	for (const ch of body) {
+		if (quote) {
+			if (ch === quote) {
+				flush(true);
+				quote = "";
+			} else if (/[\s,=(){}[\];|&<>]/.test(ch)) flush(true);
+			else cur += ch;
+		} else if (ch === '"' || ch === "'" || ch === "`") {
+			flush(false);
+			quote = ch;
+		} else if (/[\s,=(){}[\];|&<>]/.test(ch)) flush(false);
+		else cur += ch;
+	}
+	flush(!!quote);
+	for (const [raw, quoted] of tokens) {
+		const t = raw.replace(/:+$/, "") || raw;
+		const hit = (pathLike(raw) || !quoted) && (segHit(raw) || segHit(t));
+		if (hit) return hit;
+	}
+	return "";
+}
+
 export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [], session }) {
 	const shell = SHELL.has(tool);
 	const target = PATH_TOOLS.has(tool) ? input.path : shell ? input.command : undefined;
-	const low = typeof target === "string" ? target.toLowerCase() : "";
-	const hit = low && blockedPaths.map((p) => p.toLowerCase()).find((p) => low.includes(p));
+	const hit = typeof target === "string" ? blockedHit(target, blockedPaths, shell) : "";
 	if (hit) return { action: "deny", reason: "Access to this path is not allowed by local policy", blocked: hit };
 
 	const cmd = shell ? String(input.command ?? "") : "";
@@ -452,7 +500,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	// a site tool is "read only" by its annotation, but which sites it contacts is still the user's choice
 	const writes = tool === "office_read" && input.out ? String(input.out) : ""; // batch mode writes .txt files into out
-	if (writes && blockedPaths.some((p) => writes.toLowerCase().includes(p.toLowerCase()))) return { action: "deny", reason: "Access to this path is not allowed by local policy" };
+	if (writes && blockedHit(writes, blockedPaths, false)) return { action: "deny", reason: "Access to this path is not allowed by local policy" };
 	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && !writes && (READ_ONLY.has(tool) || readOnlyTool(tool));
 	if (mode === "plan" && !readOnly && !NET.has(tool)) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
