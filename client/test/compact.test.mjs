@@ -8,7 +8,6 @@ process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-compact-"));
 const { AGENT_DIR, PI_RESERVE, applyCompactReserves, compactReserves, compactThreshold, ensureAgentDir, writeCompactReserves, DEFAULTS } =
 	await import("../lib/config.mjs");
 const { afterSummaryNote, createCompact } = await import("../lib/compact.mjs");
-const { todoSection } = await import("../lib/tools.mjs");
 
 const m = (id, contextWindow, provider = "kiro") => ({ id, contextWindow, provider });
 const cfg = (o = {}) => ({ compactAt: "90%", compactLimit: "400k", contextWindow: {}, ...o });
@@ -64,7 +63,8 @@ test("ensureAgentDir writes the margins and /context rewrites them", () => {
 
 function fakePi() {
 	const on = {};
-	return { on: (n, f) => (on[n] = f), fire: (n, e, ctx) => on[n]?.(e, ctx) };
+	const sent = [];
+	return { on: (n, f) => (on[n] = f), fire: (n, e, ctx) => on[n]?.(e, ctx), sendMessage: (...a) => sent.push(a), sent };
 }
 const ctx = () => {
 	const c = { hasUI: true, status: [], notes: [] };
@@ -107,20 +107,25 @@ test("a summary that works in between starts the count again", () => {
 	assert.equal(pi.fire("session_before_compact", { reason: "threshold" }), undefined);
 });
 
-test("after a summary the next request gets one note: changed files, loaded skills, the task list (paths only)", () => {
+test("after a summary one hidden message is kept in the conversation: changed files, loaded skills, the task list (paths only)", () => {
 	const pi = fakePi();
 	createCompact({}, { todoText: () => "[x] read spec\n[>] write CR\n[ ] review" })(pi);
 	pi.fire("session_compact", { reason: "threshold", compactionEntry: { details: {
 		readFiles: ["/p/a.txt", "/h/skills/office/SKILL.md"], modifiedFiles: ["/p/cr.docx", "/p/notes.md"] } } });
-	const out = pi.fire("context", { messages: [{ role: "user", content: "hi" }] });
-	assert.equal(out.messages.length, 2);
-	const text = out.messages[1].content[0].text;
-	assert.match(text, /\/p\/cr\.docx/);
-	assert.match(text, /\/p\/notes\.md/);
-	assert.match(text, /skills\/office\/SKILL\.md/);
-	assert.match(text, /\[>\] write CR/);
-	assert.doesNotMatch(text, /a\.txt/, "files that were only read are not listed");
-	assert.equal(pi.fire("context", { messages: [] }), undefined, "once");
+	assert.equal(pi.sent.length, 1);
+	const [msg, opts] = pi.sent[0];
+	assert.equal(msg.customType, "ferry-compact-note");
+	assert.equal(msg.display, false);
+	assert.equal(opts.deliverAs, "steer");
+	assert.match(msg.content, /\/p\/cr\.docx/);
+	assert.match(msg.content, /\/p\/notes\.md/);
+	assert.match(msg.content, /skills\/office\/SKILL\.md/);
+	assert.match(msg.content, /\[>\] write CR/);
+	assert.doesNotMatch(msg.content, /a\.txt/, "files that were only read are not listed");
+	const quiet = fakePi();
+	createCompact({})(quiet);
+	quiet.fire("session_compact", { reason: "threshold", compactionEntry: {} });
+	assert.equal(quiet.sent.length, 0, "nothing to list: no message");
 });
 
 test("no note when there is nothing to list, and a long list is cut", () => {
@@ -129,23 +134,4 @@ test("no note when there is nothing to list, and a long list is cut", () => {
 	assert.match(many, /f39/);
 	assert.match(many, /25 earlier/);
 	assert.doesNotMatch(many, /f0\n/);
-});
-
-test("the task list goes into the system prompt only while items are open, and stays short", async () => {
-	const { createTodo } = await import("../lib/tools.mjs");
-	const handlers = {};
-	let tool;
-	createTodo()({ on: (n, f) => (handlers[n] = f), registerTool: (t) => (tool = t) });
-	const sections = {};
-	handlers.before_agent_start({ systemPromptOptions: { sections } });
-	assert.equal(sections.ferry_todo, undefined, "no list yet");
-	await tool.execute("1", { todos: [{ content: "read spec", status: "completed" }, { content: "write CR", status: "in_progress" }] }, null, null, {});
-	handlers.before_agent_start({ systemPromptOptions: { sections } });
-	assert.match(sections.ferry_todo, /\[x\] read spec\n\[>\] write CR/);
-	await tool.execute("2", { todos: [{ content: "read spec", status: "completed" }] }, null, null, {});
-	handlers.before_agent_start({ systemPromptOptions: { sections } });
-	assert.equal(sections.ferry_todo, undefined, "all done: gone");
-	const long = todoSection(Array.from({ length: 30 }, (_, i) => ({ content: "x".repeat(300) + i, status: "pending" })));
-	assert.match(long, /10 more items/);
-	assert.ok(long.length < 20 * 130 + 200);
 });

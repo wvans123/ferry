@@ -42,6 +42,9 @@ def decide(msgs):
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if "Read files in data/." in json.dumps(msgs) and "big-notes.txt" in json.dumps(msgs):
+        state["after_summary"] = state.get("after_summary", 0) + 1
+        if state["after_summary"] == 1:  # one more step after the summary (and the note), to see the upload stay incremental
+            return ("tool", "read", {"path": "big-notes.txt"})
         return ("text", "MIDCOMPACT: finished after the summary")  # the fixed summary is in the conversation: the request was summarised in the middle
     if MODE == "basic":
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
@@ -262,7 +265,9 @@ def decide_agent(msgs):
             return ("tool", "read", {"path": "big-notes.txt"})
         return ("text", "TRIM: " + str(sum("was left out to keep the context small" in text_of(t) for t in tools)) + " left out")
     if "MIDCOMPACT" in first:  # a long request: the context fills up while the agent works
-        if len(tools) < 8:
+        if not tools:  # a file the work produces: the note after the summary lists it
+            return ("tool", "write", {"path": "mid-out.txt", "content": "draft\n"})
+        if len(tools) < 9:
             return ("tool", "read", {"path": "big-notes.txt"})
         return ("text", "MIDCOMPACT: finished without a summary")
     if "BATCHTEST" in first:

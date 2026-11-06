@@ -25,7 +25,6 @@ export function createCompact(cfg, deps = {}) {
 	return (pi) => {
 		let failures = 0;
 		let stopped = false;
-		let note = "";
 
 		const reset = () => {
 			failures = 0;
@@ -60,15 +59,9 @@ export function createCompact(cfg, deps = {}) {
 			if (e.reason !== "manual") failures = 0;
 			// the task list as it is now: the system prompt has it only as it was when the request began
 			const tasks = String(deps.todoText?.() ?? "");
-			note = afterSummaryNote(e.compactionEntry?.details, /^\[[ >]\]/m.test(tasks) ? tasks : "");
-		});
-
-		// the first request after a summary carries the note, at the end of the conversation
-		pi.on("context", (e) => {
-			if (!note) return undefined;
-			const text = note;
-			note = "";
-			return { messages: [...e.messages, { role: "user", content: [{ type: "text", text }], timestamp: Date.now() }] };
+			const text = afterSummaryNote(e.compactionEntry?.details, /^\[[ >]\]/m.test(tasks) ? tasks : "");
+			// a hidden message kept in the conversation (so uploads stay incremental), read by the model at its next step
+			if (text) pi.sendMessage({ customType: "ferry-compact-note", content: text, display: false }, { deliverAs: "steer" });
 		});
 	};
 }

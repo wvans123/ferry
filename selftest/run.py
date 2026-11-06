@@ -403,12 +403,18 @@ def check_compact_mid_run(root: Path, work: Path) -> None:
     """The context is summarised in the middle of one long request, at compactLimit or compactAt, not after it."""
     (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(400)), encoding="utf-8")
 
+    bases: list[int] = []  # base of each upload after the summary: the note must not make the client send everything again
+
     def run(setting: dict) -> tuple[int, str, list[dict]]:
         s = Stack(root / ("at" if "compactAt" in setting else "limit"), work, "agent")
         try:
             s.home.mkdir(parents=True, exist_ok=True)
             (s.home / "config.json").write_text(json.dumps(setting), encoding="utf-8")
             code, out = s.ferry("-p", "MIDCOMPACT: read the notes again and again")
+            audit = jsonl(s.data / "audit.jsonl")
+            at = next((i for i, a in enumerate(audit) if a.get("purpose") == "summary"), len(audit))
+            bases.clear()
+            bases.extend(a.get("base") or 0 for a in audit[at:] if a.get("event") == "commit")
             return code, out, jsonl(s.upstream)
         finally:
             s.close()
@@ -422,13 +428,14 @@ def check_compact_mid_run(root: Path, work: Path) -> None:
         first = kinds.index("summary") if "summary" in kinds else -1
         asked = json.dumps(ups[first].get("messages", [])[:1]) if first >= 0 else ""
         ok = (code == 0 and "finished after the summary" in out and 0 < first and "agent" in kinds[first + 1:]
-              and "confidentiality" in asked)
+              and "confidentiality" in asked and bases and len(bases) >= 2 and bases[-1] > 0
+              and "mid-out.txt" in json.dumps(ups[-1]) and "just summarised" in json.dumps(ups[-1]))
         return ok, (f"同一次请求做到一半，上下文到线就先写摘要（第 {first + 1} 个请求），摘要请求带着\"保留用户原话、保密要求、下一步\"的要求，"
-                    "摘要后接着做完" if ok else f"code={code} kinds={kinds} | {out[-300:]}")
+                    "摘要后接着做完，摘要后再走一步，上传仍是增量（base 大于 0）" if ok else f"code={code} kinds={kinds} bases={bases} | {out[-300:]}")
 
-    ok, detail = verdict({"compactLimit": "20k"})
+    ok, detail = verdict({"compactLimit": "20k", "compactKeep": "2k"})
     check("F81 长任务中途按 token 数压缩", ok, "compactLimit 20k：" + detail)
-    ok, detail = verdict({"compactAt": "15%", "compactLimit": "0"})
+    ok, detail = verdict({"compactAt": "15%", "compactLimit": "0", "compactKeep": "2k"})
     check("F82 长任务中途按百分比压缩", ok, "compactAt 15%：" + detail)
     (work / "big-notes.txt").unlink(missing_ok=True)
 
