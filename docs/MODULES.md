@@ -42,7 +42,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模块 | 做什么 | 代码 | 开关 | 自测 |
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端；新对话开始时从上一段对话提记忆候选、`/memory tidy` 整理、`/memory distill` 从很多段旧对话里找反复出现的事写成记忆、规则或技能，都要你确认 | `client/lib/memory.mjs`、`memreview.mjs`、`distill.mjs`、`server/ferry_server/globalmem.py`、`memreview.py` | `memory`、`memoryReview`；全局记忆在管理页 | F28、F56、F78、F88、F105–F110 |
-| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89、F91 |
+| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删；`task_batch` 里一个文件只让先改它的子 agent 改 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89、F91、F115 |
 | 工具输出 | 待办（12 次工具调用没更新就提醒）、命令输出去噪、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48、F92、F96 |
 | /goal | 一直做到完成；先定完成标准，中途改的要求记下，按标准验收 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41、F95、F97 |
 | 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干；`/tasks` 和 Running 一行显示子 agent 正在做的步骤，能看过程记录的最后一屏 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86、单元测试 |
@@ -59,6 +59,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
 | 团队 | Paperclip 看板上的成员 | `client/lib/team.mjs`、`teamcli.mjs` | 由 Paperclip 启动时才生效 | F54 |
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |
+| 手机上答 | 确认框和 `ask_user` 的问题放进服务端的收件箱，Bark 通知带一个只管这一项的链接，手机页面上批准、拒绝或回答；谁先答算谁的。以后从手机插话、暂停目标、派新活，和飞书机器人，都接在同一个收件箱上 | `client/lib/remote.mjs`、`server/ferry_server/remote.py`；接入在 `guard.mjs`、`ask.mjs` | `phoneRemote`；服务端要有 Bark 和外网地址 | F113、F114 |
 | 看门狗 | 干活时每 5 分钟告诉服务端还在跑；跑到一半 15 分钟没消息（网关要确认、睡眠、断网、ferry 退出），服务端自己推手机，又连上时再推一条 | `client/lib/heartbeat.mjs`、`server/ferry_server/watchdog.py` | 客户端 `phoneNotify`；服务端 `stall_minutes`（0 关），要设了 Bark | F112 |
 | 旁问、顾问、回顾 | `advisor` 工具、`/btw`、长请求做完的一句话回顾，共用服务端一个接口；`review` 子 agent 和交付质量提示在 `subagent.mjs`、`prompt.mjs` | `client/lib/side.mjs`、`server/ferry_server/side.py`；`sync.mjs` 里 `cfg.side` 记着对话的服务端副本 | `advisor`、`recap`；服务端管理页的顾问模型 | F83–F85 |
 | 问题报告 | `/report` 经服务端发 GitHub issue | `client/lib/report.mjs`、`server/ferry_server/report.py` | 服务端设了令牌才发到 GitHub | 单元测试 |

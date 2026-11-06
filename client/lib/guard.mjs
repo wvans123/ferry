@@ -3,8 +3,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { findBash } from "./config.mjs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, newSession, noteCreated, prefixRule, restoreSession } from "./permissions.mjs";
+import { openRemote, race } from "./remote.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
 // extraDirs: more folders treated like the project; session: what this run made (deletable in bypass without asking)
@@ -23,8 +24,13 @@ export function initialMode(cfg) {
 
 const short = (s, n = 300) => (s.length > n ? `${s.slice(0, n)}...` : s);
 
-/** Ask the user. Returns { block, reason } or undefined (go ahead). */
-async function ask(ui, verdict, event, cwd, who) {
+const DENY_NOTE = "Deny, and tell the agent what to do instead";
+
+/**
+ * Ask the user, in the terminal and (remote answers on) on the phone; the phone gets the same choices.
+ * Returns { block, reason } or undefined (go ahead).
+ */
+export async function ask(cfg, ui, verdict, event, cwd, who) {
 	const tool = event.toolName;
 	const input = event.input ?? {};
 	const detail = short(String(input.command ?? input.path ?? input.url ?? JSON.stringify(input)));
@@ -41,13 +47,21 @@ async function ask(ui, verdict, event, cwd, who) {
 		if (isEdit) options.push("Allow all file changes from now on (auto-edit mode)");
 		else options.push(scope === "user" ? `Always allow this site: ${hostOf(input.url)}` : `Always allow in this project: ${rules.join(", ")}`);
 	}
-	options.push("Deny", "Deny, and tell the agent what to do instead");
+	options.push("Deny", DENY_NOTE);
+	const always = options.length === 4 ? options[1] : ""; // the dialog's "always" choice, when it has one
 	// a subagent (who is set) asks through the main window, maybe while you look elsewhere: leave one line in the
 	// conversation view with who asked, what, and why, and another with the answer (shown only, never sent to the model)
 	const line = who ? short(detail.replace(/\s+/g, " "), 100) : "";
 	if (who) ui.notify(`Subagent ${who} asks to run ${tool}: ${line}${verdict.danger ? ` (it ${verdict.danger})` : verdict.outside ? " (outside the project)" : ""}`, "warning");
-	const answered = (text) => who && ui.notify(`Subagent ${who}: ${tool} ${line}: ${text}`, "info");
-	const choice = await ui.select(`${who ? `Subagent ${who} wants to run:\n\n` : ""}${head}Allow ${tool}?\n\n  ${detail}`, options);
+	const remote = openRemote(cfg, { kind: "approve", who, project: basename(cwd), tool, target: detail,
+		danger: verdict.danger ?? "", outside: Boolean(verdict.outside), always });
+	state.onAsk?.(tool, remote);
+	const title = `${who ? `Subagent ${who} wants to run:\n\n` : ""}${head}Allow ${tool}?\n\n  ${detail}`;
+	const { value, phone } = await race(remote, (signal) => ui.select(title, options, { signal }));
+	const choice = !phone ? value : phone.action === "once" ? "Allow once" : phone.action === "always" && always ? always
+		: phone.note ? DENY_NOTE : "Deny";
+	if (phone && !who) ui.notify(`Answered on the phone: ${choice === DENY_NOTE ? `Deny (${phone.note})` : choice}`, "info");
+	const answered = (text) => who && ui.notify(`Subagent ${who}: ${tool} ${line}: ${text}${phone ? " (on the phone)" : ""}`, "info");
 	if (choice === "Allow once") return answered("allowed once"), undefined;
 	if (choice?.startsWith("Allow all file changes")) {
 		state.mode = "acceptEdits";
@@ -59,8 +73,8 @@ async function ask(ui, verdict, event, cwd, who) {
 		ui.notify(`Saved: ${rules.join(", ")} (/status shows the rule files)`, "info");
 		return answered("always allowed"), undefined;
 	}
-	if (choice === "Deny, and tell the agent what to do instead") {
-		const note = await ui.input("What should the agent do instead?", "");
+	if (choice === DENY_NOTE) {
+		const note = phone ? phone.note : await ui.input("What should the agent do instead?", "");
 		answered("denied");
 		return { block: true, reason: `The user denied this. ${note ? `They said: ${note}` : ""}`.trim() };
 	}
@@ -121,9 +135,8 @@ export function createGuard(cfg, opts = {}) {
 				if (!ui) return { block: true, reason: verdict.always
 					? `This needs the user's approval every time (it ${verdict.danger}) and no terminal is available. No rule or mode allows it.`
 					: "This needs the user's approval and no terminal is available. Run ferry interactively, or allow it with a rule (ferry config) or mode." };
-				state.onAsk?.(tool);
 				try {
-					return made(await ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ?? ""));
+					return made(await ask(cfg, ui, verdict, { ...event, toolName: tool }, cwd, opts.label ?? ""));
 				} finally {
 					state.onAnswered?.();
 				}
