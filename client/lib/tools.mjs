@@ -33,6 +33,19 @@ export const todoText = () => (shared.length ? render(shared) : "");
 /** The item the agent is working on, or "". */
 export const currentTodo = () => shared.find((t) => t.status === "in_progress")?.content ?? "";
 
+/** Tool calls in a row without a todo update, while items are open, before the agent is reminded of the list. */
+export const TODO_STALE_CALLS = 12;
+
+/** The reminder for a list that stopped moving (exported for tests). */
+export function staleTodoNote(todos, calls = TODO_STALE_CALLS) {
+	const open = todos.filter((t) => t.status !== "completed");
+	const doing = todos.find((t) => t.status === "in_progress");
+	return `The to-do list has not been updated in the last ${calls} tool calls. ` +
+		(doing ? `It still shows "${doing.content}" as in progress` : "No item is marked in progress") +
+		`, with ${open.length} item(s) open. If that item is done, mark it completed and the next one in_progress; if the ` +
+		"plan changed, rewrite the list. Do not reply to this note: update the list with the todo tool and carry on.";
+}
+
 export function createTodo() {
 	return (pi) => {
 		let todos = [];
@@ -74,10 +87,25 @@ export function createTodo() {
 					"item needs something only the user can give (a decision, a file, access): then update the list and ask " +
 					"exactly that in one short line." }] };
 		});
+		// A list that stops moving while the agent keeps working: after TODO_STALE_CALLS tool calls without an update, one
+		// hidden message (kept in the conversation, so uploads stay incremental) reminds it, read at its next step.
+		// Calls made inside a subagent carry parentToolCallId; subagents have no list.
+		let since = 0;
+		pi.on("tool_execution_end", (event) => {
+			if (event.parentToolCallId || event.toolName === "todo") return;
+			if (!todos.some((t) => t.status !== "completed")) {
+				since = 0;
+				return;
+			}
+			if (++since < TODO_STALE_CALLS) return;
+			since = 0;
+			pi.sendMessage({ customType: "ferry-todo-stale", display: false, content: staleTodoNote(todos) }, { deliverAs: "steer" });
+		});
 		pi.on("agent_settled", () => {
 			used = false;
 			reminders = 0;
 			lastList = "";
+			since = 0;
 		});
 		pi.registerTool({
 			name: "todo",
@@ -91,6 +119,7 @@ export function createTodo() {
 			async execute(_id, params, _signal, _onUpdate, ctx) {
 				todos = (params.todos ?? []).map((t) => ({ content: String(t.content), status: t.status }));
 				used = true;
+				since = 0;
 				show(ctx);
 				return { content: [{ type: "text", text: todos.length ? render(todos) : "(task list cleared)" }], details: { todos } };
 			},

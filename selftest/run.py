@@ -273,6 +273,28 @@ PNG_1PX = __import__("base64").b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
 
+def check_goal_todo(root: Path, work: Path) -> None:
+    """/goal agrees on completion criteria (assumed without a terminal) and checks them; a stalled to-do list is noticed."""
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "/goal CRITTEST write crit-a.txt and crit-b.txt")
+        made = (work / "crit-a.txt").exists() and (work / "crit-b.txt").exists()
+        ok = c1 == 0 and made and "recorded=True continued=True" in o1
+        check("F95 /goal 先定完成标准", ok, "没有终端（ferry -p）时，系统提示要 agent 先自己写下完成标准并注明是假设的；"
+              "agent 用 goal_update 记下两条，之后每条继续消息都带着这两条" if ok else o1[-400:])
+        ok = c1 == 0 and "rejected=True accepted=True" in o1
+        check("F97 /goal 按标准验收", ok, "报告完成时只给了第 1 条标准的证据：被退回，说明第 2 条缺证据；"
+              "补上每条的证据后才算完成" if ok else o1[-400:])
+        c2, o2 = s.ferry("-p", "TODOSTALE: work without updating the list")
+        ok = c2 == 0 and "STALE reminded after=12 item=True count=1" in o2
+        check("F96 待办不动时提醒", ok, "待办清单有一项进行中，agent 连续调用 12 次工具都没更新清单：模型收到一条隐藏提醒，"
+              "写明哪一项还标着进行中" if ok else o2[-400:])
+    finally:
+        s.close()
+        for n in ("crit-a.txt", "crit-b.txt"):
+            (work / n).unlink(missing_ok=True)
+
+
 def check_memory_overwrite(root: Path, work: Path) -> None:
     """Saving a memory under an existing name does not silently replace it."""
     s = Stack(root, work, "agent")
@@ -1880,7 +1902,7 @@ STEPS = [
     (part_basic, ""), (part_long, ""), (part_nostore, ""), (part_drop, ""),
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
-    (check_agent_features, "agent"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
+    (check_agent_features, "agent"), (check_goal_todo, "goaltodo"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_plan_switch, "plan"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),

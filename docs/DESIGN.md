@@ -236,7 +236,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 问题报告 | 工作电脑只能连服务端：`/report` 让对话里的 agent 写报告（它最清楚出了什么事），用户在终端看过全文再发；只自动附上版本和工具次数。服务端隐去管理页上列的词、内网 IP、邮箱、手机号、Key、路径里的用户名，存一份，再用自己的 GitHub 令牌开 issue | `client/lib/report.mjs`、`server/ferry_server/report.py` |
 | 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/rewind` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
 | 钩子 | `afterEdit` 在工具结果出来后运行，失败输出追加到工具结果里交给模型；项目的钩子文件按内容哈希征得同意，改了要重新同意 | `client/lib/hooks.mjs` |
-| /goal | 目标存成会话里的一条记录（恢复对话时还在）；agent 每次要停下时（pi 的 `agent_before_settle`），如果目标还在进行，就补一条"对照目标继续"的消息并要求再跑一轮；agent 用 `goal_update` 报告完成或卡住；token 预算和轮数上限到了就要求它写进度报告 | `client/lib/goal.mjs` |
+| /goal | 目标存成会话里的一条记录（恢复对话时还在）；agent 每次要停下时（pi 的 `agent_before_settle`），如果目标还在进行，就补一条"对照目标继续"的消息并要求再跑一轮；agent 用 `goal_update` 先记下完成标准（criteria），最后报告完成（每条标准给证据，缺了就退回，最多两次）或卡住；进行中用户说的话记进目标（最近 10 条）；标准和这些记录放在每条继续消息和压缩后的隐藏消息里，不放进系统提示，免得每次改动都换掉同步的第一条消息；token 预算和轮数上限到了就要求它写进度报告 | `client/lib/goal.mjs` |
 | 后台任务 | 后台命令的输出写到文件，`job_output` 读末尾；后台子 agent 是不等结果的子会话；结束时提示你，并在你下一条消息里告诉 agent | `client/lib/jobs.mjs` |
 | Claude 原生接口 | 客户端按服务端说的接口类型，用 pi 自带的 Anthropic 提供方（思考、图片、缓存标记都由它处理）；同步前把每轮都会移动的缓存标记取下、服务端再放回，所以照样只传新增部分；服务端把请求转给 Anthropic，并从事件流里记下用量 | `client/lib/sync.mjs`、`server/ferry_server/app.py` |
 | 费用 | 价格写在服务端的模型配置里（预设已填好 Claude 和 GPT），随模型列表下发给客户端，pi 自己累计；服务端按每次调用的用量另算一份，管理页汇总 | `server/ferry_server/usage.py` |

@@ -9,6 +9,12 @@
 // States: pursuing, paused, achieved, unmet (blocked; needs you), budget (token budget used up).
 // While pursuing, every time the agent stops, Ferry sends it on ("continue toward the goal") unless it has reported
 // the goal achieved or unmet, the budget is used up, or the turn limit is reached. Esc pauses the goal.
+//
+// "Done" is agreed first: unless the objective already says how to check it, the agent asks you once (ask_user) and
+// records the completion criteria (goal_update status "criteria"); without a terminal it writes its own, marked as
+// assumed. What you say while the goal runs is kept as a short list of changes. Criteria and changes ride in every
+// continue message and in a note after a summary, so they survive compaction. An "achieved" report needs evidence for
+// every criterion; it is sent back at most twice.
 import { unwrap } from "./text.mjs";
 import { steerState } from "./steer.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -17,6 +23,13 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 const ENTRY = "ferry-goal";
+const MAX_CRITERIA = 10;
+const MAX_CHANGES = 10;
+const MAX_REJECTIONS = 2;
+const cut = (s, n) => {
+	const t = String(s ?? "").replace(/\s+/g, " ").trim();
+	return t.length > n ? `${t.slice(0, n)}…` : t;
+};
 
 export function parseTokens(s) {
 	const m = /^(\d+(?:\.\d+)?)\s*([km]?)$/i.exec(String(s ?? "").trim());
@@ -40,25 +53,55 @@ function tokensSince(entries, t) {
 	return n;
 }
 
-function guide(goal) {
+/** The completion criteria as a numbered list with a heading, or "" when none are recorded (exported for tests). */
+export function criteriaText(goal) {
+	if (!goal?.criteria?.length) return "";
+	return `Completion criteria${goal.criteriaAssumed ? " (assumed by you: nobody could be asked)" : ""}:\n` +
+		goal.criteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
+}
+
+/** What the user said while the goal ran, newest last, or "" (exported for tests). */
+export function changesText(goal) {
+	if (!goal?.changes?.length) return "";
+	return "Requirements the user changed since the start (newest last; where one conflicts with the objective or the " +
+		`criteria, it wins):\n${goal.changes.map((c) => `- ${c.text}`).join("\n")}`;
+}
+
+function guide(goal, hasUI) {
+	const criteria = criteriaText(goal);
+	const first = criteria ? `${criteria}\n\n`
+		: hasUI ? unwrap(`First agree on what "done" means. If the objective already says what must be true and how to
+  check it, record that with goal_update status "criteria" without asking. Otherwise propose 2 to 5 checkable completion
+  criteria and ask the user once with ask_user (one question; your proposal as the recommended option; they can type
+  their own), then record the agreed list with goal_update status "criteria".`) + "\n\n"
+		: unwrap(`Nobody can answer questions in this run. Before you start, write down 2 to 5 checkable completion
+  criteria yourself, as your assumptions, and record them with goal_update status "criteria"; say in your final report
+  that they were assumed.`) + "\n\n";
 	return unwrap(`The user gave you a goal to pursue on your own, across as many turns as it takes:
 
 ${goal.objective}
 
-How to work on it:
+`) + first + unwrap(`How to work on it:
 - Break it into concrete deliverables and keep them in the todo list; work through them one by one.
 - Check each deliverable against real evidence: the file content, the command output, the test result. Do not
   count something as done because it looks plausible.
 - If you have the advisor tool, call it once before you report the goal achieved (with the work saved), and deal with what it finds.
-- When every part is done and checked, call goal_update with status "achieved", a short summary and the evidence.
+- When every criterion is met and checked, call goal_update with status "achieved", a short summary and checks: one
+  entry per criterion (its number) with the evidence.
 - If you cannot go on without the user (a decision, access, missing information) or it turns out impossible, call
   goal_update with status "unmet" and say exactly what is needed.
 - Otherwise keep going: you will be prompted to continue after each turn. Do not stop to ask whether to continue.`);
 }
 
+/** Criteria and changes for the continue message and the note after a summary (exported for tests). */
+export function goalState(goal) {
+	return [criteriaText(goal) || 'You have not recorded completion criteria yet: do that first (goal_update status "criteria").',
+		changesText(goal)].filter(Boolean).join("\n");
+}
+
 export function createGoal(cfg) {
 	return (pi) => {
-		let goal = null; // { objective, status, startedAt, budget, turns, note, reported }
+		let goal = null; // { objective, status, startedAt, budget, turns, note, reported, criteria, criteriaAssumed, changes, rejections }
 		let nextBudget = null; // /goal budget before a goal is set
 		let ui = null;
 		const save = () => {
@@ -80,6 +123,7 @@ export function createGoal(cfg) {
 			const used = tokensSince(ctx.sessionManager.getBranch(), goal.startedAt);
 			return [`Goal (${goal.status}): ${goal.objective}`,
 				`Time ${mins((goal.endedAt ?? Date.now()) - goal.startedAt)} · tokens ${fmt(used)}${goal.budget ? ` of ${fmt(goal.budget)}` : ""} · turns ${goal.turns}`,
+				criteriaText(goal), changesText(goal),
 				goal.note ? `Last note: ${goal.note}` : "",
 				"/goal pause | resume | clear | budget <tokens>"].filter(Boolean).join("\n");
 		};
@@ -95,35 +139,68 @@ export function createGoal(cfg) {
 			status(ctx);
 		});
 
-		pi.on("before_agent_start", (event) => {
-			if (goal && (goal.status === "pursuing" || goal.status === "paused")) event.systemPromptOptions.sections.ferry_goal = guide(goal);
+		// The section changes only when a goal starts, ends or gets its criteria: a changed system prompt is a new
+		// first message for the server copy (sync.mjs). Changes the user makes go in recorded messages instead.
+		pi.on("before_agent_start", (event, ctx) => {
+			if (goal && (goal.status === "pursuing" || goal.status === "paused")) event.systemPromptOptions.sections.ferry_goal = guide(goal, !!ctx?.hasUI);
 			else delete event.systemPromptOptions.sections.ferry_goal;
 		});
 
+		const reply = (text) => ({ content: [{ type: "text", text }], details: undefined });
 		pi.registerTool({
 			name: "goal_update",
 			label: "Goal",
-			description: "Report the outcome of the user's /goal: achieved (everything done and checked, with evidence) or " +
-				"unmet (blocked: say what is needed). Only when a goal is active.",
-			promptSnippet: "Report that the user's goal is achieved (with evidence) or blocked",
+			description: "For the user's /goal: record the completion criteria (criteria), or report the outcome: achieved " +
+				"(every criterion met and checked, with evidence for each in checks) or unmet (blocked: say what is needed). " +
+				"Only when a goal is active.",
+			promptSnippet: "Record the goal's completion criteria, or report the goal achieved (with evidence) or blocked",
 			parameters: Type.Object({
-				status: StringEnum(["achieved", "unmet"]),
-				summary: Type.String({ description: "What was done, or what blocks it" }),
+				status: StringEnum(["criteria", "achieved", "unmet"]),
+				summary: Type.Optional(Type.String({ description: "achieved / unmet: what was done, or what blocks it" })),
+				criteria: Type.Optional(Type.Array(Type.String(), { description: "criteria: the complete list, each one checkable " +
+					"(what must be true and how to check it); replaces the earlier list" })),
+				checks: Type.Optional(Type.Array(Type.Object({
+					criterion: Type.Number({ description: "The criterion's number, from 1" }),
+					evidence: Type.String({ description: "How you checked it: file, command output, test result" }),
+				}), { description: "achieved: one entry for every completion criterion" })),
 				evidence: Type.Optional(Type.String({ description: "How you checked: files, command output, test results" })),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false },
 			async execute(_id, params, _signal, _onUpdate, ctx) {
-				if (!goal || goal.status !== "pursuing") return { content: [{ type: "text", text: "There is no active goal." }], details: undefined };
+				if (!goal || goal.status !== "pursuing") return reply("There is no active goal.");
+				const summary = String(params.summary ?? "");
+				if (params.status === "criteria") {
+					const list = (params.criteria ?? []).map((c) => cut(c, 300)).filter(Boolean).slice(0, MAX_CRITERIA);
+					if (!list.length) return reply("Give the criteria: a list of 1 to 10 checkable statements.");
+					goal.criteria = list;
+					goal.criteriaAssumed = !ctx?.hasUI;
+					save();
+					ctx?.ui?.notify?.(criteriaText(goal), "info");
+					return reply(`Recorded ${list.length} completion criteria. They come with every continue message; before you ` +
+						'report the goal achieved, check each one and give its evidence in checks.');
+				}
+				const checks = (params.checks ?? []).filter((c) => String(c?.evidence ?? "").trim());
+				const missing = params.status === "achieved"
+					? (goal.criteria ?? []).map((_, i) => i + 1).filter((n) => !checks.some((c) => Number(c.criterion) === n)) : [];
+				if (missing.length && (goal.rejections ?? 0) < MAX_REJECTIONS) {
+					goal.rejections = (goal.rejections ?? 0) + 1;
+					save();
+					return reply(`Not accepted yet: no evidence for criteria ${missing.join(", ")}:\n` +
+						missing.map((n) => `${n}. ${goal.criteria[n - 1]}`).join("\n") +
+						"\nCheck each of them for real (read the file, run the command or test). Then call goal_update with status " +
+						'"achieved" again, with checks for every criterion; or "unmet" if one cannot be met.');
+				}
 				goal.status = params.status;
-				goal.note = `${params.summary}${params.evidence ? ` (evidence: ${params.evidence})` : ""}`.slice(0, 600);
+				const proof = [...checks.map((c) => `${c.criterion}: ${c.evidence}`), ...(params.evidence ? [params.evidence] : [])].join("; ");
+				goal.note = `${summary}${proof ? ` (evidence: ${proof})` : ""}${missing.length ? ` (no evidence for criteria ${missing.join(", ")})` : ""}`.slice(0, 1000);
 				goal.reported = true;
 				save();
 				status(ctx);
-				ctx?.ui?.notify?.(params.status === "achieved" ? `Goal achieved: ${params.summary}` : `Goal needs you: ${params.summary}`,
+				ctx?.ui?.notify?.(params.status === "achieved" ? `Goal achieved: ${summary}` : `Goal needs you: ${summary}`,
 					params.status === "achieved" ? "info" : "warning");
-				cfg.phone?.(params.status === "achieved" ? "Goal achieved" : "Goal needs you", String(params.summary ?? "").slice(0, 120),
+				cfg.phone?.(params.status === "achieved" ? "Goal achieved" : "Goal needs you", summary.slice(0, 120),
 					params.status === "achieved" ? "goal" : "approval");
-				return { content: [{ type: "text", text: `Goal marked ${params.status}. Now give the user a short final report.` }], details: undefined };
+				return reply(`Goal marked ${params.status}. Now give the user a short final report.`);
 			},
 		});
 
@@ -148,20 +225,34 @@ export function createGoal(cfg) {
 				text = `The ${goal.note.startsWith("token") ? "token budget" : "turn limit"} for the goal is used up. Do not start new work. ` +
 					"Write a short progress report: what is done and checked, what remains, and what you would do next.";
 			} else {
-				text = `Continue working toward the goal (turn ${goal.turns}). Objective: ${goal.objective}\n` +
-					"Check what is done and verified and what remains, then take the next step. When everything is done and " +
-					'checked, call goal_update with status "achieved"; if you are blocked, call it with "unmet".';
+				text = `Continue working toward the goal (turn ${goal.turns}). Objective: ${goal.objective}\n${goalState(goal)}\n` +
+					"Check what is done and verified and what remains, then take the next step. When every criterion is met and " +
+					'checked, call goal_update with status "achieved" and checks; if you are blocked, call it with "unmet".';
 			}
 			save();
 			status(ctx);
 			return { continue: true, entries: [{ type: "custom_message", customType: "ferry-goal-continue", content: text, display: false }] };
 		});
 
+		// a summary keeps the gist only: give the agent the goal's criteria and the user's changes again, as a hidden
+		// message kept in the conversation (uploads stay incremental), read at its next step
+		pi.on("session_compact", () => {
+			if (goal?.status !== "pursuing") return;
+			pi.sendMessage({ customType: "ferry-goal-note", display: false, content: "The conversation was just summarised. " +
+				`You are still working on the user's goal: ${goal.objective}\n${goalState(goal)}` }, { deliverAs: "steer" });
+		});
+
 		pi.on("agent_settled", (_e, ctx) => status(ctx));
 		pi.on("input", (event, ctx) => {
-			if (goal && goal.status !== "pursuing" && goal.status !== "paused" && !goal.quiet && !String(event.text ?? "").startsWith("/goal")) {
+			const text = String(event.text ?? "");
+			if (goal && goal.status !== "pursuing" && goal.status !== "paused" && !goal.quiet && !text.startsWith("/goal")) {
 				goal.quiet = true;
 				status(ctx);
+			}
+			// a message sent by interrupting was noted when it was typed (steer.mjs sends it again)
+			if (goal?.status === "pursuing" && event.source !== "extension" && !steerState.redirecting && text.trim() && !text.startsWith("/")) {
+				goal.changes = [...(goal.changes ?? []), { at: Date.now(), text: cut(text, 300) }].slice(-MAX_CHANGES);
+				save();
 			}
 			return { action: "continue" };
 		});

@@ -43,8 +43,8 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端 | `client/lib/memory.mjs`、`server/ferry_server/globalmem.py` | `memory`；全局记忆在管理页 | F28、F56、F78、F88 |
 | 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89、F91 |
-| 工具输出 | 待办、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48 |
-| /goal | 一直做到完成 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41 |
+| 工具输出 | 待办（12 次工具调用没更新就提醒）、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48、F96 |
+| /goal | 一直做到完成；先定完成标准，中途改的要求记下，按标准验收 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41、F95、F97 |
 | 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干；`/tasks` 和 Running 一行显示子 agent 正在做的步骤，能看过程记录的最后一屏 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86、单元测试 |
 | 回退 | `/rewind` | `client/lib/checkpoint.mjs` | — | F38 |
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
