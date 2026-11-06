@@ -6,12 +6,13 @@
 // A third scope, global, lives on the Ferry server when its admin page has global memory on: shared by every
 // computer you log in from (your preferences, your terms). The two folders above stay on this computer.
 //
-// Each folder has MEMORY.md, an index with one line per memory, and one Markdown file per memory.
+// Each folder has MEMORY.md, an index with one line per memory (newest first), and one Markdown file per memory,
+// which starts with a small header (`updated: 2026-11-06`, and `pinned: true` for one that /memory tidy must leave alone).
 // Only the two indexes go into the system prompt; the model reads a memory when its line looks relevant.
 // The model writes memories with the `memory` tool, which can touch nothing outside these folders.
 import { unwrap } from "./text.mjs";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -48,23 +49,87 @@ function readIndex(dir) {
 	}
 }
 
-/** The index as the model sees it: at most 200 lines and 16 KB. */
+/** The index as the model sees it: at most 200 lines and 16 KB, newest first. */
 export function loadIndex(dir) {
 	let text = readIndex(dir).trim();
 	if (!text) return "";
 	const lines = text.split(/\r?\n/);
-	if (lines.length > INDEX_MAX_LINES) text = `${lines.slice(0, INDEX_MAX_LINES).join("\n")}\n(index cut at ${INDEX_MAX_LINES} lines)`;
-	if (Buffer.byteLength(text) > INDEX_MAX_BYTES) text = `${text.slice(0, INDEX_MAX_BYTES)}\n(index cut at 16 KB)`;
+	const cut = "the oldest memories are not shown";
+	if (lines.length > INDEX_MAX_LINES) text = `${lines.slice(0, INDEX_MAX_LINES).join("\n")}\n(index cut at ${INDEX_MAX_LINES} lines: ${cut})`;
+	if (Buffer.byteLength(text) > INDEX_MAX_BYTES) text = `${text.slice(0, INDEX_MAX_BYTES)}\n(index cut at 16 KB: ${cut})`;
 	return text;
+}
+
+/** A note for the model when an index is past 80% of what is loaded; "" otherwise. */
+export function indexFullNote(dir) {
+	const text = readIndex(dir).trim();
+	const lines = text ? text.split(/\r?\n/).length : 0;
+	if (lines < INDEX_MAX_LINES * 0.8 && Buffer.byteLength(text) < INDEX_MAX_BYTES * 0.8) return "";
+	return `\n(This index is nearly full: ${lines} lines, ${Math.round(Buffer.byteLength(text) / 1024)} KB; only the first ` +
+		`${INDEX_MAX_LINES} lines or 16 KB are shown. When a task gives you a moment, merge memories that cover the same ` +
+		"point and delete stale ones. The user can also run /memory tidy.)";
 }
 
 function writeIndexLine(dir, name, description) {
 	const line = `- [${name}](${name}.md): ${description.replace(/\s+/g, " ").trim()}`;
-	const lines = readIndex(dir).split(/\r?\n/).filter((l) => l.trim());
-	const at = lines.findIndex((l) => l.startsWith(`- [${name}](`));
-	if (at >= 0) lines[at] = line;
-	else lines.push(line);
-	writeFileSync(join(dir, INDEX), `${lines.join("\n")}\n`, "utf8");
+	const lines = readIndex(dir).split(/\r?\n/).filter((l) => l.trim() && !l.startsWith(`- [${name}](`));
+	writeFileSync(join(dir, INDEX), `${[line, ...lines].join("\n")}\n`, "utf8");
+}
+
+/** Index line descriptions by memory name. */
+export function indexDescriptions(dir) {
+	const out = {};
+	for (const l of readIndex(dir).split(/\r?\n/)) {
+		const m = /^- \[([^\]]+)\]\([^)]*\):\s*(.*)$/.exec(l.trim());
+		if (m) out[m[1]] = m[2];
+	}
+	return out;
+}
+
+const today = () => new Date().toLocaleDateString("sv-SE");
+
+/** A memory file: its header (updated, pinned, anything else kept as it is) and its text. */
+export function parseMemory(text) {
+	const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+	if (!m) return { meta: {}, body: text.trim() };
+	const meta = {};
+	for (const l of m[1].split(/\r?\n/)) {
+		const kv = /^([\w-]+):\s*(.*)$/.exec(l.trim());
+		if (kv) meta[kv[1]] = kv[2].trim();
+	}
+	return { meta, body: text.slice(m[0].length).trim() };
+}
+
+function formatMemory(meta, body) {
+	const head = Object.entries(meta).filter(([, v]) => v !== "" && v !== undefined).map(([k, v]) => `${k}: ${v}`);
+	return `---\n${head.join("\n")}\n---\n${body.trim()}\n`;
+}
+
+/** "today", "yesterday", "12 days ago" */
+export function ageOf(date) {
+	const days = Math.round((Date.parse(today()) - Date.parse(date)) / 86400_000);
+	if (!Number.isFinite(days)) return "";
+	return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** One memory on disk: its text, when it was last updated (the header, else the file's date) and whether it is pinned. */
+export function readMemory(dir, name) {
+	const file = join(dir, `${name}.md`);
+	if (!existsSync(file)) return null;
+	const { meta, body } = parseMemory(readFileSync(file, "utf8"));
+	const updated = /^\d{4}-\d{2}-\d{2}$/.test(meta.updated ?? "") ? meta.updated : statSync(file).mtime.toLocaleDateString("sv-SE");
+	return { name, meta, body, updated, pinned: /^(true|yes)$/i.test(meta.pinned ?? "") };
+}
+
+/** Every memory of a scope, newest first as the index lists them. */
+export function listMemories(scope, cwd) {
+	const dir = scopeDir(scope, cwd);
+	if (!existsSync(dir)) return [];
+	const desc = indexDescriptions(dir);
+	const order = Object.keys(desc);
+	const names = readdirSync(dir).filter((f) => f.endsWith(".md") && f !== INDEX).map((f) => f.slice(0, -3))
+		.sort((a, b) => (order.indexOf(a) + 1 || 1e9) - (order.indexOf(b) + 1 || 1e9));
+	return names.map((n) => ({ scope, ...readMemory(dir, n), description: desc[n] ?? "" }));
 }
 
 function dropIndexLine(dir, name) {
@@ -77,8 +142,8 @@ There are two scopes:
 - user: about the user, in every project: their role, preferences, how they want you to work, corrections they gave you.
 - project: about this project folder: decisions and their reasons, conventions, where things live, known pitfalls.
 
-Only the index of each scope is shown below. When an index line looks relevant to the task, read that memory with
-the memory tool (action "read") before relying on it.
+Only the index of each scope is shown below, newest first. When an index line looks relevant to the task, read that
+memory with the memory tool (action "read") before relying on it; it tells you how old the memory is.
 
 Save a memory (action "save") when:
 - the user asks you to remember something, corrects how you work ("don't do X", "always Y"), or confirms a
@@ -178,7 +243,7 @@ ${unwrap(`You are one member of a team. The project memory is shared by the whol
 know. A third scope, role, is yours alone: how you do your part of the work, what you learned doing it.`)}
 
 Your own (role) memory index:
-${loadIndex(scopeDir("role", cwd)) || "(empty)"}` : "";
+${loadIndex(scopeDir("role", cwd)) || "(empty)"}${indexFullNote(scopeDir("role", cwd))}` : "";
 	const glob = g.enabled ? `${GLOBAL_GUIDE}
 
 Global memory index (on the Ferry server, all computers):
@@ -187,10 +252,10 @@ ${g.index || "(empty)"}
 	return `${GUIDE}
 ${glob}
 User memory index (this computer):
-${user || "(empty)"}
+${user || "(empty)"}${indexFullNote(scopeDir("user", cwd))}
 
 Project memory index (${basename(cwd)}):
-${project || "(empty)"}${team}`;
+${project || "(empty)"}${indexFullNote(scopeDir("project", cwd))}${team}`;
 }
 
 const Params = Type.Object({
@@ -223,9 +288,9 @@ function runMemory(params, cwd) {
 	}
 	if (params.action === "read") {
 		if (!name) return text(loadIndex(dir) || `(no ${scope} memories yet)`);
-		const file = join(dir, `${name}.md`);
-		if (!existsSync(file)) throw new Error(`No ${scope} memory named "${name}". Index:\n${loadIndex(dir) || "(empty)"}`);
-		return text(readFileSync(file, "utf8"));
+		const m = readMemory(dir, name);
+		if (!m) throw new Error(`No ${scope} memory named "${name}". Index:\n${loadIndex(dir) || "(empty)"}`);
+		return text(`(updated ${m.updated}, ${ageOf(m.updated)}${m.pinned ? "; pinned" : ""})\n\n${m.body}`);
 	}
 	if (!name) throw new Error("name is required");
 	if (params.action === "delete") {
@@ -238,15 +303,14 @@ function runMemory(params, cwd) {
 		const description = String(params.description ?? "").trim() || content.split("\n")[0].slice(0, 120);
 		if (!content) throw new Error("content is required");
 		if (Buffer.byteLength(content) > MEMORY_MAX_BYTES) throw new Error("A memory must be under 16 KB: keep only what matters later");
-		const file = join(dir, `${name}.md`);
-		if (existsSync(file) && !params.replace) {
-			const old = readFileSync(file, "utf8");
-			if (old.trim() === content) return text(`Memory "${name}" already has this content; nothing to do.`);
-			return text(exists(scope, name, old));
+		const old = readMemory(dir, name);
+		if (old && !params.replace) {
+			if (old.body === content) return text(`Memory "${name}" already has this content; nothing to do.`);
+			return text(exists(scope, name, old.body));
 		}
 		mkdirSync(dir, { recursive: true });
 		if (scope === "project") writeFileSync(join(dir, ".folder"), cwd, "utf8"); // which folder this is, for people
-		writeFileSync(file, `${content}\n`, "utf8");
+		writeFileSync(join(dir, `${name}.md`), formatMemory({ ...old?.meta, updated: today() }, content), "utf8");
 		writeIndexLine(dir, name, description);
 		return text(`Saved ${scope} memory "${name}".`);
 	}
@@ -265,8 +329,9 @@ export function describeMemory(cwd) {
 		`Project memory (${count(p)}): ${p}`,
 		loadIndex(p) || "  (empty)",
 		"",
-		"They are plain Markdown files: edit or delete them in any editor. Ask the agent to remember or forget something,",
-		'or turn memory off with: ferry config set memory false',
+		"They are plain Markdown files: edit or delete them in any editor (a \"pinned: true\" line in a file's header keeps",
+		"/memory tidy away from it). Ask the agent to remember or forget something, run /memory tidy to merge and clean up",
+		'(you confirm each change), or turn memory off with: ferry config set memory false',
 	].join("\n");
 }
 
@@ -298,10 +363,11 @@ export function createMemory(cfg) {
 			event.systemPromptOptions.sections.ferry_memory = memorySection(ctx?.cwd ?? process.cwd());
 		});
 		pi.registerCommand("memory", {
-			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects here; /memory global <text>: all your computers)",
+			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects here; /memory global <text>: all your computers); /memory tidy: merge and clean up",
 			handler: async (args, ctx) => {
 				const cwd = ctx.cwd ?? process.cwd();
 				let text = String(args ?? "").trim();
+				if (/^tidy$/i.test(text)) return cfg.memoryTidy ? cfg.memoryTidy(ctx) : tell(ctx, "/memory tidy needs a Ferry server");
 				if (!text) {
 					const g = await refreshGlobal(cfg, true);
 					return tell(ctx, describeMemory(cwd) + (g.enabled ? `\n\nGlobal memory (on the Ferry server, all your computers; /memory global <text> saves one):\n${g.index || "  (empty)"}` : ""), "info");
@@ -324,4 +390,4 @@ export function createMemory(cfg) {
 	};
 }
 
-export { runMemory as _runMemory, runGlobal as _runGlobal };
+export { runMemory, runMemory as _runMemory, runGlobal as _runGlobal };

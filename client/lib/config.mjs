@@ -47,6 +47,7 @@ export const DEFAULTS = {
 	headers: {},
 	// Agent features (see `ferry config`)
 	memory: true, // remember things across conversations, stored in <FERRY_HOME>/memory
+	memoryReview: true, // when a conversation starts, the server proposes memories from the previous one; you confirm each
 	subagents: true, // the task tool: hand searches and side tasks to a subagent with a fresh context
 	bigOutputBytes: 8192, // longer command/search output is saved to a file; the model sees start, end and path. 0 = off
 	web: "client", // web_fetch / web_search on this computer's network; "off" = no web tools
@@ -92,6 +93,7 @@ export const SETTINGS = {
 	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
 		["low", "medium  (default)", "high", "xhigh"]],
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
+	memoryReview: ["boolean", "when a conversation starts, the server's summary model reads the previous one and proposes up to three memories; nothing is saved unless you pick Save"],
 	web: ["string", "web_fetch and web_search, on this computer's network (the company proxy and gateway rules apply)",
 		["client  on", "off"]],
 	blockedSites: ["list", "sites the agent may never open with web_fetch, subdomains included (e.g. your mail, chat and cloud drive)"],
