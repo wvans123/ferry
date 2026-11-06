@@ -12,6 +12,7 @@
 //   <project>/.ferry/agents/, <project>/.claude/agents/ (Claude Code's format) or <FERRY_HOME>/agents/.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { AGENT_DIR, cleanOldFiles, FERRY_HOME, findFerryModel } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
@@ -148,6 +149,9 @@ export function createKeeper(max = KEEP) {
 	};
 }
 
+// the review skill: your own (FERRY_HOME/skills/review) if you have one, else Ferry's
+const REVIEW_SKILL = [join(FERRY_HOME, "skills", "review", "SKILL.md"), fileURLToPath(new URL("../skills/review/SKILL.md", import.meta.url))].find(existsSync) ?? "";
+
 const BUILTIN = [
 	{
 		name: "explore",
@@ -196,6 +200,7 @@ Keep facts and your own conclusions apart.`,
 		tools: ["read", "grep", "find", "ls", "office_read", "web_fetch", "web_search"],
 		prompt: `You are a reviewer. You did not make the work you are given; check it against the request, as a careful
 colleague would before it goes to the customer. You cannot change anything.
+- First read the review checklist ${REVIEW_SKILL} and follow the parts that fit this deliverable (documents, 3GPP CRs).
 - Open the deliverable itself (office_read for Word, Excel, PowerPoint and PDF; read for text and code) and read all of it.
 - Compare it with the request point by point: is everything asked for there, in the form asked for, at the length and
   for the reader the request names?
@@ -440,7 +445,7 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi }) {
 			{ name: "ferry-guard", factory: createGuard(cfg, { ui: ctx?.hasUI ? ctx.ui : undefined, label }) },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg) },
 			{ name: "ferry-web", factory: createWeb(cfg) },
-			{ name: "ferry-office", factory: createOffice() },
+			{ name: "ferry-office", factory: createOffice(cfg) },
 			{
 				name: "ferry-subagent-role",
 				factory: (p) => p.on("before_agent_start", (e) => {

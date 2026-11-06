@@ -474,7 +474,7 @@ async function run(args) {
 			{ name: "ferry-past", factory: createPastConversations(), hidden: true },
 			{ name: "ferry-trim", factory: createTrimOldOutputs(cfg), hidden: true },
 			{ name: "ferry-image", factory: (await import("../lib/image.mjs")).createImage(cfg), hidden: true },
-			{ name: "ferry-office", factory: (await import("../lib/office.mjs")).createOffice(), hidden: true },
+			{ name: "ferry-office", factory: (await import("../lib/office.mjs")).createOffice(cfg), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },
 			{ name: "ferry-browser", factory: createBrowser(browserState), hidden: true },
 			{ name: "ferry-project-mcp", factory: createProjectMcp(), hidden: true },

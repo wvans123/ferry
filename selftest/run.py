@@ -1304,6 +1304,61 @@ def check_office_legacy(root: Path, work: Path) -> None:
         s.close()
 
 
+def _word_docx(body: str) -> bytes:
+    import io
+    import zipfile
+    w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+        z.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+        z.writestr("word/document.xml", f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {w}><w:body>{body}<w:sectPr/></w:body></w:document>')
+    return buf.getvalue()
+
+
+def check_word_tracked(root: Path, work: Path) -> None:
+    """A 3GPP-style CR in Word: cover cells filled, a tracked paragraph, a comment, accept all; editing inside another author's insertion."""
+    import zipfile
+    proj = root / "proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    wp = lambda t: f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>'  # noqa: E731
+    wc = lambda t: f'<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{wp(t) if t else "<w:p/>"}</w:tc>'  # noqa: E731
+    cover = "".join(f"<w:tr>{wc(a)}{wc(b)}</w:tr>" for a, b in (("Title:", ""), ("Source to WG:", ""), ("Category:", "F")))
+    (proj / "cr.docx").write_bytes(_word_docx(f"<w:tbl><w:tblPr/><w:tblGrid/>{cover}</w:tbl>{wp('5.2 Measurement report')}"
+                                              f"{wp('The UE shall send the report every 10 s.')}{wp('End of clause.')}"))
+    (proj / "alice.docx").write_bytes(_word_docx('<w:p><w:r><w:t xml:space="preserve">The UE </w:t></w:r><w:ins w:id="1" w:author="Alice" w:date="2026-01-02T00:00:00Z">'
+                                                 '<w:r><w:t>shall send the report</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> often.</w:t></w:r></w:p>'))
+    doc = lambda name: zipfile.ZipFile(proj / name).read("word/document.xml").decode("utf-8")  # noqa: E731
+    nested = re.compile(r"<w:ins\b[^>]*[^/]>(?:(?!</w:ins>).)*?<w:ins\b[^>]*[^/]>", re.S)
+    s = Stack(root, work, "agent")
+    try:
+        c1, o1 = s.ferry("-p", "CRCOVERTEST: fill the cover and add the sentence", cwd=proj)
+        x1 = doc("cr.docx")
+        ok1 = (c1 == 0 and "CRCOVER:" in o1 and "| Title: | Faster reporting |" in o1 and "| Source to WG: | Example Corp |" in o1
+               and "{+The UE shall also log the report.+}" in o1 and re.search(r'<w:rPr><w:ins w:id="\d+" w:author="Example Delegate"', x1) is not None)
+        check("F101 CR 封面和修订段落", ok1, "office_edit 按左边的标签往 CR 封面的空格子写字（不留修订），在条款里按修订方式插入一段"
+              "（段落标记也标成插入）；office_read 读出封面内容和 {+新段落+}" if ok1 else f"code={c1} {o1[-500:]!r}")
+        c2, o2 = s.ferry("-p", "WORDCOMMENTTEST: comment on the period", cwd=proj)
+        ok2 = c2 == 0 and re.search(r"every 10 s\[comment (\d+)\]\.[\s\S]*\[comment \1\] Example Delegate: Why 10 s\?", o2) is not None
+        check("F102 Word 批注", ok2, "office_edit 给一段文字加批注（文件里原来没有批注部件，自动建好），office_read 在正文里标出 [comment N]，"
+              "末尾列出作者和内容" if ok2 else f"code={c2} {o2[-500:]!r}")
+        c3, o3 = s.ferry("-p", "ACCEPTALLTEST: accept everything", cwd=proj)
+        x3 = doc("cr.docx")
+        ok3 = (c3 == 0 and "2 tracked change(s) accepted" in o3 and "{+" not in o3.split("||")[-1]
+               and "The UE shall also log the report." in o3 and "<w:ins " not in x3 and "<w:del " not in x3 and "[comment" in o3)
+        check("F103 接受全部修订", ok3, "office_edit 接受全部修订：插入的段落变成正文，文件里不再有修订标记，批注还在" if ok3 else f"code={c3} {o3[-500:]!r}")
+        c4, o4 = s.ferry("-p", "NESTEDINSTEST: shorten the report", cwd=proj)
+        x4 = doc("alice.docx")
+        ok4 = (c4 == 0 and "{+shall +}{-send the report-}{+send a short report+}" in o4 and not nested.search(x4) and 'w:author="Alice"' in x4)
+        check("F104 改别人修订里的字", ok4, "Bob 改 Alice 修订里插入的字：Alice 的插入在改动处断开，Bob 的删除留在她的插入里、Bob 的插入放在外面，"
+              "不会出现修订套修订；office_read 读出正确的修订痕迹" if ok4 else f"code={c4} {o4[-500:]!r} {x4[-600:]!r}")
+    finally:
+        s.close()
+
+
 def check_gateway(root: Path, work: Path) -> None:
     gate = root / "confirmed.txt"
     s = Stack(root, work, "agent", server_env={"FERRY_TEST_GATEWAY_FILE": str(gate)})
@@ -2061,7 +2116,7 @@ STEPS = [
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_plan_switch, "plan"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
-    (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
+    (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"), (check_word_tracked, "wordtracked"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
 ]
