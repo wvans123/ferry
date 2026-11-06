@@ -172,7 +172,8 @@ read; only your report goes back.
 - Plan two or three different searches before the first one (other words, the other language, the official name,
   allowed_domains for the source that would know). For anything that changes over time, put the current year in
   the query or use recent.
-- Open the most promising results with web_fetch; snippets are not evidence. Give it a prompt saying what you need
+- Snippets are not evidence; passages under a result (lines starting with >) are quoted from the page itself. When
+  they do not settle it, open the most promising results with web_fetch. Give it a prompt saying what you need
   from the page (only the answer comes back, so you can read many pages); leave the prompt out to see the page's own
   text and links. Follow links to the primary source.
 - A page that reads empty is built by JavaScript: open it with agent-browser if the browser skill is there. If the

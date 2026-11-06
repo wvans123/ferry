@@ -93,8 +93,10 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
 
 - Released: 0.31.0 (server reads public pages, one-window browser login, undici 8.12.3). The long-lived branch
   `claude/lucid-cori-4u8ucg` is retired; new work starts from main (see "How a change ships").
-- Web, as it is now: search and public pages are done by the server (DeepSeek's Search/Fetch APIs with the
-  server's DeepSeek key when it has one; else a search API, a model's own search, or Bing on the PC). Intranet and
+- Web, as it is now: search and public pages are done by the server. A search goes to every source at once (Exa's
+ free search, DeepSeek with the server's key, Tavily/Brave/Bocha with keys, optionally a model's own search), merged
+ by RRF, with passages quoted from the top 3 pages and a 10-minute cache; Bing on the PC only when that finds
+ nothing. Measure changes with `evals/search_eval.py` (#41). Intranet and
   private addresses, `localSites`, files, and pages the server cannot reach are read on the PC; logins and site
   operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
 - Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses

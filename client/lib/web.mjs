@@ -217,8 +217,8 @@ export function parseBing(html) {
 }
 
 /**
- * Search through the Ferry server's search API (Tavily, Brave or Bocha; its key stays on the server). Only the query
- * leaves this computer; the results' pages are still read here. null when the server has no search engine set.
+ * Search through the Ferry server: it asks all its sources at once (their keys stay there), merges them and quotes
+ * passages from the top pages. Only the query leaves this computer. null when the server does not search.
  */
 export async function searchServer(cfg, query, count = 8, recent = "", signal, sites = {}) {
 	if (!(cfg.features ?? []).includes("search")) return null;
@@ -445,8 +445,9 @@ export function createWeb(cfg) {
 		pi.registerTool({
 			name: "web_search",
 			label: "Web search",
-			description: "Search the web; returns titles, addresses and short snippets. Snippets are not enough to answer from: " +
-				"read the best results with web_fetch. Search again with other words when the results miss.",
+			description: "Search the web; returns numbered results with titles, addresses and snippets, and for the top results " +
+				"passages quoted word for word from their pages (lines starting with >). Cite a result by its [n]. When the " +
+				"passages do not settle it, read the best results with web_fetch. Search again with other words when the results miss.",
 			promptSnippet: "Search the web",
 			parameters: SearchParams,
 			annotations: { readOnlyHint: true, openWorldHint: true },
@@ -466,6 +467,10 @@ export function createWeb(cfg) {
 					note = e.nonJson ? `\n\n[Searching through the server failed: ${String(e.message).slice(0, 300)}; these results are Bing's page.]`
 						: `\n\n[The server's search engine failed (${String(e.message).slice(0, 200)}); these results are Bing's page.]`;
 				}
+				if (r && !r.results.length) {
+					note = "\n\n[The server's search found nothing; these results are Bing's page.]";
+					r = null;
+				}
 				if (r?.engine) note += `\n\n[Searched by the server with ${r.engine}.]`;
 				if (!r) {
 					r = await searchWeb(withSites(params.query, allowed, blocked), count, signal);
@@ -474,7 +479,8 @@ export function createWeb(cfg) {
 						"search in the browser (agent-browser) instead.]";
 				}
 				const text = r.results.length
-					? r.results.map((x, i) => `${i + 1}. ${x.title}${x.date ? ` (${String(x.date).slice(0, 10)})` : ""}\n   ${x.url}\n   ${String(x.snippet ?? "").slice(0, 600)}`).join("\n\n")
+					? r.results.map((x, i) => `[${i + 1}] ${x.title}${x.date ? ` (${String(x.date).slice(0, 10)})` : ""}\n   ${x.url}${x.snippet ? `\n   ${String(x.snippet).slice(0, 600)}` : ""}` +
+						(Array.isArray(x.passages) ? x.passages.map((p) => `\n   > ${String(p).replace(/\n/g, "\n     ")}`).join("") : "")).join("\n\n")
 					: `No results for "${params.query}". Try other words.`;
 				return { content: [{ type: "text", text: wrapExternal(`web_search: ${params.query}`, text) + note }], details: { count: r.results.length, engine: r.engine ?? "bing" } };
 			},

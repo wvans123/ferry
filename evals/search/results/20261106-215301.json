@@ -1,0 +1,1131 @@
+{
+ "summary": {
+  "exa": {
+   "hit": 27,
+   "of": 27,
+   "median_ms": 658,
+   "failed": 0
+  },
+  "bing": {
+   "hit": 15,
+   "of": 27,
+   "median_ms": 278,
+   "failed": 1
+  },
+  "combined": {
+   "hit": 27,
+   "of": 27,
+   "median_ms": 1915,
+   "failed": 0
+  }
+ },
+ "runs": {
+  "exa": {
+   "ts23501": {
+    "ok": true,
+    "ms": 839,
+    "n": 8,
+    "top": [
+     "https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3144",
+     "https://www.3gpp.org/ftp/Specs/PDF/2026-09/Rel-19/23_series/23501-j90.pdf",
+     "https://www.etsi.org/deliver/etsi_ts/123500_123599/123501/19.09.00_60/ts_123501v190900p.pdf",
+     "https://whatthespec.net/3gpp/spec/23.501",
+     "https://portal.etsi.org/webapp/WorkProgram/Frame_WorkItemList.asp?SearchPage=TRUE+++&butExpertSearch=++Search++&includeNonActiveTB=FALSE+++&optDisplay=ALL+++&qCURRENT_STATE_CODE=finalized+++&qINCLUDE_SUB_TB=True+++&qPROJECT_BOOLEAN=OR+++&qREPORT_TYPE=SUMMARY+++&qSORT=HIGHVERSION+++&qTITLE=TS+23.501+++"
+    ]
+   },
+   "ts38331": {
+    "ok": true,
+    "ms": 950,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/FTP/SPECS/PDF/2026-09/Rel-18/38_series/38331-ib0.pdf",
+     "https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3197",
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/19.01.00_60/ts_138331v190100p.pdf",
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/18.08.00_60/ts_138331v180800p.pdf",
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/19.00.00_60/ts_138331v190000p.pdf"
+    ]
+   },
+   "ts24501": {
+    "ok": true,
+    "ms": 938,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/FTP/Specs/PDF/2026-09/Rel-19/24_series/24501-j80.pdf",
+     "https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3370",
+     "https://portal.etsi.org/webapp/WorkProgram/Frame_WorkItemList.asp?SearchPage=TRUE+++&butExpertSearch=++Search++&includeNonActiveTB=FALSE+++&optDisplay=ALL+++&qCURRENT_STATE_CODE=finalized+++&qINCLUDE_SUB_TB=True+++&qPROJECT_BOOLEAN=OR+++&qREPORT_TYPE=SUMMARY+++&qSORT=HIGHVERSION+++&qTITLE=TS+24.501+++",
+     "https://www.tech-invite.com/3m24/tinv-3gpp-24-501.html",
+     "https://itecspec.com/3gpp/24.501/s/4.1"
+    ]
+   },
+   "ts38323": {
+    "ok": true,
+    "ms": 1045,
+    "n": 8,
+    "top": [
+     "https://www.etsi.org/deliver/etsi_TS/138300_138399/138323/18.04.00_60/ts_138323v180400p.pdf",
+     "https://itecspec.com/3gpp/38.323/s/5.11",
+     "https://itecspec.com/3gpp/38.323/s/5.2.1",
+     "https://itecspec.com/3gpp/38.323/s/5.11.2",
+     "https://lte5ghub.com/pdcp-duplication"
+    ]
+   },
+   "etsi38331": {
+    "ok": true,
+    "ms": 829,
+    "n": 8,
+    "top": [
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/19.01.00_60/ts_138331v190100p.pdf",
+     "https://cdn.standards.iteh.ai/samples/etsi/etsi-ts-138-331-v19-2-0-2026-04-/a23a2a1a1a364950b47a92cb24f7de18/etsi-ts-138-331-v19-2-0-2026-04-.pdf",
+     "https://portal.etsi.org/webapp/WorkProgram/Frame_WorkItemList.asp?SearchPage=TRUE+++&butExpertSearch=++Search++&includeNonActiveTB=FALSE+++&optDisplay=ALL+++&qCURRENT_STATE_CODE=finalized+++&qINCLUDE_SUB_TB=True+++&qPROJECT_BOOLEAN=OR+++&qREPORT_TYPE=SUMMARY+++&qSORT=HIGHVERSION+++&qTITLE=TS+38.331+++",
+     "https://etsi.org/deliver/etsi_ts/138300_138399/138331/19.01.00_60/",
+     "https://www.etsi.org/deliver/etsi_TS/138300_138399/138331/17.10.00_60/ts_138331v171000p.pdf"
+    ]
+   },
+   "cr_procedure": {
+    "ok": true,
+    "ms": 664,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/specifications-technologies/specifications-by-series/change-requests",
+     "https://www.etsi.org/deliver/etsi_tr/121900_121999/121900/19.01.00_60/tr_121900v190100p.pdf",
+     "https://itecspec.com/3gpp/21.900/s/4.6.4",
+     "https://itecspec.com/3gpp/rel-20/21.900/s/4.6.2",
+     "https://whatthespec.net/3gpp/spec/21.900"
+    ]
+   },
+   "ran1_ftp": {
+    "ok": true,
+    "ms": 764,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/ftp/tsg_ran/Wg1_RL1/TSGR1_126/Docs?sortby=daterev",
+     "https://www.3gpp.org/ftp/tsg_ran/Wg1_RL1/TSGR1_126/",
+     "https://www.3gpp.org/ftp/meetings_3gpp_sync/RAN1/Docs?sortby=sizerev",
+     "https://www.3gpp.org/ftp/tsg_ran/Wg1_RL1/TSGR1_124b/Inbox/Tdoc_list",
+     "https://www.3gpp.org/dynareport?code=Meetings-R1.htm"
+    ]
+   },
+   "oran_fh": {
+    "ok": true,
+    "ms": 761,
+    "n": 8,
+    "top": [
+     "https://specifications.o-ran.org/download?id=952",
+     "https://specifications.o-ran.org/download?id=856",
+     "https://specifications.o-ran.org/download?id=738",
+     "https://www.etsi.org/deliver/etsi_ts/103800_103899/103859/17.01.00_60/ts_103859v170100p.pdf",
+     "https://calnexsolutions.atlassian.net/wiki/spaces/GDW/pages/1790935082"
+    ]
+   },
+   "ssb_period": {
+    "ok": true,
+    "ms": 599,
+    "n": 8,
+    "top": [
+     "https://doi.org/10.13052/jicts2245-800x.613",
+     "https://www.rfwireless-world.com/articles/5g-nr-ssb-function-contents-physical-layer",
+     "https://www.techplayon.com/5g-nr-cell-search-and-synchronization-acquiring-system-information/",
+     "https://www.sharetechnote.com/html/5G/5G_SS_Block.html",
+     "https://cdn.rohde-schwarz.com.cn/pws/dl_downloads/dl_common_library/dl_brochures_and_datasheets/pdf_1/MWR-8916_Rohde__SCHWARZ_REPRINT.pdf"
+    ]
+   },
+   "asyncio_gather": {
+    "ok": true,
+    "ms": 555,
+    "n": 8,
+    "top": [
+     "https://docs.python.org/3/library/asyncio-task.html",
+     "https://hynek.me/articles/waiting-in-asyncio/",
+     "https://superfastpython.com/asyncio-gather-exception/",
+     "https://stackoverflow.com/questions/66779550/how-to-ensure-all-task-are-executed-using-asyncio-gather",
+     "https://docs.openmv.io/dev/openmvcam/tutorial/asyncio/coordination/gather.html"
+    ]
+   },
+   "httpx_mock": {
+    "ok": true,
+    "ms": 621,
+    "n": 8,
+    "top": [
+     "https://www.python-httpx.org/advanced/transports/",
+     "https://topolearnapp.com/learn/httpx/mock-transport",
+     "https://github.com/encode/httpx/blob/def4778d/httpx/_transports/mock.py",
+     "https://deepwiki.com/encode/httpx/5.4-mock-transports",
+     "https://devexamples.com/examples/python/general/httpx-mock-transport-unit-test/"
+    ]
+   },
+   "abortsignal_any": {
+    "ok": true,
+    "ms": 818,
+    "n": 8,
+    "top": [
+     "https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static",
+     "https://beta.docs.nodejs.org/globals/AbortSignal",
+     "https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal",
+     "https://caniuse.com/mdn-api_abortsignal_any_static",
+     "https://web-platform-dx.github.io/web-features-explorer/features/abortsignal-any/"
+    ]
+   },
+   "pip_externally": {
+    "ok": true,
+    "ms": 695,
+    "n": 8,
+    "top": [
+     "https://documentation.ubuntu.com/ubuntu-for-developers/tutorials/python-use/",
+     "https://peps.python.org/pep-0668/",
+     "https://stackoverflow.com/questions/75608323/how-do-i-solve-error-externally-managed-environment-every-time-i-use-pip-3",
+     "https://www.zaber.com/articles/python-virtual-environment",
+     "https://proxynet.io/blog/externally-managed-environment"
+    ]
+   },
+   "git_refspec": {
+    "ok": true,
+    "ms": 547,
+    "n": 8,
+    "top": [
+     "https://stackoverflow.com/questions/70179719/git-error-src-refspec-main-does-not-match-any",
+     "https://deverrors.com/errors/git-src-refspec-does-not-match",
+     "https://stackoverflow.com/questions/64059326/git-push-heroku-main-error-src-refspec-main-does-not-match-any",
+     "https://sentry.io/answers/git-src-refspec-master-does-not-match-any-error-message/",
+     "https://linuxhint.com/git-src-refspec-does-not-match-any/"
+    ]
+   },
+   "ps_policy": {
+    "ok": true,
+    "ms": 674,
+    "n": 8,
+    "top": [
+     "https://devblogs.microsoft.com/scripting/powertip-change-powershell-script-execution-policy/",
+     "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-7.4",
+     "https://azuredevops.org/powershell-tip-using-set-executionpolicy-safely/",
+     "https://github.com/MicrosoftDocs/PowerShell-Docs/blob/main/reference/7.6/Microsoft.PowerShell.Security/Set-ExecutionPolicy.md",
+     "https://stackoverflow.com/questions/4037939/powershell-says-execution-of-scripts-is-disabled-on-this-system"
+    ]
+   },
+   "docx_tracked": {
+    "ok": true,
+    "ms": 598,
+    "n": 8,
+    "top": [
+     "https://github.com/python-openxml/python-docx/pull/1538",
+     "https://github.com/python-openxml/python-docx/pull/1534",
+     "https://errno.jofrey.eu/posts/docx-tracked-changes-without-python-docx/",
+     "https://thomas-villani.github.io/docx-plus/guides/revisions/",
+     "https://github.com/python-openxml/python-docx/issues/930"
+    ]
+   },
+   "cf_tunnel": {
+    "ok": true,
+    "ms": 573,
+    "n": 8,
+    "top": [
+     "https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/configuration-file/",
+     "https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/local-tunnel-terms/",
+     "https://developers.cloudflare.com/tunnel/advanced/local-management/configuration-file/",
+     "https://docs.flaredeck.dev/docs/essentials/ingress",
+     "https://samueldavis.net/exposing-local-servers/"
+    ]
+   },
+   "fastapi_stream": {
+    "ok": true,
+    "ms": 618,
+    "n": 8,
+    "top": [
+     "https://fastapi.tiangolo.com/tutorial/server-sent-events/",
+     "https://fastapi.tiangolo.com/reference/sse/",
+     "https://fastapi.tiangolo.com/advanced/stream-data/",
+     "https://github.com/tiangolo/fastapi/blob/master/fastapi/sse.py",
+     "https://github.com/tiangolo/fastapi/blob/master/docs_src/server_sent_events/tutorial005_py310.py"
+    ]
+   },
+   "ds_pricing": {
+    "ok": true,
+    "ms": 588,
+    "n": 8,
+    "top": [
+     "https://api-docs.deepseek.com/quick_start/pricing/",
+     "https://www.deepseek.com/en/platform/",
+     "https://aigrow.gg/pricing/deepseek",
+     "https://taskcents.com/providers/deepseek/",
+     "https://shattered.io/deepseek-vs-chatgpt-api-cost-v4-1-flash-vs-gpt-6-2026/"
+    ]
+   },
+   "claude_websearch": {
+    "ok": true,
+    "ms": 566,
+    "n": 8,
+    "top": [
+     "https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool",
+     "https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools",
+     "https://academy.claude.com/courses/building-with-the-claude-api/the-web-search-tool",
+     "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference",
+     "https://claude.com/resources/articles/web-search-api"
+    ]
+   },
+   "agent_memory": {
+    "ok": true,
+    "ms": 604,
+    "n": 8,
+    "top": [
+     "https://github.com/rohitg00/agentmemory/",
+     "https://github.com/Tencent-Hunyuan/Hy-Memory",
+     "https://github.com/vectorize-io/hindsight/",
+     "https://github.com/mem0ai/mem0?tab=readme-ov-file",
+     "https://github.com/neo4j-labs/agent-memory/"
+    ]
+   },
+   "word_vba": {
+    "ok": true,
+    "ms": 543,
+    "n": 8,
+    "top": [
+     "https://learn.microsoft.com/en-us/office/vba/api/word.revisions.acceptall",
+     "https://learn.microsoft.com/en-us/office/vba/api/word.revisions",
+     "https://learn.microsoft.com/en-us/office/vba/api/word.document.revisions",
+     "https://www.codevba.com/word/revisions.htm",
+     "https://learn.microsoft.com/en-us/office/vba/api/word.range.revisions"
+    ]
+   },
+   "cn_5ga": {
+    "ok": true,
+    "ms": 868,
+    "n": 8,
+    "top": [
+     "https://www.news.cn/sci-tech/20251127/e0b760dc5b124cfebeb3759158422706/c.html",
+     "https://www.21jingji.com/article/20260421/herald/0d5482b4648f2a72267a1a5cabc82e2d.html",
+     "http://www.news.cn/20250828/a83edd7c1db146b58b96ce399f6ba5c5/c.html",
+     "http://www.zqrb.cn/finance/hangyedongtai/2026-06-28/A1782491155679.html",
+     "https://www.news.cn/sci-tech/20251120/dc7f293711624413988ac90bcf5ac8e5/c.html"
+    ]
+   },
+   "cn_harmony": {
+    "ok": true,
+    "ms": 619,
+    "n": 8,
+    "top": [
+     "https://developer.huawei.com/consumer/cn/doc/doccenter-getting-started/application-dev-guide",
+     "https://developer.huawei.com/consumer/cn/codelabsPortal/carddetails/tutorials_tutorials_QuickStart_ide",
+     "https://developer.huawei.com/consumer/cn/doc/harmonyos-bps",
+     "https://developer.huawei.com/consumer/cn/doc/doccenter-getting-started/agc-help-create-app-0000002247955506",
+     "https://developer.huawei.com/consumer/cn/training/study-path/101667550095504391"
+    ]
+   },
+   "cn_wx_request": {
+    "ok": true,
+    "ms": 579,
+    "n": 8,
+    "top": [
+     "https://developers.weixin.qq.com/miniprogram/dev/api/network/request/wx.request.html",
+     "https://developers.weixin.qq.com/miniprogram/dev/api/network/request/RequestTask.html",
+     "https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html",
+     "https://developers.weixin.qq.com/miniprogram/dev/framework/app-service/api.html",
+     "https://developers.weixin.qq.com/community/develop/article/doc/0006224c524fd0ab4dc01ab1f66013"
+    ]
+   },
+   "cn_oss_python": {
+    "ok": true,
+    "ms": 658,
+    "n": 8,
+    "top": [
+     "https://help.aliyun.com/zh/oss/developer-reference/upload-files-using-oss-sdk-for-python-v2/",
+     "https://github.com/aliyun/alibabacloud-oss-python-sdk-v2/blob/master/README-CN.md",
+     "https://github.com/aliyun/aliyun-oss-python-sdk/blob/master/examples/upload.py",
+     "https://github.com/aliyun/alibabacloud-oss-python-sdk-v2/blob/master/sample/upload_file.py",
+     "https://help.aliyun.com/zh/oss/developer-reference/upload-objects-2/"
+    ]
+   },
+   "cn_venv": {
+    "ok": true,
+    "ms": 985,
+    "n": 8,
+    "top": [
+     "https://docs.python.org/zh-cn/3.10/tutorial/venv.html",
+     "https://chenlb.com/python/base/env.html",
+     "https://coddy.tech/docs/zh/python/virtual-environments",
+     "https://fastapi.org.cn/virtual-environments/",
+     "https://docs.python.org/3/library/venv.html"
+    ]
+   }
+  },
+  "bing": {
+   "ts23501": {
+    "ok": false,
+    "ms": 567,
+    "n": 8,
+    "top": [
+     "https://www.teamspeak.com/en/",
+     "https://teamspeak.com/en/downloads/",
+     "https://www.typescriptlang.org/",
+     "https://en.m.wikipedia.org/wiki/TS",
+     "https://en.m.wikipedia.org/wiki/TypeScript"
+    ]
+   },
+   "ts38331": {
+    "ok": true,
+    "ms": 625,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/",
+     "https://zh.wikipedia.org/wiki/3GPP",
+     "https://portal.3gpp.org/",
+     "https://en.wikipedia.org/wiki/3GPP",
+     "https://www.3gpp.org/specifications-technologies/standards"
+    ]
+   },
+   "ts24501": {
+    "ok": true,
+    "ms": 623,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/",
+     "https://zh.wikipedia.org/wiki/3GPP",
+     "https://portal.3gpp.org/",
+     "https://en.wikipedia.org/wiki/3GPP",
+     "https://www.3gpp.org/specifications-technologies/standards"
+    ]
+   },
+   "ts38323": {
+    "ok": false,
+    "ms": 418,
+    "n": 8,
+    "top": [
+     "https://www.teamspeak.com/en/",
+     "https://teamspeak.com/en/downloads/",
+     "https://www.typescriptlang.org/",
+     "https://en.m.wikipedia.org/wiki/TS",
+     "https://en.m.wikipedia.org/wiki/TypeScript"
+    ]
+   },
+   "etsi38331": {
+    "ok": true,
+    "ms": 269,
+    "n": 8,
+    "top": [
+     "https://www.etsi.org/",
+     "https://www.etsy.com/?msockid=1a076d1fda2d6b0e332c7516db9b6a54",
+     "https://www.etsi.org/standards/",
+     "https://en.wikipedia.org/wiki/European_Telecommunications_Standards_Institute",
+     "https://portal.etsi.org/home.aspx"
+    ]
+   },
+   "cr_procedure": {
+    "ok": true,
+    "ms": 278,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/",
+     "https://zh.wikipedia.org/wiki/3GPP",
+     "https://portal.3gpp.org/",
+     "https://en.wikipedia.org/wiki/3GPP",
+     "https://www.3gpp.org/specifications-technologies/standards"
+    ]
+   },
+   "ran1_ftp": {
+    "ok": true,
+    "ms": 284,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/",
+     "https://zh.wikipedia.org/wiki/3GPP",
+     "https://portal.3gpp.org/",
+     "https://en.wikipedia.org/wiki/3GPP",
+     "https://www.3gpp.org/specifications-technologies/standards"
+    ]
+   },
+   "oran_fh": {
+    "ok": false,
+    "ms": 263,
+    "n": 8,
+    "top": [
+     "https://en.wikipedia.org/wiki/O",
+     "https://en.wikipedia.org/wiki/%C3%93",
+     "https://www.youtube.com/watch?v=S2DYT_vDxBU",
+     "https://typingcup.com/o-with-accent/",
+     "https://www.starfall.com/h/abcs/letter-o/"
+    ]
+   },
+   "ssb_period": {
+    "ok": false,
+    "ms": 268,
+    "n": 8,
+    "top": [
+     "https://en.m.wikipedia.org/wiki/5G",
+     "https://www.qualcomm.com/5g/what-is-5g",
+     "https://www.howtogeek.com/898749/what-does-5g-mean-on-iphone-and-android-phones/",
+     "https://www.cisco.com/site/us/en/learn/topics/networking/what-is-5g.html",
+     "https://www.britannica.com/topic/5G"
+    ]
+   },
+   "asyncio_gather": {
+    "ok": false,
+    "ms": 294,
+    "n": 8,
+    "top": [
+     "https://www.python.org/",
+     "https://www.python.org/downloads/",
+     "https://www.w3schools.com/python/",
+     "https://www.online-python.com/",
+     "https://www.programiz.com/python-programming/online-compiler/"
+    ]
+   },
+   "httpx_mock": {
+    "ok": true,
+    "ms": 317,
+    "n": 8,
+    "top": [
+     "https://github.com/projectdiscovery/httpx",
+     "https://www.python-httpx.org/",
+     "https://blog.csdn.net/2301_79518550/article/details/146611456",
+     "https://zhuanlan.zhihu.com/p/677133483",
+     "https://pypi.org/project/httpx/"
+    ]
+   },
+   "abortsignal_any": {
+    "ok": false,
+    "ms": 239,
+    "n": 0,
+    "top": []
+   },
+   "pip_externally": {
+    "ok": false,
+    "ms": 274,
+    "n": 8,
+    "top": [
+     "https://www.merriam-webster.com/dictionary/error",
+     "https://en.m.wikipedia.org/wiki/Error",
+     "https://dictionary.cambridge.org/dictionary/english/error",
+     "https://www.thefreedictionary.com/ERROR",
+     "https://www.calculatorsoup.com/calculators/algebra/percent-error-calculator.php"
+    ]
+   },
+   "git_refspec": {
+    "ok": true,
+    "ms": 360,
+    "n": 8,
+    "top": [
+     "https://stackoverflow.com/questions/70179719/git-error-src-refspec-main-does-not-match-any",
+     "https://stackoverflow.com/questions/4181861/message-src-refspec-master-does-not-match-any-when-pushing-commits-in-git",
+     "https://www.baeldung.com/ops/java-git-src-refspec-match",
+     "https://www.w3tutorials.net/blog/message-src-refspec-master-does-not-match-any-when-pushing-commits-in-git/",
+     "https://www.slingacademy.com/article/git-error-src-refspec-master-does-not-match-any-fix/"
+    ]
+   },
+   "ps_policy": {
+    "ok": true,
+    "ms": 272,
+    "n": 8,
+    "top": [
+     "https://learn.microsoft.com/en-us/powershell/",
+     "https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell-on-windows?view=powershell-7.6",
+     "https://github.com/PowerShell/PowerShell",
+     "https://en.wikipedia.org/wiki/PowerShell",
+     "https://powershell.org/"
+    ]
+   },
+   "docx_tracked": {
+    "ok": false,
+    "ms": 340,
+    "n": 8,
+    "top": [
+     "https://www.python.org/",
+     "https://www.python.org/downloads/",
+     "https://www.w3schools.com/python/",
+     "https://www.online-python.com/",
+     "https://www.programiz.com/python-programming/online-compiler/"
+    ]
+   },
+   "cf_tunnel": {
+    "ok": true,
+    "ms": 268,
+    "n": 8,
+    "top": [
+     "https://github.com/cloudflare/cloudflared",
+     "https://www.cloudflare.com/",
+     "https://developers.cloudflare.com/tunnel/downloads/",
+     "https://dash.cloudflare.com/login",
+     "https://developers.cloudflare.com/tunnel/"
+    ]
+   },
+   "fastapi_stream": {
+    "ok": true,
+    "ms": 259,
+    "n": 8,
+    "top": [
+     "https://fastapi.tiangolo.com/",
+     "https://fastapi.tiangolo.com/zh/",
+     "https://www.runoob.com/fastapi/fastapi-tutorial.html",
+     "https://blog.csdn.net/inuex/article/details/159203950",
+     "https://fastapi.org.cn/"
+    ]
+   },
+   "ds_pricing": {
+    "ok": true,
+    "ms": 276,
+    "n": 8,
+    "top": [
+     "https://www.deepseek.com/en/platform/",
+     "https://cdn.deepseek.com/",
+     "https://www.deepseek.com/en/download/",
+     "https://chat.deepseek.com/sign_in",
+     "https://deepseek.net/zh"
+    ]
+   },
+   "claude_websearch": {
+    "ok": true,
+    "ms": 347,
+    "n": 8,
+    "top": [
+     "https://www.anthropic.com/",
+     "https://baike.baidu.com/item/Anthropic/62639515",
+     "https://en.m.wikipedia.org/wiki/Anthropic",
+     "https://claude.com/",
+     "https://zh.wikipedia.org/wiki/Anthropic"
+    ]
+   },
+   "agent_memory": {
+    "ok": true,
+    "ms": 274,
+    "n": 8,
+    "top": [
+     "https://zhuanlan.zhihu.com/p/1999160608529072176",
+     "https://zhuanlan.zhihu.com/p/2068372273170593618",
+     "https://baike.baidu.com/item/agent/3345399",
+     "https://blog.csdn.net/m0_73614031/article/details/161773783",
+     "https://github.com/datawhalechina/hello-agents"
+    ]
+   },
+   "word_vba": {
+    "ok": false,
+    "ms": 278,
+    "n": 8,
+    "top": [
+     "https://word.cloud.microsoft/en-us/",
+     "https://word.cloud.microsoft/create/en/document-editor/",
+     "https://www.microsoft.com/en-us/microsoft-365/word?msockid=1b19bf415d956ca73c6da7485cd46d9f",
+     "https://www.microsoft.com/en-us/microsoft-365/free-office-online-for-the-web?msockid=1b19bf415d956ca73c6da7485cd46d9f",
+     "https://microsoft-word.en.softonic.com/"
+    ]
+   },
+   "cn_5ga": {
+    "ok": false,
+    "ms": 263,
+    "n": 8,
+    "top": [
+     "https://en.m.wikipedia.org/wiki/5G",
+     "https://www.qualcomm.com/5g/what-is-5g",
+     "https://www.howtogeek.com/898749/what-does-5g-mean-on-iphone-and-android-phones/",
+     "https://www.cisco.com/site/us/en/learn/topics/networking/what-is-5g.html",
+     "https://www.britannica.com/topic/5G"
+    ]
+   },
+   "cn_harmony": {
+    "ok": true,
+    "ms": 252,
+    "n": 8,
+    "top": [
+     "https://www.harmonyos.com/",
+     "https://developer.huawei.com/consumer/cn/develop/",
+     "https://consumer.huawei.com/cn/harmonyos-next/",
+     "https://consumer.huawei.com/cn/harmonyos-7/",
+     "https://baike.baidu.com/item/%E5%8D%8E%E4%B8%BA%E9%B8%BF%E8%92%99%E7%B3%BB%E7%BB%9F/23500650"
+    ]
+   },
+   "cn_wx_request": {
+    "ok": false,
+    "ms": 259,
+    "n": 8,
+    "top": [
+     "https://weixin.qq.com/",
+     "https://baike.baidu.com/item/%E5%BE%AE/6430625",
+     "https://weibo.com/",
+     "https://weixin.qq.com/?1",
+     "https://m.weibo.cn/?lang=zh-Hans"
+    ]
+   },
+   "cn_oss_python": {
+    "ok": true,
+    "ms": 281,
+    "n": 8,
+    "top": [
+     "https://cn.aliyun.com/",
+     "https://www.1688.com/",
+     "https://ali-home.alibaba.com/about-alibaba",
+     "https://www.alibaba.com/",
+     "https://campus-talent.alibaba.com/campus/index"
+    ]
+   },
+   "cn_venv": {
+    "ok": false,
+    "ms": 329,
+    "n": 8,
+    "top": [
+     "https://www.python.org/",
+     "https://www.python.org/downloads/",
+     "https://www.w3schools.com/python/",
+     "https://www.online-python.com/",
+     "https://www.programiz.com/python-programming/online-compiler/"
+    ]
+   }
+  },
+  "combined": {
+   "ts38331": {
+    "ok": true,
+    "ms": 10817,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/FTP/SPECS/PDF/2026-09/Rel-18/38_series/38331-ib0.pdf",
+     "https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3197",
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/19.01.00_60/ts_138331v190100p.pdf",
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/18.08.00_60/ts_138331v180800p.pdf",
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/19.00.00_60/ts_138331v190000p.pdf"
+    ],
+    "chars": 7031,
+    "passages": 8,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ts23501": {
+    "ok": true,
+    "ms": 11484,
+    "n": 8,
+    "top": [
+     "https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3144",
+     "https://www.3gpp.org/ftp/Specs/PDF/2026-09/Rel-19/23_series/23501-j90.pdf",
+     "https://www.etsi.org/deliver/etsi_ts/123500_123599/123501/19.09.00_60/ts_123501v190900p.pdf",
+     "https://whatthespec.net/3gpp/spec/23.501",
+     "https://portal.etsi.org/webapp/WorkProgram/Frame_WorkItemList.asp?SearchPage=TRUE+++&butExpertSearch=++Search++&includeNonActiveTB=FALSE+++&optDisplay=ALL+++&qCURRENT_STATE_CODE=finalized+++&qINCLUDE_SUB_TB=True+++&qPROJECT_BOOLEAN=OR+++&qREPORT_TYPE=SUMMARY+++&qSORT=HIGHVERSION+++&qTITLE=TS+23.501+++"
+    ],
+    "chars": 6454,
+    "passages": 7,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ts38323": {
+    "ok": true,
+    "ms": 2745,
+    "n": 8,
+    "top": [
+     "https://www.etsi.org/deliver/etsi_TS/138300_138399/138323/18.04.00_60/ts_138323v180400p.pdf",
+     "https://itecspec.com/3gpp/38.323/s/5.11",
+     "https://itecspec.com/3gpp/38.323/s/5.2.1",
+     "https://itecspec.com/3gpp/38.323/s/5.11.2",
+     "https://lte5ghub.com/pdcp-duplication"
+    ],
+    "chars": 6799,
+    "passages": 8,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ts24501": {
+    "ok": true,
+    "ms": 6815,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/FTP/Specs/PDF/2026-09/Rel-19/24_series/24501-j80.pdf",
+     "https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3370",
+     "https://portal.etsi.org/webapp/WorkProgram/Frame_WorkItemList.asp?SearchPage=TRUE+++&butExpertSearch=++Search++&includeNonActiveTB=FALSE+++&optDisplay=ALL+++&qCURRENT_STATE_CODE=finalized+++&qINCLUDE_SUB_TB=True+++&qPROJECT_BOOLEAN=OR+++&qREPORT_TYPE=SUMMARY+++&qSORT=HIGHVERSION+++&qTITLE=TS+24.501+++",
+     "https://www.tech-invite.com/3m24/tinv-3gpp-24-501.html",
+     "https://itecspec.com/3gpp/24.501/s/4.1"
+    ],
+    "chars": 6276,
+    "passages": 5,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cr_procedure": {
+    "ok": true,
+    "ms": 1684,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/specifications-technologies/specifications-by-series/change-requests",
+     "https://www.etsi.org/deliver/etsi_tr/121900_121999/121900/19.01.00_60/tr_121900v190100p.pdf",
+     "https://itecspec.com/3gpp/21.900/s/4.6.4",
+     "https://itecspec.com/3gpp/rel-20/21.900/s/4.6.2",
+     "https://whatthespec.net/3gpp/spec/21.900"
+    ],
+    "chars": 7539,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ran1_ftp": {
+    "ok": true,
+    "ms": 1849,
+    "n": 8,
+    "top": [
+     "https://www.3gpp.org/ftp/tsg_ran/Wg1_RL1/TSGR1_126/Docs?sortby=daterev",
+     "https://www.3gpp.org/ftp/tsg_ran/Wg1_RL1/TSGR1_126/",
+     "https://www.3gpp.org/ftp/meetings_3gpp_sync/RAN1/Docs?sortby=sizerev",
+     "https://www.3gpp.org/ftp/tsg_ran/Wg1_RL1/TSGR1_124b/Inbox/Tdoc_list",
+     "https://www.3gpp.org/dynareport?code=Meetings-R1.htm"
+    ],
+    "chars": 5822,
+    "passages": 4,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "etsi38331": {
+    "ok": true,
+    "ms": 9938,
+    "n": 8,
+    "top": [
+     "https://www.etsi.org/deliver/etsi_ts/138300_138399/138331/19.01.00_60/ts_138331v190100p.pdf",
+     "https://cdn.standards.iteh.ai/samples/etsi/etsi-ts-138-331-v19-2-0-2026-04-/a23a2a1a1a364950b47a92cb24f7de18/etsi-ts-138-331-v19-2-0-2026-04-.pdf",
+     "https://portal.etsi.org/webapp/WorkProgram/Frame_WorkItemList.asp?SearchPage=TRUE+++&butExpertSearch=++Search++&includeNonActiveTB=FALSE+++&optDisplay=ALL+++&qCURRENT_STATE_CODE=finalized+++&qINCLUDE_SUB_TB=True+++&qPROJECT_BOOLEAN=OR+++&qREPORT_TYPE=SUMMARY+++&qSORT=HIGHVERSION+++&qTITLE=TS+38.331+++",
+     "https://etsi.org/deliver/etsi_ts/138300_138399/138331/19.01.00_60/",
+     "https://www.etsi.org/deliver/etsi_TS/138300_138399/138331/17.10.00_60/ts_138331v171000p.pdf"
+    ],
+    "chars": 6889,
+    "passages": 7,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "oran_fh": {
+    "ok": true,
+    "ms": 2587,
+    "n": 8,
+    "top": [
+     "https://specifications.o-ran.org/download?id=952",
+     "https://specifications.o-ran.org/download?id=856",
+     "https://specifications.o-ran.org/download?id=738",
+     "https://www.etsi.org/deliver/etsi_ts/103800_103899/103859/17.01.00_60/ts_103859v170100p.pdf",
+     "https://calnexsolutions.atlassian.net/wiki/spaces/GDW/pages/1790935082"
+    ],
+    "chars": 7427,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "asyncio_gather": {
+    "ok": true,
+    "ms": 2181,
+    "n": 8,
+    "top": [
+     "https://docs.python.org/3/library/asyncio-task.html",
+     "https://hynek.me/articles/waiting-in-asyncio/",
+     "https://superfastpython.com/asyncio-gather-exception/",
+     "https://stackoverflow.com/questions/66779550/how-to-ensure-all-task-are-executed-using-asyncio-gather",
+     "https://docs.openmv.io/dev/openmvcam/tutorial/asyncio/coordination/gather.html"
+    ],
+    "chars": 7699,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ssb_period": {
+    "ok": true,
+    "ms": 5118,
+    "n": 8,
+    "top": [
+     "https://doi.org/10.13052/jicts2245-800x.613",
+     "https://www.rfwireless-world.com/articles/5g-nr-ssb-function-contents-physical-layer",
+     "https://www.techplayon.com/5g-nr-cell-search-and-synchronization-acquiring-system-information/",
+     "https://sharetechnote.com/html/5G/5G_SS_Block.html",
+     "https://cdn.rohde-schwarz.com.cn/pws/dl_downloads/dl_common_library/dl_brochures_and_datasheets/pdf_1/MWR-8916_Rohde__SCHWARZ_REPRINT.pdf"
+    ],
+    "chars": 6529,
+    "passages": 6,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "httpx_mock": {
+    "ok": true,
+    "ms": 1915,
+    "n": 8,
+    "top": [
+     "https://www.python-httpx.org/advanced/transports/",
+     "https://topolearnapp.com/learn/httpx/mock-transport",
+     "https://github.com/encode/httpx/blob/def4778d/httpx/_transports/mock.py",
+     "https://deepwiki.com/encode/httpx/5.4-mock-transports",
+     "https://devexamples.com/examples/python/general/httpx-mock-transport-unit-test/"
+    ],
+    "chars": 6910,
+    "passages": 7,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "abortsignal_any": {
+    "ok": true,
+    "ms": 2486,
+    "n": 8,
+    "top": [
+     "https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static",
+     "https://beta.docs.nodejs.org/globals/AbortSignal",
+     "https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal",
+     "https://caniuse.com/mdn-api_abortsignal_any_static",
+     "https://web-platform-dx.github.io/web-features-explorer/features/abortsignal-any/"
+    ],
+    "chars": 7256,
+    "passages": 8,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "pip_externally": {
+    "ok": true,
+    "ms": 2721,
+    "n": 8,
+    "top": [
+     "https://documentation.ubuntu.com/ubuntu-for-developers/tutorials/python-use/",
+     "https://peps.python.org/pep-0668/",
+     "https://stackoverflow.com/questions/75608323/how-do-i-solve-error-externally-managed-environment-every-time-i-use-pip-3",
+     "https://www.zaber.com/articles/python-virtual-environment",
+     "https://proxynet.io/blog/externally-managed-environment"
+    ],
+    "chars": 7932,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "git_refspec": {
+    "ok": true,
+    "ms": 2205,
+    "n": 8,
+    "top": [
+     "https://stackoverflow.com/questions/70179719/git-error-src-refspec-main-does-not-match-any",
+     "https://deverrors.com/errors/git-src-refspec-does-not-match",
+     "https://stackoverflow.com/questions/64059326/git-push-heroku-main-error-src-refspec-main-does-not-match-any",
+     "https://sentry.io/answers/git-src-refspec-master-does-not-match-any-error-message/",
+     "https://linuxhint.com/git-src-refspec-does-not-match-any/"
+    ],
+    "chars": 7375,
+    "passages": 8,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ps_policy": {
+    "ok": true,
+    "ms": 2353,
+    "n": 8,
+    "top": [
+     "https://devblogs.microsoft.com/scripting/powertip-change-powershell-script-execution-policy/",
+     "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-7.4",
+     "https://azuredevops.org/powershell-tip-using-set-executionpolicy-safely/",
+     "https://github.com/MicrosoftDocs/PowerShell-Docs/blob/main/reference/7.6/Microsoft.PowerShell.Security/Set-ExecutionPolicy.md",
+     "https://stackoverflow.com/questions/4037939/powershell-says-execution-of-scripts-is-disabled-on-this-system"
+    ],
+    "chars": 7416,
+    "passages": 7,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "docx_tracked": {
+    "ok": true,
+    "ms": 1842,
+    "n": 8,
+    "top": [
+     "https://github.com/python-openxml/python-docx/pull/1538",
+     "https://github.com/python-openxml/python-docx/pull/1534",
+     "https://errno.jofrey.eu/posts/docx-tracked-changes-without-python-docx/",
+     "https://thomas-villani.github.io/docx-plus/guides/revisions/",
+     "https://github.com/python-openxml/python-docx/issues/930"
+    ],
+    "chars": 7568,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cf_tunnel": {
+    "ok": true,
+    "ms": 1275,
+    "n": 8,
+    "top": [
+     "https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/configuration-file/",
+     "https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/local-tunnel-terms/",
+     "https://developers.cloudflare.com/tunnel/advanced/local-management/configuration-file/",
+     "https://docs.flaredeck.dev/docs/essentials/ingress",
+     "https://samueldavis.net/exposing-local-servers/"
+    ],
+    "chars": 7300,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "fastapi_stream": {
+    "ok": true,
+    "ms": 1330,
+    "n": 8,
+    "top": [
+     "https://fastapi.tiangolo.com/tutorial/server-sent-events/",
+     "https://fastapi.tiangolo.com/reference/sse/",
+     "https://fastapi.tiangolo.com/advanced/stream-data/",
+     "https://github.com/tiangolo/fastapi/blob/master/fastapi/sse.py",
+     "https://github.com/tiangolo/fastapi/blob/master/docs_src/server_sent_events/tutorial005_py310.py"
+    ],
+    "chars": 7976,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "ds_pricing": {
+    "ok": true,
+    "ms": 1399,
+    "n": 8,
+    "top": [
+     "https://api-docs.deepseek.com/quick_start/pricing/",
+     "https://www.deepseek.com/en/platform/",
+     "https://aigrow.gg/pricing/deepseek",
+     "https://taskcents.com/providers/deepseek/",
+     "https://shattered.io/deepseek-vs-chatgpt-api-cost-v4-1-flash-vs-gpt-6-2026/"
+    ],
+    "chars": 6921,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "claude_websearch": {
+    "ok": true,
+    "ms": 2389,
+    "n": 8,
+    "top": [
+     "https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool",
+     "https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools",
+     "https://academy.claude.com/courses/building-with-the-claude-api/the-web-search-tool",
+     "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference",
+     "https://claude.com/resources/articles/web-search-api"
+    ],
+    "chars": 7652,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "agent_memory": {
+    "ok": true,
+    "ms": 1806,
+    "n": 8,
+    "top": [
+     "https://github.com/rohitg00/agentmemory/",
+     "https://github.com/Tencent-Hunyuan/Hy-Memory",
+     "https://github.com/vectorize-io/hindsight/",
+     "https://github.com/mem0ai/mem0?tab=readme-ov-file",
+     "https://github.com/neo4j-labs/agent-memory/"
+    ],
+    "chars": 7786,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "word_vba": {
+    "ok": true,
+    "ms": 1465,
+    "n": 8,
+    "top": [
+     "https://learn.microsoft.com/en-us/office/vba/api/word.revisions.acceptall",
+     "https://learn.microsoft.com/en-us/office/vba/api/word.revisions",
+     "https://learn.microsoft.com/en-us/office/vba/api/word.document.revisions",
+     "https://www.codevba.com/word/revisions.htm",
+     "https://learn.microsoft.com/en-us/office/vba/api/word.range.revisions"
+    ],
+    "chars": 5912,
+    "passages": 7,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cn_5ga": {
+    "ok": true,
+    "ms": 946,
+    "n": 8,
+    "top": [
+     "https://www.news.cn/sci-tech/20251127/e0b760dc5b124cfebeb3759158422706/c.html",
+     "https://www.21jingji.com/article/20260421/herald/0d5482b4648f2a72267a1a5cabc82e2d.html",
+     "http://www.news.cn/20250828/a83edd7c1db146b58b96ce399f6ba5c5/c.html",
+     "http://www.zqrb.cn/finance/hangyedongtai/2026-06-28/A1782491155679.html",
+     "https://www.news.cn/sci-tech/20251120/dc7f293711624413988ac90bcf5ac8e5/c.html"
+    ],
+    "chars": 6376,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cn_harmony": {
+    "ok": true,
+    "ms": 1017,
+    "n": 8,
+    "top": [
+     "https://developer.huawei.com/consumer/cn/doc/doccenter-getting-started/application-dev-guide",
+     "https://developer.huawei.com/consumer/cn/codelabsPortal/carddetails/tutorials_tutorials_QuickStart_ide",
+     "https://developer.huawei.com/consumer/cn/doc/harmonyos-bps",
+     "https://developer.huawei.com/consumer/cn/doc/doccenter-getting-started/agc-help-create-app-0000002247955506",
+     "https://developer.huawei.com/consumer/cn/training/study-path/101667550095504391"
+    ],
+    "chars": 5405,
+    "passages": 8,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cn_wx_request": {
+    "ok": true,
+    "ms": 750,
+    "n": 8,
+    "top": [
+     "https://developers.weixin.qq.com/miniprogram/dev/api/network/request/wx.request.html",
+     "https://developers.weixin.qq.com/miniprogram/dev/api/network/request/RequestTask.html",
+     "https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html",
+     "https://developers.weixin.qq.com/miniprogram/dev/framework/app-service/api.html",
+     "https://developers.weixin.qq.com/community/develop/article/doc/0006224c524fd0ab4dc01ab1f66013"
+    ],
+    "chars": 6497,
+    "passages": 7,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cn_oss_python": {
+    "ok": true,
+    "ms": 1197,
+    "n": 8,
+    "top": [
+     "https://help.aliyun.com/zh/oss/developer-reference/upload-files-using-oss-sdk-for-python-v2/",
+     "https://github.com/aliyun/alibabacloud-oss-python-sdk-v2/blob/master/README-CN.md",
+     "https://github.com/aliyun/aliyun-oss-python-sdk/blob/master/examples/upload.py",
+     "https://github.com/aliyun/alibabacloud-oss-python-sdk-v2/blob/master/sample/upload_file.py",
+     "https://help.aliyun.com/zh/oss/developer-reference/upload-objects-2/"
+    ],
+    "chars": 6729,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   },
+   "cn_venv": {
+    "ok": true,
+    "ms": 1456,
+    "n": 8,
+    "top": [
+     "https://docs.python.org/zh-cn/3.10/tutorial/venv.html",
+     "https://chenlb.com/python/base/env.html",
+     "https://coddy.tech/docs/zh/python/virtual-environments",
+     "https://fastapi.org.cn/virtual-environments/",
+     "https://docs.python.org/3/library/venv.html"
+    ],
+    "chars": 6291,
+    "passages": 9,
+    "sources": {
+     "exa": 8
+    }
+   }
+  }
+ }
+}

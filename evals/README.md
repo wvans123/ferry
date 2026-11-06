@@ -53,3 +53,18 @@ python evals\run.py
 - `solve(work)`：标准答案，给 `--verify` 用，证明判分本身没写错。
 
 最好的任务来自真实的失败：工作中 Ferry 哪里没做好，就把那件事（换成编的内容）做成一个任务。修好之后，它就一直守着这个问题。
+
+## 搜索评测
+
+`evals/search_eval.py` 只量搜索，不跑 agent。`evals/search/queries.json` 里有 27 个真实的查询（3GPP 规范、电信术语、技术文档、报错信息、中文资讯和产品文档），每个写了"前 5 条里要有哪个网站"。脚本把每个查询发给每个搜索来源各搜一遍，再走一遍服务端的组合搜索（几家一起查、合并、摘段落），打印每种方式的命中率、耗时中位数和出错次数，组合搜索还打印平均字数和段落数。
+
+在服务端那台电脑上，ferry 的 git 文件夹里：
+
+```bat
+python evals\search_eval.py
+```
+
+- 用的是服务端自己的设置和 Key（`FERRY_SERVER_HOME`，默认 `~/.ferry-server`）：管理页填的 Key、`FERRY_SEARCH_KEY_<来源>`、模型的 DeepSeek Key。没有 Key 的来源跳过；Exa 免费搜索不用 Key。`bing` 是在这台电脑上读 Bing 的结果页，相当于工作电脑没有服务端时的做法，当作基线。
+- `--sources exa,bing` 只测这几家，`--only ts38331,cn_5ga` 只跑这几个查询，`--no-combined` 不跑组合搜索。
+- 结果存进 `evals\search\results\<时间>.json`，提交上来，以后改搜索先跑一遍，和上一次比。
+- Exa 免费搜索同时搜得太多会被限流（429），所以默认一次只跑 2 个查询。

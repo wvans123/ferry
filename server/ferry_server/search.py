@@ -2,14 +2,17 @@
 (web_fetch with a prompt).
 
 Search. Search engines' own result pages give automated requests poor results (Bing answered "agent memory github"
-with dictionary entries). Better sources, all used from here so their keys stay on this computer:
-- DeepSeek's Search API, with the DeepSeek key this server already has (the default when there is one);
-- a search API (Tavily, Brave or Bocha), made for programs;
-- a model's own web search, as Claude Code and Codex use it: Claude through Anthropic's API (its web_search
-  server tool) or an OpenAI model through the Responses API (its web_search tool). The server is the model's
-  client, so it asks the model to search and hands back what the search found.
-The work computer sends the query (a few hundred bytes) and gets titles, addresses, dates and snippets back. Pages
-themselves are still read on the work computer. Without an engine set, the work computer reads Bing's result page.
+with dictionary entries). Better sources, all used from here so their keys stay on this computer, and all asked at
+once for every search:
+- DeepSeek's Search API, with the DeepSeek key this server already has;
+- the search APIs with a key entered on the admin page (Tavily, Brave, Bocha);
+- a model's own web search when one is chosen, as Claude Code and Codex use it: Claude through Anthropic's API (its
+  web_search server tool) or an OpenAI model through the Responses API (its web_search tool);
+- Exa's hosted search, free without a key (as opencode uses it).
+Their lists are merged by reciprocal rank fusion, the same page once. The top pages are read here and the passages
+that bear on the query are quoted from them, so the work computer sends the query (a few hundred bytes) and gets
+titles, addresses, dates, snippets and those passages back, a few thousand tokens. The same search within 10 minutes
+comes from a cache. With "bing" chosen the work computer reads Bing's result page itself.
 
 Reading with a question, like Claude Code's WebFetch: the work computer fetches the page and sends its text (at most
 100k characters) with the question; a model here answers from the page, and only that answer goes into the
@@ -18,10 +21,12 @@ conversation instead of the whole page. The summary model does it when one is se
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 from fastapi import FastAPI, Request
@@ -39,10 +44,23 @@ ENGINES = {
 }
 RECENT = ("day", "week", "month", "year")
 PAGE_CHARS = 100_000  # the most of a page that goes to the model, like Claude Code's WebFetch
+SOURCE_TIMEOUT = 20
+MODEL_TIMEOUT = 60    # a model's own search takes tens of seconds; a Cloudflare tunnel gives up at 100
+CACHE_SECONDS = 600
+PAGES = 3             # top results read for passages
+PAGE_TIMEOUT = 12
+PASSAGE_CHARS = 400
+PASSAGES_TOTAL = 4000
+SNIPPET_CHARS = 400
 
 
 def key_path(cfg: Config) -> Path:
+    """Before keys per engine: one key, for the engine chosen then."""
     return (cfg.home or cfg.data_dir) / "search-key"
+
+
+def keys_path(cfg: Config) -> Path:
+    return (cfg.home or cfg.data_dir) / "search-keys.json"
 
 
 def search_model(cfg: Config, value: str) -> ModelConfig | None:
@@ -59,62 +77,82 @@ def deepseek_key(cfg: Config) -> str:
     return ""
 
 
-def engine(cfg: Config) -> str:
-    """The search source: "" (auto) uses DeepSeek's Search API when this server has a DeepSeek key; "bing" leaves
-    searching to the work computer (Bing's page); otherwise the engine or "model:<id>" chosen on the admin page."""
+def chosen(cfg: Config) -> str:
+    """The admin page's choice: "" (auto), "bing" (no server search), "model:<id>" (that model's search joins the
+    others), or an engine (from before keys per engine: the one FERRY_SEARCH_KEY and the old key file belong to)."""
     e = (os.environ.get("FERRY_SEARCH") or cfg.search_engine or "").strip()
-    if e.startswith("model:"):
-        return e if search_model(cfg, e) else ""
-    e = e.lower()
-    if not e:
-        return "deepseek" if deepseek_key(cfg) else ""
-    return e if e in ENGINES else ""
+    return e if e.startswith("model:") else e.lower()
 
 
-def label(cfg: Config) -> str:
-    e = engine(cfg)
-    return f"{e[6:]}'s web search" if e.startswith("model:") else ENGINES.get(e, {}).get("name", e)
+def saved_keys(cfg: Config) -> dict[str, str]:
+    p, old = keys_path(cfg), key_path(cfg)
+    try:
+        keys = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except ValueError:
+        keys = {}
+    if old.exists() and cfg.search_engine in ENGINES:
+        keys.setdefault(cfg.search_engine, old.read_text(encoding="utf-8").strip())
+    return {k: str(v) for k, v in keys.items() if k in ENGINES and v}
 
 
-def api_key(cfg: Config) -> str:
-    env = os.environ.get("FERRY_SEARCH_KEY", "").strip()
-    if env:
-        return env
-    p = key_path(cfg)
-    return p.read_text(encoding="utf-8").strip() if p.exists() else ""
-
-
-def save_key(cfg: Config, value: str) -> None:
-    p = key_path(cfg)
-    if not value:
-        p.unlink(missing_ok=True)
+def save_key(cfg: Config, name: str, value: str) -> None:
+    if name not in ENGINES:
         return
+    keys = saved_keys(cfg)
+    if value.strip():
+        keys[name] = value.strip()
+    else:
+        keys.pop(name, None)
+    p = keys_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(value.strip(), encoding="utf-8")
+    p.write_text(json.dumps(keys), encoding="utf-8")
     try:
         p.chmod(0o600)
     except OSError:
         pass
+    key_path(cfg).unlink(missing_ok=True)
 
 
 def engine_key(cfg: Config, e: str) -> str:
-    """The key for engine e: the one saved for search, or for DeepSeek the server's own DeepSeek key."""
-    return api_key(cfg) or (deepseek_key(cfg) if e == "deepseek" else "")
+    """The key for engine e: FERRY_SEARCH_KEY_<E>, FERRY_SEARCH_KEY for the engine in FERRY_SEARCH, the one saved on
+    the admin page, or for DeepSeek the server's own DeepSeek key."""
+    own = os.environ.get(f"FERRY_SEARCH_KEY_{e.upper()}", "").strip()
+    env = os.environ.get("FERRY_SEARCH_KEY", "").strip() if chosen(cfg) == e else ""
+    return own or env or saved_keys(cfg).get(e, "") or (deepseek_key(cfg) if e == "deepseek" else "")
+
+
+def exa_on() -> bool:
+    return os.environ.get("FERRY_SEARCH_EXA", "").strip().lower() not in ("off", "0", "false", "no")
+
+
+def sources(cfg: Config) -> list[str]:
+    """Every source a search asks at once: engines with a key, the chosen model's own search, Exa's free search."""
+    e = chosen(cfg)
+    if e == "bing":
+        return []
+    out = [n for n in ENGINES if engine_key(cfg, n)]
+    m = search_model(cfg, e)
+    if m and m.ready:
+        out.append(e)
+    return out + (["exa"] if exa_on() else [])
 
 
 def ready(cfg: Config) -> bool:
-    e = engine(cfg)
-    if e.startswith("model:"):
-        m = search_model(cfg, e)
-        return bool(m and m.ready)
-    return bool(e and engine_key(cfg, e))
+    return bool(sources(cfg))
+
+
+def label(source: str) -> str:
+    if source.startswith("model:"):
+        return f"{source[6:]}'s web search"
+    return "Exa" if source == "exa" else ENGINES.get(source, {}).get("name", source)
 
 
 def base(name: str) -> str:
     """The engine's address; FERRY_SEARCH_API_<NAME> points it elsewhere (tests, a proxy)."""
     own = os.environ.get(f"FERRY_SEARCH_API_{name.upper()}", "").rstrip("/")
     return own or {"deepseek": "https://api.deepseek.com", "tavily": "https://api.tavily.com",
-                   "brave": "https://api.search.brave.com", "bocha": "https://api.bochaai.com"}[name]
+                   "brave": "https://api.search.brave.com", "bocha": "https://api.bochaai.com",
+                   "exa": "https://mcp.exa.ai/mcp"}[name]
 
 
 def domains(v) -> list[str]:
@@ -135,20 +173,33 @@ def with_sites(query: str, allowed: list[str], blocked: list[str]) -> str:
     return " ".join([query, *(f"-site:{d}" for d in blocked)])
 
 
+def on_site(url: str, d: str) -> bool:
+    p = urlsplit(url)
+    host, _, path = d.partition("/")
+    h = (p.hostname or "").lower()
+    return (h == host or h.endswith("." + host)) and p.path.lower().startswith(f"/{path}" if path else "")
+
+
+def keep_domains(rows: list[dict], allowed: list[str], blocked: list[str]) -> list[dict]:
+    """The domain limits once more on the results: not every source keeps to them."""
+    if allowed:
+        return [x for x in rows if any(on_site(x["url"], d) for d in allowed)]
+    return [x for x in rows if not any(on_site(x["url"], d) for d in blocked)]
+
+
 class SearchFailed(Exception):
     """The engine answered, but not with results (a model's search error, an API's refusal)."""
 
 
-async def search(cfg: Config, client: httpx.AsyncClient, query: str, count: int = 8, recent: str = "",
-                 allowed: list[str] | None = None, blocked: list[str] | None = None) -> list[dict]:
-    """[{title, url, snippet, date}] from the configured engine. Raises httpx.HTTPStatusError on an API error."""
-    name = engine(cfg)
+async def search_one(cfg: Config, client: httpx.AsyncClient, name: str, query: str, count: int = 8, recent: str = "",
+                     allowed: list[str] | None = None, blocked: list[str] | None = None) -> list[dict]:
+    """[{title, url, snippet, date}] from one source. Raises httpx.HTTPStatusError on an API error."""
     key = engine_key(cfg, name)
-    count = max(1, min(int(count or 8), 20))
-    recent = recent if recent in RECENT else ""
     allowed, blocked = allowed or [], ([] if allowed else blocked or [])
     if name.startswith("model:"):
         return await model_search(client, search_model(cfg, name), query, count, recent, allowed, blocked)
+    if name == "exa":
+        return await exa_search(client, query, count)
     if name == "deepseek":
         # DeepSeek's Search API (the one DeepSeek Harness uses by default); operators: site:, -site:, after:, lang:
         days = {"day": 1, "week": 7, "month": 31, "year": 366}.get(recent, 0)
@@ -186,32 +237,90 @@ async def search(cfg: Config, client: httpx.AsyncClient, query: str, count: int 
         d = j.get("data") if isinstance(j.get("data"), dict) else j  # the answer may come wrapped in {code, data}
         return [{"title": x.get("name", ""), "url": x.get("url", ""), "snippet": x.get("summary") or x.get("snippet", ""),
                  "date": x.get("datePublished", "")} for x in (d.get("webPages") or {}).get("value", [])]
-    raise ValueError("no search engine set")
+    raise ValueError(f"unknown search source {name}")
 
 
-def search_request(query: str, recent: str) -> str:
+async def exa_search(client: httpx.AsyncClient, query: str, count: int) -> list[dict]:
+    """Exa's hosted MCP server, called as JSON-RPC without a session. Each result comes with highlights quoted from
+    the page; they are kept as the result's text, for passages when the page itself cannot be read."""
+    for wait in (2, 0):
+        r = await client.post(base("exa"), timeout=30, headers={"Accept": "application/json, text/event-stream"}, json={
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "web_search_exa", "arguments": {"query": query, "numResults": count, "objective": query}}})
+        if r.status_code != 429 or not wait:  # the free search allows only a few at a time
+            break
+        await asyncio.sleep(wait)
+    r.raise_for_status()
+    if "json" in r.headers.get("content-type", ""):
+        reply = r.json()
+    else:  # one server-sent event
+        reply = next((json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:")), {})
+    res = reply.get("result") or {}
+    if reply.get("error") or res.get("isError"):
+        raise SearchFailed(f"Exa: {json.dumps(reply.get('error') or res.get('content'), ensure_ascii=False)[:200]}")
+    text = "\n".join(c.get("text", "") for c in res.get("content") or [] if c.get("type") == "text")
+    out = []
+    for block in re.split(r"(?m)^(?=Title: )", text):
+        head, _, body = block.partition("\nHighlights:")
+        field = {k: v.strip() for k, v in re.findall(r"(?m)^(Title|URL|Published): (.*)$", head)}
+        if not field.get("URL", "").startswith("http"):
+            continue
+        body = re.sub(r"\n-{3}\s*$", "", body.strip())
+        out.append({"title": "" if field.get("Title") == "N/A" else field.get("Title", ""), "url": field["URL"],
+                    "snippet": re.sub(r"\s+", " ", body)[:SNIPPET_CHARS],
+                    "date": "" if field.get("Published") == "N/A" else field.get("Published", ""), "text": body})
+    return out
+
+
+def search_request(query: str, recent: str, count: int) -> str:
     when = {"day": " Only pages from the last day.", "week": " Only pages from the last week.",
             "month": " Only pages from the last month.", "year": " Only pages from the last year."}.get(recent, "")
     return (f"Search the web for: {query}\n\nSearch with exactly these words first.{when} This search is for another "
-            "program that reads the results itself: do not answer the question, reply with the single word done.")
+            "program that reads the pages itself: do not answer the question. List the most relevant pages, at most "
+            f"{count}, one line each: the page's address, then one or two sentences quoted word for word from that page "
+            "that bear on the search.")
+
+
+def quote_line(line: str) -> str:
+    """What the model wrote on a result's line, without the address, the link and the list marker."""
+    line = re.sub(r"\[[^\]]*\]\(https?://[^)]*\)", "", line)
+    line = re.sub(r"https?://\S+", "", re.sub(r"^\s*(?:[-*•>]|\d+[.)])\s*", "", line))
+    return line.strip(" \t-—–:|*\"'“”()[]")[:SNIPPET_CHARS]
+
+
+def quotes_by_url(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        q = quote_line(line)
+        for u in re.findall(r"https?://[^\s)\]>\"'，。]+", line):
+            if q:
+                out.setdefault(u.rstrip(".,;"), q)
+    return out
 
 
 async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, count: int, recent: str,
                        allowed: list[str], blocked: list[str]) -> list[dict]:
-    """A model's own web search: the server is the model's client and keeps only what the search found."""
+    """A model's own web search: the server is the model's client and keeps what the search found, with the
+    sentences the model quoted from each page as its snippet."""
     limits = {"allowed_domains": allowed} if allowed else {"blocked_domains": blocked} if blocked else {}
     if m.api == "anthropic":
         # the basic search tool: results come straight back (no filtering code run on Anthropic's side)
-        body = {"model": m.model, "max_tokens": 4096, "messages": [{"role": "user", "content": search_request(query, recent)}],
+        body = {"model": m.model, "max_tokens": 2048,
+                "messages": [{"role": "user", "content": search_request(query, recent, count)}],
                 "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 2, **limits}]}
         r = await client.post(anthropic_url(m.base_url), json=body, timeout=90,
                               headers={"x-api-key": m.api_key, "anthropic-version": "2023-06-01"})
         r.raise_for_status()
         blocks = r.json().get("content") or []
-        cited = {}
+        cited: dict[str, list[str]] = {}
+        text = ""
         for b in blocks:
-            for c in b.get("citations") or [] if b.get("type") == "text" else []:
-                cited.setdefault(c.get("url", ""), c.get("cited_text", ""))
+            if b.get("type") == "text":
+                text += b.get("text", "")
+                for c in b.get("citations") or []:
+                    if c.get("cited_text"):
+                        cited.setdefault(c.get("url", ""), []).append(c["cited_text"].strip())
+        quoted = quotes_by_url(text)
         out, errors = [], []
         for b in blocks:
             if b.get("type") != "web_search_tool_result":
@@ -222,14 +331,15 @@ async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, co
                 continue
             for x in content or []:
                 if x.get("type") == "web_search_result" and x.get("url"):
-                    out.append({"title": x.get("title", ""), "url": x["url"], "snippet": cited.get(x["url"], ""),
+                    said = " … ".join(list(dict.fromkeys(cited.get(x["url"], [])))[:2])
+                    out.append({"title": x.get("title", ""), "url": x["url"], "snippet": said or quoted.get(x["url"], ""),
                                 "date": x.get("page_age", "") or ""})
         if not out and errors:
             raise SearchFailed(f"{m.id}'s web search failed: {', '.join(errors)}")
         return dedupe(out)[:count]
     from .responses import responses_url
     tool = {"type": "web_search", "search_context_size": "low", **({"filters": limits} if limits else {})}
-    body = {"model": m.model, "input": search_request(query, recent), "tools": [tool],
+    body = {"model": m.model, "input": search_request(query, recent, count), "tools": [tool],
             "include": ["web_search_call.action.sources"], "max_output_tokens": 4096}
     r = await client.post(responses_url(m.base_url), json=body, timeout=90,
                           headers={"Authorization": f"Bearer {m.api_key}", "Content-Type": "application/json"})
@@ -239,10 +349,13 @@ async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, co
         if item.get("type") == "message":
             for part in item.get("content") or []:
                 text = part.get("text", "")
+                quoted = quotes_by_url(text)
                 for a in part.get("annotations") or []:
                     if a.get("type") == "url_citation" and a.get("url"):
+                        at, end = a.get("start_index", 0), text.find("\n", a.get("start_index", 0))
+                        line = text[text.rfind("\n", 0, at) + 1:end if end >= 0 else len(text)]
                         out.append({"title": a.get("title", ""), "url": a["url"], "date": "",
-                                    "snippet": text[a.get("start_index", 0):a.get("end_index", 0)][:300]})
+                                    "snippet": quote_line(line) or quoted.get(a["url"], "")})
     for item in r.json().get("output") or []:  # every page the search looked at, after the cited ones
         if item.get("type") == "web_search_call":
             for s in (item.get("action") or {}).get("sources") or []:
@@ -251,14 +364,169 @@ async def model_search(client: httpx.AsyncClient, m: ModelConfig, query: str, co
     return dedupe(out)[:count]
 
 
+def norm_url(u: str) -> str:
+    """The same page, however a source wrote its address: no scheme, www., fragment, trailing slash or tracking."""
+    p = urlsplit(u.strip())
+    host = (p.hostname or "").lower().removeprefix("www.")
+    try:
+        port = f":{p.port}" if p.port and p.port not in (80, 443) else ""
+    except ValueError:
+        port = ""
+    q = urlencode(sorted((k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+                         if not re.match(r"(utm_|fbclid$|gclid$|spm$)", k)))
+    return f"{host}{port}{p.path.rstrip('/')}{'?' + q if q else ''}"
+
+
 def dedupe(rows: list[dict]) -> list[dict]:
     seen, out = set(), []
     for x in rows:
-        u = x["url"].split("#")[0]
+        u = norm_url(x["url"])
         if u not in seen:
             seen.add(u)
             out.append(x)
     return out
+
+
+def merge(found: dict[str, list[dict]], query: str, count: int) -> list[dict]:
+    """Reciprocal rank fusion: pages high on several sources' lists come first, each page once. Bocha counts double
+    for Chinese queries."""
+    chinese = bool(re.search(r"[\u3400-\u9fff]", query))
+    score: dict[str, float] = {}
+    rows: dict[str, dict] = {}
+    for source, results in found.items():
+        weight = 2.0 if source == "bocha" and chinese else 1.0
+        for rank, x in enumerate(dedupe(results)):
+            k = norm_url(x["url"])
+            score[k] = score.get(k, 0) + weight / (60 + rank)
+            row = rows.setdefault(k, {**x, "engines": []})
+            row["engines"].append(source)
+            for f in ("title", "snippet", "date", "text"):
+                if not row.get(f) and x.get(f):
+                    row[f] = x[f]
+    return [rows[k] for k in sorted(rows, key=lambda k: -score[k])][:count]
+
+
+async def search_all(cfg: Config, client: httpx.AsyncClient, query: str, count: int = 8, recent: str = "",
+                     allowed: list[str] | None = None, blocked: list[str] | None = None,
+                     names: list[str] | None = None) -> tuple[list[dict], dict]:
+    """(merged results, {source: how many results, or why it failed}) from every source at once."""
+    names = sources(cfg) if names is None else names
+    count = max(1, min(int(count or 8), 20))
+    recent = recent if recent in RECENT else ""
+    allowed, blocked = allowed or [], ([] if allowed else blocked or [])
+
+    async def one(s: str):
+        try:
+            rows = await asyncio.wait_for(search_one(cfg, client, s, query, count, recent, allowed, blocked),
+                                          MODEL_TIMEOUT if s.startswith("model:") else SOURCE_TIMEOUT)
+            return keep_domains([x for x in rows if x.get("url")], allowed, blocked)
+        except httpx.HTTPStatusError as e:
+            return f"{label(s)} answered HTTP {e.response.status_code}: {e.response.text[:200]}"
+        except asyncio.TimeoutError:
+            return f"{label(s)} did not answer in time"
+        except Exception as e:  # noqa: BLE001 - one source failing must not lose the others' results
+            return f"{label(s)} did not answer: {e!r}"[:300]
+    got = dict(zip(names, await asyncio.gather(*(one(s) for s in names))))
+    found = {s: r for s, r in got.items() if isinstance(r, list)}
+    return merge(found, query, count), {s: len(r) if isinstance(r, list) else r for s, r in got.items()}
+
+
+# ---------- passages: the parts of the top pages that bear on the query ----------
+
+STOP = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "is", "are", "how", "what", "why", "by",
+        "from", "at", "as", "be", "it", "this", "that", "vs", "not", "do", "does", "can", "i", "my"}
+
+
+def terms(query: str) -> set[str]:
+    """The query's words (lower case, no operators or stop words); Chinese as pairs of characters."""
+    q = re.sub(r"-?\b(site|after|before|lang|filetype):\S+", " ", query.lower())
+    words = {w.strip("._-") for w in re.findall(r"[a-z0-9][\w.-]*", q, flags=re.ASCII)} - STOP
+    han = re.findall(r"[\u3400-\u9fff]+", q)
+    return {w for w in words if len(w) > 1} | {s[i:i + 2] for s in han for i in range(len(s) - 1)} \
+        | {s for s in han if len(s) == 1}
+
+
+def chunks(text: str, size: int) -> list[str]:
+    """The text in pieces of about size characters along line breaks; a heading starts a new piece."""
+    out, cur = [], ""
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if cur and (line.startswith("#") or len(cur) + len(line) > size):
+            out.append(cur)
+            cur = ""
+        cur = f"{cur}\n{line}" if cur else line
+    return out + ([cur] if cur else [])
+
+
+def window(c: str, hits: list[str], size: int) -> str:
+    """At most size characters of c, word for word, starting a little before the first query word."""
+    if len(c) <= size:
+        return c
+    first = min((i for i in (c.lower().find(t) for t in hits) if i >= 0), default=0)
+    start = max(0, first - size // 4)
+    if start:
+        line = c.rfind("\n", 0, first)
+        start = line + 1 if line >= start - size // 4 else start
+    end = min(len(c), start + size)
+    return ("…" if start else "") + c[start:end].strip() + ("…" if end < len(c) else "")
+
+
+def pick_passages(text: str, query: str, n: int = 3, size: int = PASSAGE_CHARS) -> list[str]:
+    """Up to n passages of the page that share the most words with the query, in page order."""
+    want = terms(query)
+    if not want or not text:
+        return []
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)  # links and pictures: their words only
+    scored = []
+    for i, c in enumerate(chunks(text, size)):
+        low = c.lower()
+        hits = [t for t in want if t in low]
+        if hits:
+            scored.append((len(hits) + min(sum(low.count(t) for t in hits), 10) / 10, i, c, hits))
+    need = 1 if len(want) < 3 else 2
+    best = sorted([s for s in scored if len(s[3]) >= need] or scored, key=lambda s: -s[0])[:n]
+    return [window(c, hits, size) for _, _, c, hits in sorted(best, key=lambda s: s[1])]
+
+
+async def add_passages(cfg: Config, client: httpx.AsyncClient, query: str, results: list[dict],
+                       cache: dict | None = None) -> None:
+    """Each of the top results gets "passages": quoted from its page, read here concurrently (or from what the
+    source sent with it when the page cannot be read), at most PASSAGES_TOTAL characters in all."""
+    cache = {} if cache is None else cache
+
+    async def text_of(x: dict) -> str:
+        hit = cache.get(x["url"])
+        if hit and time.time() - hit[0] < 900:
+            return hit[1][2]
+        try:
+            page = await asyncio.wait_for(fetch_page(cfg, client, x["url"]), PAGE_TIMEOUT)
+        except (Unreachable, NotText, asyncio.TimeoutError, httpx.HTTPError, ValueError, LookupError):
+            return x.get("text", "")
+        cache[x["url"]] = (time.time(), page)
+        while len(cache) > 200:
+            cache.pop(next(iter(cache)))
+        return page[2] or x.get("text", "")
+    top = results[:PAGES]
+    budget = PASSAGES_TOTAL
+    for x, text in zip(top, await asyncio.gather(*(text_of(x) for x in top))):
+        x["passages"] = []
+        for p in pick_passages(text, query):
+            if len(p) > budget:
+                break
+            x["passages"].append(p)
+            budget -= len(p)
+
+
+def public(x: dict) -> dict:
+    """A result as the work computer gets it; no snippet when the passages already say it."""
+    snippet = str(x.get("snippet") or "")[:SNIPPET_CHARS]
+    flat = lambda s: re.sub(r"\s+", " ", s).strip()  # noqa: E731
+    if x.get("passages") and flat(snippet) in flat(" ".join(x["passages"])):
+        snippet = ""
+    return {"title": x.get("title", ""), "url": x["url"], "snippet": snippet,
+            "date": x.get("date", ""), **({"passages": x["passages"]} if x.get("passages") else {})}
 
 
 EXTRACT_SYSTEM = """You read one web page for an assistant that is working on a task, and answer its question from \
@@ -311,15 +579,66 @@ def private_host(host: str) -> bool:
 
 
 ENT = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'", "nbsp": " ", "#39": "'"}
+# blocks around the content: cookie banners, comments, sidebars, share buttons, related links
+BOILER = (r"<(div|section|aside|ul|ol|p|span|footer|header|dialog)\b[^>]*\b(?:id|class|role)\s*=\s*[\"'](?:[^\"']*\s)?"
+          r"(?:cookie|consent|gdpr|comments?|sidebar|related|share|social|newsletter|breadcrumbs?|advert|ads|promo|popup|"
+          r"modal|complementary|contentinfo)(?:[-_][^\"'\s]*)?(?:\s[^\"']*)?[\"'][^>]*>")
+
+
+def element_end(h: str, tag: str, start: int) -> int:
+    """Where the element whose start tag begins at start ends, counting elements of the same name inside it."""
+    depth = 0
+    for m in re.compile(rf"<(/?){tag}\b[^>]*>", re.I).finditer(h, start):
+        if not m.group(1) and m.group(0).endswith("/>"):
+            continue
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return m.end()
+    return len(h)
+
+
+def drop_elements(h: str, open_tag: str) -> str:
+    """h without the elements whose start tag matches open_tag (a pattern whose first group is the tag name)."""
+    out, pos = [], 0
+    pat = re.compile(open_tag, re.I)
+    while m := pat.search(h, pos):
+        out.append(h[pos:m.start()])
+        pos = max(element_end(h, m.group(1), m.start()), m.end())
+    return "".join(out) + h[pos:]
+
+
+def visible(h: str) -> int:
+    return len(re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", h)))
+
+
+def main_part(h: str) -> str:
+    """The page's own content: without boilerplate blocks, and only its <main> or longest <article> when that holds
+    most of it. Each cut is undone when it would leave too little."""
+    whole = visible(h)
+    cut = drop_elements(h, BOILER)
+    h = cut if visible(cut) >= whole * 0.3 else h
+    parts = []
+    for tag in ("main", "article"):
+        for m in re.finditer(rf"<{tag}\b[^>]*>", h, re.I):
+            parts.append(h[m.start():element_end(h, tag, m.start())])
+        if parts:
+            break
+    best = max(parts, key=visible, default="")
+    if best and visible(best) >= 500:
+        return best
+    cut = drop_elements(h, r"<(header|aside)\b[^>]*>")
+    return cut if visible(cut) >= visible(h) * 0.3 else h
 
 
 def html_to_text(html: str, base: str) -> tuple[str, str]:
-    """(title, readable text) of an HTML page: like the work computer's web_fetch, links kept as [text](address)."""
+    """(title, readable text) of an HTML page, its main content only: like the work computer's web_fetch, links kept
+    as [text](address)."""
     from html import unescape
     from urllib.parse import urljoin
     title = unescape(re.sub(r"\s+", " ", (re.search(r"<title[^>]*>([\s\S]*?)</title>", html, re.I) or [None, ""])[1])).strip()
     h = re.sub(r"<!--[\s\S]*?-->", "", html)
-    h = re.sub(r"<(script|style|noscript|svg|head|title|nav|footer|form|iframe|template)\b[\s\S]*?</\1>", "", h, flags=re.I)
+    h = re.sub(r"<(script|style|noscript|svg|head|title|nav|footer|form|iframe|template|button|dialog)\b[\s\S]*?</\1>", "", h, flags=re.I)
+    h = main_part(h)
     pres: list[str] = []
 
     def keep_pre(m):
@@ -348,7 +667,7 @@ def html_to_text(html: str, base: str) -> tuple[str, str]:
 
 async def fetch_here(client: httpx.AsyncClient, url: str) -> tuple[str, str, str]:
     """(final address, title, text), fetched by this server. Raises Unreachable or NotText."""
-    from urllib.parse import urljoin, urlsplit
+    from urllib.parse import urljoin
     current = url
     for _ in range(6):
         parts = urlsplit(current)
@@ -386,10 +705,17 @@ async def fetch_here(client: httpx.AsyncClient, url: str) -> tuple[str, str, str
     raise Unreachable("too many redirects")
 
 
+def raw_github(url: str) -> str:
+    """A file's page on GitHub (github.com/o/r/blob/branch/path) as the file itself."""
+    m = re.match(r"https?://github\.com/([^/]+)/([^/]+)/blob/([^?#]+)", url)
+    return f"https://raw.githubusercontent.com/{m[1]}/{m[2]}/{m[3]}" if m else url
+
+
 async def fetch_page(cfg: Config, client: httpx.AsyncClient, url: str) -> tuple[str, str, str, str]:
     """(address, title, text, how): DeepSeek's Fetch API when this server has a DeepSeek key (Markdown, also many
     script-built pages), else this server's own fetch."""
-    key = deepseek_key(cfg)
+    url = raw_github(url)
+    key = engine_key(cfg, "deepseek")
     if key:
         try:
             r = await client.post(f"{base('deepseek')}/v1/tools/fetch", json={"url": url[:8192]}, timeout=60,
@@ -431,7 +757,10 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
     """POST /v1/ferry/search {query, count, recent, allowed_domains, blocked_domains}: the work computer's web_search.
     POST /v1/ferry/read {url, prompt, offset}: read a public page here; with a prompt only the answer goes back.
     POST /v1/ferry/extract {url, title, prompt, text}: answer a question from a page the work computer fetched."""
+    if key_path(cfg).exists() and cfg.search_engine in ENGINES:
+        save_key(cfg, cfg.search_engine, saved_keys(cfg).get(cfg.search_engine, ""))
     pages: dict[str, tuple[float, tuple]] = {}  # address -> (when, (address, title, text, how)), 15 minutes
+    found: dict[tuple, tuple[float, dict]] = {}  # a search -> (when, its answer), CACHE_SECONDS
 
     @app.post("/v1/ferry/search")
     async def web_search(request: Request):
@@ -439,21 +768,34 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit) -> None:
         query = str(b.get("query") or "").strip()[:500]
         if not query:
             return JSONResponse({"error": "query is empty"}, 400)
-        if not ready(cfg):
+        names = sources(cfg)
+        if not names:
             return JSONResponse({"error": "no search engine is set on the Ferry server"}, 404)
-        name = engine(cfg)
-        try:
-            results = await search(cfg, client, query, b.get("count") or 8, str(b.get("recent") or ""),
-                                   domains(b.get("allowed_domains")), domains(b.get("blocked_domains")))
-        except httpx.HTTPStatusError as e:
-            audit(event="search", user=request.state.user, engine=name, ok=False, status=e.response.status_code)
-            return JSONResponse({"error": f"{label(cfg)} answered HTTP {e.response.status_code}: "
-                                          f"{e.response.text[:300]}"}, 502)
-        except (httpx.HTTPError, SearchFailed) as e:
-            audit(event="search", user=request.state.user, engine=name, ok=False)
-            return JSONResponse({"error": f"{label(cfg)} did not answer: {e!r}"[:400]}, 502)
-        audit(event="search", user=request.state.user, engine=name, ok=True, results=len(results))
-        return {"engine": name, "results": results}
+        count = max(1, min(int(b.get("count") or 8), 20))
+        recent = str(b.get("recent") or "")
+        allowed, blocked = domains(b.get("allowed_domains")), domains(b.get("blocked_domains"))
+        key = (tuple(names), query, count, recent, tuple(allowed), tuple(blocked))
+        hit = found.get(key)
+        if hit and time.time() - hit[0] < CACHE_SECONDS:
+            audit(event="search", user=request.state.user, engine=hit[1]["engine"], ok=True, cached=True,
+                  results=len(hit[1]["results"]))
+            return hit[1]
+        started = time.time()
+        results, report = await search_all(cfg, client, query, count, recent, allowed, blocked, names)
+        failed = {s: r for s, r in report.items() if isinstance(r, str)}
+        if len(failed) == len(report):
+            audit(event="search", user=request.state.user, engine="+".join(names), ok=False)
+            return JSONResponse({"error": "; ".join(failed.values())[:600]}, 502)
+        await add_passages(cfg, client, query, results, pages)
+        out = {"engine": "+".join(s for s, r in report.items() if r and not isinstance(r, str)) or "+".join(names),
+               "results": [public(x) for x in results], **({"failed": failed} if failed else {})}
+        audit(event="search", user=request.state.user, engine=out["engine"], ok=True, results=len(results),
+              ms=int((time.time() - started) * 1000))
+        if results:
+            found[key] = (time.time(), out)
+            while len(found) > 200:
+                found.pop(next(iter(found)))
+        return out
 
     @app.post("/v1/ferry/read")
     async def read(request: Request):

@@ -371,8 +371,9 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         </div>
         <div class="card">
           <h2>网页搜索</h2>
-          <p class="hint">agent 的 web_search 默认在工作电脑上读 Bing 的结果页。搜索引擎给程序的结果页质量差（常常只按第一个词搜），所以服务端有 DeepSeek Key 时默认用 DeepSeek 自家的搜索 API；也可以换成别的搜索 API（Tavily、Brave、博查），或者用 Claude / GPT 模型自带的搜索。Key 都只放在这台电脑上，工作电脑只把搜索词发过来，拿回标题、地址和摘要，网页还是在工作电脑上打开。不设就照旧用 Bing。</p>
-          <div class="row"><select id="setSearch"></select><input type="password" id="setSearchKey" style="flex:1;min-width:200px"><button class="btn primary" id="saveSearch">保存</button><button class="btn" id="testSearch">测试</button></div>
+          <p class="hint">agent 的 web_search 由这台电脑去搜：所有能用的搜索来源同时查，合并去重，再读前几个网页，把和问题相关的原文段落一起交回工作电脑。Exa 的免费搜索不用 Key；服务端有 DeepSeek Key 时加上 DeepSeek 搜索；下面填了 Key 的搜索 API 也加进来。Key 都只放在这台电脑上，工作电脑只把搜索词发过来。</p>
+          <div class="row"><select id="setSearch"></select><button class="btn primary" id="saveSearch">保存</button><button class="btn" id="testSearch">测试</button></div>
+          <div class="row" style="margin-top:6px"><select id="setSearchKeyFor"></select><input type="password" id="setSearchKey" style="flex:1;min-width:200px"><button class="btn" id="saveSearchKey">保存 Key</button></div>
           <div id="searchHint" class="muted" style="font-size:13px;margin-top:6px"></div><div id="searchMsg" class="msg"></div>
         </div>
         <div class="card">
@@ -839,12 +840,14 @@ async function loadSettings() {
   if (document.activeElement !== $("setRepo")) $("setRepo").value = S.github_repo;
   if (document.activeElement !== $("setGhToken")) $("setGhToken").value = "";
   $("setGhToken").placeholder = S.github_token ? "已设置，要换就贴新的（清空后保存 = 删掉）" : "github_pat_…";
-  const E = S.search_engines || {};
-  $("setSearch").innerHTML = `<option value="">自动（${S.deepseek_key ? "现在是 DeepSeek 搜索，用服务端的 DeepSeek Key" : "有 DeepSeek Key 时用 DeepSeek 搜索；现在没有，工作电脑读 Bing"}）</option>`
-    + `<option value="bing" ${S.search_engine === "bing" ? "selected" : ""}>不用服务端搜索（工作电脑读 Bing 的结果页）</option>` + Object.entries(E).map(([k, e]) => `<option value="${k}" ${k === S.search_engine ? "selected" : ""}>${esc(e.name)}：${esc(e.note)}</option>`).join("")
-    + (S.search_models || []).map((m) => `<option value="model:${esc(m.id)}" ${"model:" + m.id === S.search_engine ? "selected" : ""}>用 ${esc(m.model)} 自带的搜索（${m.api === "anthropic" ? "Claude 接口" : "OpenAI Responses 接口"}）</option>`).join("");
+  const E = S.search_engines || {}, K = S.search_keys || {};
+  $("setSearch").innerHTML = `<option value="">自动：${esc((S.search_sources || []).join("、") || "没有可用的来源")} 一起查</option>`
+    + `<option value="bing" ${S.search_engine === "bing" ? "selected" : ""}>不用服务端搜索（工作电脑读 Bing 的结果页）</option>`
+    + (S.search_models || []).map((m) => `<option value="model:${esc(m.id)}" ${"model:" + m.id === S.search_engine ? "selected" : ""}>另加 ${esc(m.model)} 自带的搜索（${m.api === "anthropic" ? "Claude 接口" : "OpenAI Responses 接口"}）</option>`).join("");
+  const keyFor = $("setSearchKeyFor").value;
+  $("setSearchKeyFor").innerHTML = Object.entries(E).filter(([k]) => !(k === "deepseek" && S.deepseek_key)).map(([k, e]) => `<option value="${k}">${esc(e.name)}${K[k] ? "（已有 Key）" : ""}：${esc(e.note)}</option>`).join("");
+  if (keyFor) $("setSearchKeyFor").value = keyFor;
   if (document.activeElement !== $("setSearchKey")) $("setSearchKey").value = "";
-  $("setSearchKey").placeholder = S.search_key ? "Key 已设置，要换就贴新的（清空后保存 = 删掉）" : "搜索服务的 API Key";
   searchHint();
   loadReports();
   $("autoCard").hidden = S.platform !== "win32"; $("setAuto").checked = S.autostart;
@@ -859,16 +862,16 @@ $("testBark").onclick = async () => { say("barkMsg", "正在发……"); try { c
 $("saveConc").onclick = () => setting({ max_concurrent: Math.max(1, +$("setConc").value || 6) }, "已保存");
 $("saveGh").onclick = () => setting({ github_repo: $("setRepo").value.trim(), ...($("setGhToken").value.trim() || !S.github_token ? { github_token: $("setGhToken").value.trim() } : {}) }, "已保存");
 function searchHint() {
-  const v = $("setSearch").value, se = (S.search_engines || {})[v], model = v.startsWith("model:");
-  $("setSearchKey").hidden = model || v === "" || v === "bing" || (v === "deepseek" && S.deepseek_key);
-  if (v === "deepseek" && S.deepseek_key) return void ($("searchHint").textContent = "用服务端已有的 DeepSeek Key，不用另填。");
-  if (v === "") return void ($("searchHint").textContent = "DeepSeek 搜索每千次 0.75 美元，只有返回结果的才收费。");
-  $("searchHint").innerHTML = se ? `去 <a href="${esc(se.key_url)}" target="_blank" rel="noopener">${esc(se.key_url)}</a> 注册拿 Key。`
-    : model ? "用这个模型的 Key，不用另填。服务端请它搜一下，只把搜到的网页列表交回工作电脑，和 Claude Code、Codex 的搜索是同一套。每次搜索除了 token 另有费用（Claude 官方是每千次 10 美元）；中转多半不支持，保存后点\"测试\"。" : "";
+  const k = $("setSearchKeyFor").value, se = (S.search_engines || {})[k];
+  $("setSearchKey").placeholder = (S.search_keys || {})[k] ? "Key 已设置，要换就贴新的（清空后保存 = 删掉）" : "这家搜索 API 的 Key";
+  const model = $("setSearch").value.startsWith("model:") ? "选了模型自带的搜索：服务端请它搜一下，只把搜到的网页和它引的原话交回。每次搜索除了 token 另有费用（Claude 官方是每千次 10 美元），最慢要一分钟；中转多半不支持，保存后点\"测试\"。" : "";
+  $("searchHint").innerHTML = (model ? esc(model) + "<br>" : "") + (se ? `${esc(se.name)} 的 Key 去 <a href="${esc(se.key_url)}" target="_blank" rel="noopener">${esc(se.key_url)}</a> 注册拿。` : "");
 }
 $("setSearch").onchange = searchHint;
-$("saveSearch").onclick = () => setting({ search_engine: $("setSearch").value, ...(!$("setSearch").value.startsWith("model:") && !$("setSearchKey").hidden && ($("setSearchKey").value.trim() || !S.search_key) ? { search_key: $("setSearchKey").value.trim() } : {}) }, $("setSearch").value ? "已保存，工作电脑下次启动 ferry 时生效" : "已改回 Bing");
-$("testSearch").onclick = async () => { say("searchMsg", "正在搜……"); try { const r = await api("search/test", "POST", {}); say("searchMsg", r.ok ? "能用：" + r.results.map((x) => x.title).join(" / ") : r.error, r.ok); } catch (e) { say("searchMsg", e.message, false); } };
+$("setSearchKeyFor").onchange = searchHint;
+$("saveSearch").onclick = () => setting({ search_engine: $("setSearch").value }, $("setSearch").value === "bing" ? "已改回 Bing" : "已保存，工作电脑下次启动 ferry 时生效");
+$("saveSearchKey").onclick = async () => { await setting({ search_key_for: $("setSearchKeyFor").value, search_key: $("setSearchKey").value.trim() }, $("setSearchKey").value.trim() ? "已保存 Key" : "已删掉 Key"); $("setSearchKey").value = ""; searchHint(); };
+$("testSearch").onclick = async () => { say("searchMsg", "正在搜……"); try { const r = await api("search/test", "POST", {}); const each = Object.entries(r.sources || {}).map(([k, v]) => `${k}：${v}`).join("；"); say("searchMsg", (r.ok ? "能用：" + r.results.map((x) => x.title).join(" / ") : r.error) + (each ? `（${each}）` : ""), r.ok); } catch (e) { say("searchMsg", e.message, false); } };
 $("saveWords").onclick = async () => { try { await api("reports/words", "PUT", { text: $("reportWords").value }); toast("已保存"); } catch (e) { toast(e.message); } };
 async function loadReports() {
   const box = $("reportList");

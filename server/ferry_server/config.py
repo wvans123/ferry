@@ -84,7 +84,7 @@ class Config:
     bark_url: str = ""           # Bark push address (https://api.day.app/<key>): notifications to an iPhone
     github_repo: str = "wvans123/ferry"  # where /report opens issues (the token is in <home>/github-token)
     shared_memory: bool = False  # global memory on the server, shared by all of a user's computers
-    search_engine: str = ""      # web_search through a search API: tavily, brave, bocha ("" = Bing's page on the work PC)
+    search_engine: str = ""      # "" every search source at once, "bing" none (the work PC reads Bing), "model:<id>" adds its search
     # where conversations live on the server: "disk" (SQLite file, kept session_ttl_days), "memory" (RAM only,
     # gone on restart) or "none" (forgotten after every model call; the client uploads the full context each turn)
     session_store: str = "disk"
