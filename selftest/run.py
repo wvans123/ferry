@@ -794,6 +794,20 @@ def check_steer(root: Path, work: Path) -> None:
         (work / "steer-wrong.txt").unlink(missing_ok=True)
 
 
+def check_server_models_only(root: Path, work: Path) -> None:
+    """With the server unreachable, ferry stops and says so instead of offering a stale saved model list."""
+    s = Stack(root, work, "agent", start_server=False)
+    try:
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "models-cache.json").write_text(json.dumps([{"id": "stale-model"}]), encoding="utf-8")
+        code, out = s.ferry("-p", "hello", timeout=120)
+        ok = code != 0 and "Refusing cached or built-in models" in out and "stale-model" not in out
+        check("F92 模型只认服务端", ok, "服务端连不上时 ferry 说明原因并退出，不拿上次存下的模型列表凑合"
+              if ok else f"code={code} {out[-300:]!r}")
+    finally:
+        s.close()
+
+
 def check_plan_switch(root: Path, work: Path) -> None:
     """The agent proposes plan mode and later asks to leave it; the user answers both questions in the terminal."""
     if WINDOWS:
@@ -1886,7 +1900,7 @@ STEPS = [
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
-    (check_upload_size, "upsize"), (check_side, "side"),
+    (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
 ]
 
 

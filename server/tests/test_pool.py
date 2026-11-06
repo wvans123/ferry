@@ -81,8 +81,8 @@ def test_conversations_spread_stick_and_fail_over(tmp_path, monkeypatch):
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             listed = (await c.get("/v1/ferry/models", headers=hdr)).json()["models"]
             ids = [m["id"] for m in listed]
-            assert ids == ["auto", "gpt", "other"]                      # one entry for the shared model
-            assert listed[1]["providers"] == 2 and listed[1]["contextWindow"] == 300000
+            assert ids == ["gpt", "other"]                      # one entry for the shared model
+            assert listed[0]["providers"] == 2 and listed[0]["contextWindow"] == 300000
 
             async def ask(conv):
                 for n in (1, 2):  # two turns of the same conversation
@@ -128,10 +128,10 @@ def test_by_default_a_provider_keeps_its_same_named_model_apart(tmp_path, monkey
     async def go():
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             listed = (await c.get("/v1/ferry/models", headers=hdr)).json()["models"]
-            assert [m["id"] for m in listed] == ["auto", "gpt", "gpt-b", "other"]   # listed on its own
-            # shown under its provider's name; the shared pool's "auto" stays Ferry's own
-            assert listed[2]["provider"] == "relay-b" and listed[1]["provider"] == "a" and listed[0]["provider"] == "ferry"
-            assert "providers" not in listed[1]
+            assert [m["id"] for m in listed] == ["gpt", "gpt-b", "other"]   # configured models only; no duplicate auto alias
+            # The provider labels survive the local configured-only catalog policy.
+            assert listed[1]["provider"] == "relay-b" and listed[0]["provider"] == "a"
+            assert "providers" not in listed[0]
             # provider a fails: the request does not move to b's model of the same name
             body = json.dumps({"append": [json.dumps({"role": "user", "content": "hi"})], "tools": None})
             ack = (await c.post("/v1/ferry/commit", params={"conv": "s1", "base": 0, "base_hash": ""}, content=body, headers=hdr)).json()

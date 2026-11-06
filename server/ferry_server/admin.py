@@ -596,11 +596,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                                "vision": bool(m["vision"]) if "vision" in m else (had.vision if had else bool(known.get("vision", True))),
                                "price": m["price"] if isinstance(m.get("price"), dict) else (had.price if had and had.price
                                                                                              else known.get("price", {}))})
-        if not models:
-            return JSONResponse({"error": "至少要启用一个模型"}, 400)
         r = b.get("routing", {})
         ids = [m["id"] for m in models]
-        routing = {"default": r.get("default") if r.get("default") in ids else ids[0],
+        routing = {"default": r.get("default") if r.get("default") in ids else (ids[0] if ids else ""),
                    "summary": r.get("summary") if r.get("summary") in ids else "",
                    "image": r.get("image") if r.get("image") in ids else "",
                    "advisor": r.get("advisor") if r.get("advisor") in ids else "",

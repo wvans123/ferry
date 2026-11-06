@@ -38,8 +38,8 @@ test("a default model saved as ferry/x moves to the provider it is shown under n
 	writeFileSync(file, JSON.stringify({ defaultProvider: "kiro", defaultModel: "removed" }));
 	ensureAgentDir("auto", MODELS);
 	assert.deepEqual([saved().defaultProvider, saved().defaultModel], ["ferry", "auto"]);
-	// a provider that is not Ferry's is left alone
+	// Local policy: a saved external provider is replaced by the current server default
 	writeFileSync(file, JSON.stringify({ defaultProvider: "elsewhere", defaultModel: "x" }));
 	ensureAgentDir("auto", MODELS);
-	assert.deepEqual([saved().defaultProvider, saved().defaultModel], ["elsewhere", "x"]);
+	assert.deepEqual([saved().defaultProvider, saved().defaultModel], ["ferry", "auto"]);
 });

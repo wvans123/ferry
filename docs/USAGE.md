@@ -318,6 +318,8 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 |---|---|
 | `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry` 或 `ferry check`，它会在浏览器里打开确认页，你点"继续"后自己接着跑。确认过一阵会过期，干活中途碰到也会自动打开确认页、等确认后重发。长期办法是请 IT 把服务端地址加进白名单 |
 | `cannot reach the server` | 浏览器能打开但 ferry 连不上，通常是浏览器走了公司代理。执行 `setx HTTPS_PROXY http://代理:端口`，然后重开 cmd |
+| `Cannot load the current Ferry server model list` | 能用哪些模型只听服务端的。拿不到服务端的模型列表，ferry 就停下，不拿上次存下的列表或 pi 自带的模型凑合。先按后面那句原因处理（连不上、令牌不对、网关要确认），再运行 `ferry doctor` 看一遍 |
+| `No models configured on the Ferry server` | 服务端一个模型都没启用（没设任何 API Key，或在管理页里全关了）。到服务端管理页加上服务商和模型 |
 | `unable to get local issuer certificate` | 公司代理会解开 HTTPS 再加密。`systemCerts` 默认已打开；还不行，把公司根证书导出成 .pem，`ferry config set caFile C:\路径\证书.pem` |
 | `The Ferry server did not get this request: ...` | 请求在半路被挡了，服务端的调用记录里看不到。后面那句会说是谁挡的：Cloudflare 的机器人防护（在 Cloudflare 后台关掉 Bot Fight Mode，或给 Ferry 的域名加一条跳过规则）、公司网关（Ferry 会打开确认页，确认后重发），或公司代理。详情记在 `%USERPROFILE%\.ferry\logs\blocked.log`。`ferry doctor --upload` 测多大的上传能通过：先试几个大小，再在能过和不能过之间折半查找，精确到 8 KB，并建议一个略小的 `chunkBytes`。Ferry 每个请求都不超过 `chunkBytes`，被网关挡下（403）或被 Cloudflare 挡下（502、530 等）、连接断开时，会等一下再发，最多三次，403 时还把单个请求减半并提示一次。子 agent 遇到同样的情况也会先重试，仍然不行才停，报错里写明原因和已做的步骤 |
 | `a Cloudflare Access login page answered` | 服务端地址前挡着 Cloudflare 的登录页，见 [DEPLOY-MAC.md](DEPLOY-MAC.md#关于那个-cloudflare-登录页) |

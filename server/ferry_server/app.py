@@ -348,8 +348,10 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/v1/ferry/models")
     async def models():
-        """The client sees "auto" (the server picks); other models only when routing.expose is on."""
+        """Expose only configured models; hidden routing mode keeps its legacy auto alias."""
         reload()
+        if not cfg.models:
+            return {"models": [], "defaultModel": "", "sessionStore": cfg.session_store, "features": []}
         d = cfg.models[cfg.default_model]
         labels = provider_labels(cfg)
         auto = {**describe(d, "auto"), "routesTo": d.id}
@@ -358,12 +360,13 @@ def create_app(cfg: Config) -> FastAPI:
             auto["summaryTo"] = cfg.summary_model
         # a model several providers offer is listed once; the server spreads conversations over the providers
         shared = groups(cfg)
-        listed = [auto]
-        for m in cfg.models.values() if cfg.expose_models else []:
+        listed = [] if cfg.expose_models else [auto]
+        ordered = [d, *(m for m in cfg.models.values() if m.id != d.id)]
+        for m in ordered if cfg.expose_models else []:
             if m.id == cfg.image_model and m.id != d.id:
                 continue  # draws pictures (image_create), does not chat
             ids = shared.get(m.id)
-            if ids and any(x["id"] in ids for x in listed[1:]):
+            if ids and any(x["id"] in ids for x in listed):
                 continue  # another provider's copy of this model is listed already
             row = describe(m, provider="" if ids else labels.get(m.provider, ""))
             if ids:
@@ -373,7 +376,7 @@ def create_app(cfg: Config) -> FastAPI:
         if shared.get(d.id):
             auto["providers"] = len(shared[d.id])
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
-        return {"models": listed, "sessionStore": cfg.session_store,
+        return {"models": listed, "defaultModel": cfg.default_model, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
                 + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
 
@@ -426,7 +429,11 @@ def create_app(cfg: Config) -> FastAPI:
 
     def route(requested: str, purpose: str):
         """The server decides which model answers. A client may name one only when routing.expose is on."""
-        if cfg.expose_models and requested in cfg.models:
+        if not cfg.models:
+            raise HTTPException(503, "No models configured. Add providers and models in the Ferry admin page.")
+        if cfg.expose_models and requested not in ("", "auto"):
+            if requested not in cfg.models:
+                raise HTTPException(400, "This model is not configured on the Ferry server; refresh the model list.")
             return cfg.models[requested]
         if requested in cfg.models and any(live.pool.cooling(m) and (fb := live.pool.fallback_for(cfg, m)) and fb.id == requested
                                            for m in cfg.models.values()):

@@ -36,6 +36,7 @@ import {
 } from "../lib/config.mjs";
 import { APP_ROOT, findPython, install, startLocalServer, update } from "../lib/setup.mjs";
 import { BIN_DIR, installBundled, toolStatus } from "../lib/toolbins.mjs";
+import { requireServerModels } from "../lib/server-models.mjs";
 import { gatewayOf, probeGateway, waitThroughGateway, whoAnswered } from "../lib/gateway.mjs";
 
 const PKG = JSON.parse(readFileSync(join(APP_ROOT, "package.json"), "utf8"));
@@ -114,19 +115,16 @@ async function fetchModels(cfg, waited = false) {
 			if (through) return fetchModels(cfg, true);
 		}
 		if (!r.json) throw new Error(`${notFerry(r)}\n  (run "ferry doctor" for details)`);
-		if (r.status === 200 && r.body.models?.length) {
-			cfg.sessionStore = r.body.sessionStore;
-			cfg.features = r.body.features ?? [];
-			writeModelsCache(r.body.models);
-			return r.body.models;
-		}
 		if (r.status === 401) throw new Error(cfg.mode === "remote" ? "token rejected: run ferry login again"
 			: "the local server rejected the saved token: restart it");
+		const models = requireServerModels(r);
+		cfg.sessionStore = r.body.sessionStore;
+		cfg.features = r.body.features ?? [];
+		writeModelsCache(models);
+		return models;
 	} catch (e) {
-		if (/^(token|the local|a Cloudflare|the server address|the company|HTTP \d)/.test(e.message)) throw e;
-		// offline or server down: fall back to the last list we saw
+		throw new Error(`Cannot load the current Ferry server model list: ${e.message}. Refusing cached or built-in models.`);
 	}
-	return readModelsCache() ?? [{ id: "main" }];
 }
 
 async function login(args) {
@@ -151,8 +149,9 @@ async function login(args) {
 		if (r.status === 426) throw new Error(r.body?.error?.message ?? "client and server versions do not match");
 		if (!r.json) throw new Error(notFerry(r));
 		if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
-		writeModelsCache(r.body.models);
-		console.log(`Connected. Models: ${r.body.models.map((m) => m.id).join(", ")}`);
+		const models = requireServerModels(r);
+		writeModelsCache(models);
+		console.log(`Connected. Models: ${models.map((m) => m.id).join(", ")}`);
 	} catch (e) {
 		console.error(`Could not verify the server (${e.message}). Saved anyway; run "ferry doctor" to investigate.`);
 	}
@@ -295,15 +294,17 @@ async function doctor() {
 		if (r.status === 426) return bad(r.body?.error?.message ?? "client and server versions do not match");
 		if (!r.json) return bad(notFerry(r));
 		if (r.status !== 200) return bad(`models HTTP ${r.status}`);
+		if (Array.isArray(r.body.models) && !r.body.models.length) return bad(`No models configured on the server. Add providers and models in its admin page, or set ${KEY_HINT} where ferry-server runs.`);
+		const models = requireServerModels(r);
 		const label = (m) => m.routesTo ? `auto -> ${m.routesTo} (${m.model})${m.summaryTo ? `, summaries -> ${m.summaryTo}` : ""}`
 			: `${m.id}${m.model ? ` (${m.model})` : ""}`;
-		ok(`token accepted; the server picks the model: ${r.body.models.map(label).join(", ")}`);
+		ok(`token accepted; server model list: ${models.map(label).join(", ")}`);
 		const store = { disk: "cached on disk", memory: "cached in memory only", none: "not kept (full upload every turn)" };
 		info(`conversation on the server: ${store[r.body.sessionStore] ?? "cached"}; the full history stays on this computer`);
 		const webOff = cfg.web === "off" || cfg.web === false;
 		info(webOff ? "web tools: off" : `web tools: ${(r.body.features ?? []).includes("search") ? "search through the server" : "search reads Bing on this computer"}, ${(r.body.features ?? []).includes("read") ? "public pages through the server" : "pages read on this computer"}; intranet and private addresses always on this computer (ferry config set web off to turn them off)`);
 		if (!webOff && cfg.blockedSites?.length) info(`blocked sites: ${cfg.blockedSites.join(", ")}`);
-		for (const m of r.body.models) {
+		for (const m of models) {
 			if (m.ready === false) bad(`model ${m.id} has no API key on the server (for DeepSeek: set DEEPSEEK_API_KEY where ferry-server runs, then restart it)`);
 		}
 	} catch (e) {
@@ -393,7 +394,7 @@ async function run(args) {
 	process.env.PYTHONUTF8 ??= "1";
 	// loaded only here, so install / update / doctor work even before the agent's packages are in place
 	const { main } = await import("@earendil-works/pi-coding-agent");
-	await (await import("../lib/trim.mjs")).trimPi(); // a shorter "/" list
+	await (await import("../lib/trim.mjs")).trimPi(models); // Ferry-only models and a shorter "/" list
 	const { createSteer, installSteerKeys } = await import("../lib/steer.mjs");
 	await installSteerKeys(); // Enter on an empty line while the agent works: interrupt now
 	const { createTitle, installTitle } = await import("../lib/title.mjs");
