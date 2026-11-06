@@ -45,7 +45,8 @@ export const DEFAULTS = {
 	trimOldOutputs: "80k", // past this many tokens of context, old long tool outputs are left out ("0" = never)
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
-	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification; an approval waits this long
+	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification
+	phoneApprovalSeconds: 60, // an approval left unanswered this long notifies the phone (once per question)
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 	compactAt: "90%", // summarise the conversation once the context is this full (at the end of a request); "off" = only when it must
@@ -90,7 +91,8 @@ export const ADVANCED_SETTINGS = {
 	chunkBytes: ["number", "largest single request body sent to the server, in bytes (a bigger commit goes up in parts; gets smaller by itself when the network stops a request)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
-	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
+	phoneAfterSeconds: ["number", "a request that took at least this long notifies the phone"],
+	phoneApprovalSeconds: ["number", "an approval left unanswered this long notifies the phone, once per question"],
 	rulesFromParents: ["boolean", "also put AGENTS.md / CLAUDE.md from folders above the project into the system prompt (off: only Ferry's own and the project's)"],
 	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],
