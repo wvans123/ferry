@@ -34,6 +34,7 @@ from .devices import Devices
 from . import globalmem
 from . import report as reports
 from . import search as web_search
+from . import side
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
@@ -374,7 +375,7 @@ def create_app(cfg: Config) -> FastAPI:
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
         return {"models": listed, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
-                + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
+                + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
 
     @app.post("/v1/ferry/image")
     async def image(request: Request):
@@ -950,4 +951,5 @@ def create_app(cfg: Config) -> FastAPI:
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
     reports.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
+    side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
     return app

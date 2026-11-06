@@ -115,6 +115,22 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	const asked = new Set(); // conversations we asked the server about (after a restart or /resume)
 	const project = process.env.FERRY_PROJECT ?? basename(process.cwd());
 	const refs = () => (cfg.features ?? []).includes("refs") && cfg.sessionStore !== "none";
+	// The main conversation as the server last acknowledged it, for side questions (side.mjs: advisor, /btw, recap):
+	// they refer to the same server copy a chat request does, and send it again when the server has lost it.
+	let last = null;
+	if (opts.purpose !== "subagent") {
+		cfg.side = {
+			ref: () => (last ? { conv: last.conv, count: last.ack.count, hash: last.ack.hash, at: last.at } : null),
+			async resync(signal) {
+				if (!last) return null;
+				const res = await commit(last.conv, 0, "", JSON.stringify({ append: last.msgs, tools: last.toolsJson }), signal);
+				if (!res.ok) return null;
+				const ack = await res.json().catch(() => null);
+				if (ack && ack.count === last.ack.count && ack.hash === last.ack.hash) return this.ref();
+				return null;
+			},
+		};
+	}
 
 	/** What was in the way, for "ferry doctor" and for us: written to <FERRY_HOME>/logs/blocked.log (no message content). */
 	function logBlocked(path, sent, res, text, extra = {}) {
@@ -269,6 +285,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (api !== "anthropic" && _s !== undefined) rest.system = _s;
 		// tell the server what this request is for, so it can send context summaries to a cheaper model
 		const purpose = (msgs[0] ?? "").slice(0, 300).includes(SUMMARY_TEXT) ? "summary" : (opts.purpose ?? "agent");
+		if (purpose === "agent" && opts.purpose !== "subagent") last = { conv, msgs, ack, toolsJson, at: Date.now() };
 		return { ...rest, messages: [], ferry: { conv, count: ack.count, hash: ack.hash, tools_hash: toolsHash, purpose,
 			...(marks.length ? { cache: marks } : {}) } };
 	}

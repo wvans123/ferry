@@ -49,6 +49,7 @@ How to work on it:
 - Break it into concrete deliverables and keep them in the todo list; work through them one by one.
 - Check each deliverable against real evidence: the file content, the command output, the test result. Do not
   count something as done because it looks plausible.
+- If you have the advisor tool, call it once before you report the goal achieved (with the work saved), and deal with what it finds.
 - When every part is done and checked, call goal_update with status "achieved", a short summary and the evidence.
 - If you cannot go on without the user (a decision, access, missing information) or it turns out impossible, call
   goal_update with status "unmet" and say exactly what is needed.

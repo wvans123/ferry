@@ -39,6 +39,15 @@ def decide(msgs):
         page = text_of(msgs[-1])
         word = re.search(r"secret word is (\S+?)\.", page)
         return ("text", f"From the page: the secret word is {word.group(1) if word else 'not there'}.")
+    last = text_of(msgs[-1]) if msgs else ""
+    if "stronger, more experienced reviewer" in last:  # the Ferry server asks its advisor model (a side question, no tools)
+        return ("text", f"ADVICE saw_request={'ADVISETEST' in last} saw_work={'ADVISED-WORK-DONE' in last} "
+                        f"question={'Is the plan sound' in last}: save the file before you finish.")
+    if "This is a side question from the user" in last:  # /btw
+        asked = re.search(r"The user's side question: (.*)", last)
+        return ("text", f"BTW ANSWER: you asked {asked.group(1) if asked else '?'} saw_request={'BTWTEST' in last}")
+    if "The user stepped away" in last:  # the recap of a long request
+        return ("text", "RECAP: Building the deck for the review; next, check the figures.")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if MODE == "basic":
@@ -291,6 +300,20 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "bash", {"command": "touch auto-made.txt" if "make" in first else "rm -rf auto-build"})
         return ("text", "AUTO: " + text_of(tools[-1])[:200])
+    if "ADVISETEST" in first:  # the agent asks the advisor before it finishes
+        if not tools:
+            return ("tool", "bash", {"command": "echo ADVISED-WORK-DONE"})
+        if len(tools) == 1:
+            return ("tool", "advisor", {"question": "Is the plan sound? (worry)"})
+        return ("text", "ADVISED: " + text_of(tools[-1])[:300])
+    if "BTWTEST" in first:  # a slow command; the user asks /btw meanwhile
+        if not tools:
+            return ("tool", "bash", {"command": "echo BTWWORK; sleep 8; echo BTWDONE"})
+        return ("text", f"BTWFINISHED saw_btw={any('why is it slow today' in json.dumps(m) for m in msgs)}")
+    if "RECAPTEST" in first:  # a request that takes longer than phoneAfterSeconds
+        if not tools:
+            return ("tool", "bash", {"command": "sleep 2; echo RECAPWORK"})
+        return ("text", "RECAPFINISHED")
     if "GATESIZE" in first:  # a long tool result and then a picture, through a gateway that stops big request bodies
         if not tools:
             return ("tool", "read", {"path": "big-notes.txt"})
