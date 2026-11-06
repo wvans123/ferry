@@ -921,10 +921,16 @@ def check_upload_delete(root: Path, work: Path) -> None:
         # default mode asks for the write itself (no terminal here), so only the old file is checked there
         ok3 = (c3 == 0 and "removed-new" in o3 and "did not create in this session" in o3 and "removed-old" not in o3 and (proj / "old.txt").exists())
         ok4 = (c4 == 0 and "removed-old" not in o4 and (proj / "old.txt").exists())
+        # a pattern and a cd chain over files made this session go ahead; a pattern that also reaches an old file asks
+        c5, o5 = s.ferry("-p", "DELETETEST-GLOB: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "acceptEdits"})
+        ok5 = (c5 == 0 and "removed-glob" in o5 and "removed-cd" in o5 and "removed-all-txt" not in o5 and "old.txt" in o5
+               and "did not create in this session" in o5 and not (proj / "tmp_a.txt").exists() and not (proj / "sub" / "c.txt").exists()
+               and (proj / "old.txt").exists())
+        ok4 = ok4 and ok5
         check("F70 删除只放行本次新建的", ok2 and ok3 and ok4,
-              "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样（全部放行、自动接受编辑已验证）；"
+              "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样，带通配符的（rm tmp_*.txt）和先 cd 再删的也一样（全部放行、自动接受编辑已验证）；"
               "删除原来就有的文件在每个模式下都要确认，也没有\"以后都允许\""
-              if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r}")
+              if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r} | glob={c5} {o5[-500:]!r}")
     finally:
         s.close()
 

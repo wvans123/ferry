@@ -141,7 +141,7 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 - 确认框里可以选"以后都允许这类命令"，比如以 `npm test` 开头的命令。规则按项目记住。
 - 危险操作（删整个目录、`git push --force`、`git reset --hard`、`curl … | sh`……）除了"全部放行"以外都会问，并说明危险在哪。
 - 把本机文件或数据发到网络上的命令，每次都问，"全部放行"也问，已有的 `bash(curl*)` 这类规则也放不过去，确认框里没有"以后都允许"。比如 `curl -d/-F/-T/--json`、`wget --post-file`、PowerShell 的 `Invoke-WebRequest -InFile/-Body/-Method Post`、往远程主机的 `scp`/`rsync`/`sftp`/`ftp`。提示是"Careful: this sends data from this computer to 主机名"。普通下载（`curl -L -o 文件 网址`）和发给本机 `localhost` 的请求不算。
-- 删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`）：所有模式下规则都一样。要删的东西都是这次 ferry 启动后 agent 自己新建的，就直接删，不问，不管在项目文件夹、%TEMP% 还是 D:\tmp。只要有一个不是这次新建的（原来就有的文件、带通配符或变量的路径、`cd` 之后的删除、`git clean`，以及列不出要删什么的写法，比如 `find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），就每次都问，也没有"以后都允许"。删文件夹时，里面每个文件都得是这次新建的。命令里除了删除还有别的操作时，其余部分按当前模式判断。计划模式仍然只读。 子 agent 要你批准时，主窗口会留一行"哪个子 agent 要做什么、为什么"，你回答后再留一行结果（只显示，不发给模型）。
+- 删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`）：所有模式下规则都一样。要删的东西都是这次对话里 agent 自己新建的，就直接删，不问，不管在项目文件夹、%TEMP% 还是 D:\tmp。Ferry 会把路径列出来再判断：通配符（`rm tmp_*.txt`、`Remove-Item .\out\*.json`）展开成现在匹配到的文件，每一个都得是新建的，没有匹配就当什么都不删；`%TEMP%`、`%USERPROFILE%`、`%LOCALAPPDATA%`、`%APPDATA%`、`$env:TEMP`、`$TEMP`、`$HOME`、开头的 `~` 换成真实路径；`cd 目录 && rm x`（或用 `;`）按这个目录算。只要有一个不是新建的（原来就有的文件、不认识的变量、一个通配符匹配超过 2000 个文件、没法跟着走的 `cd`、`git clean`，以及列不出要删什么的写法，比如 `find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），就每次都问，也没有"以后都允许"。提示里会写明是哪一个目标不是新建的，或者什么没法列出来。删文件夹时，里面每个文件都得是新建的。重新打开 ferry 接着以前的对话（`ferry -c`、`/resume`），之前在这个对话里新建的文件仍然算。命令里除了删除还有别的操作时，其余部分按当前模式判断。计划模式仍然只读。子 agent 要你批准时，主窗口会留一行"哪个子 agent 要做什么、为什么"，你回答后再留一行结果（只显示，不发给模型）。
 - 改项目文件夹以外的文件，总要先确认。
 - `.env`、`.ssh` 这类路径永远不碰（`blockedPaths` 可改）。read、write、edit 这类文件工具：路径里任何地方出现这个词就拦（比如 `Project Titan/notes.txt` 含 `titan`）。bash 命令：只看像路径的写法，`.env`、`config/.env`、`~/.ssh/id_rsa`、`secrets/key.pem`、`secrets.json` 这样名字是完整的一段或文件名的才拦；普通文字和代码不拦，比如引号里一段话里的 secrets、`fetch(url, {credentials:'include'})`、heredoc 里的正文。
 - 启动时用哪种模式：`ferry config set permissionMode acceptEdits`。
@@ -277,7 +277,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理用自己的证书检查 HTTPS 时，靠它让 ferry 和命令都能连上 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（默认 300 秒）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（长任务做完多久算久，默认 300 秒）、`phoneApprovalSeconds`（确认框多久没人点就推到手机，默认 60 秒，每个确认框只推一次）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
 
 服务端的设置见 [SERVER.md](SERVER.md#服务端设置)。
 

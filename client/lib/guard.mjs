@@ -2,12 +2,13 @@
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
 import { findBash } from "./config.mjs";
 import { resolve } from "node:path";
-import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, newSession, noteCreated, prefixRule } from "./permissions.mjs";
+import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, newSession, noteCreated, prefixRule, restoreSession } from "./permissions.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
 // extraDirs: more folders treated like the project; session: what this run made (deletable in bypass without asking)
 const state = { mode: "default", queue: Promise.resolve(), extraDirs: [], session: newSession() };
 const CREATES = new Set(["write", "office_create", "image_create"]);
+const MADE = "ferry-made"; // saved with the conversation: when it started and what Ferry made, so a resumed one still knows
 
 export function initialMode(cfg) {
 	if (process.env.FERRY_AUTO_APPROVE === "1") return "bypass";
@@ -71,6 +72,29 @@ async function ask(ui, verdict, event, cwd, who) {
  */
 export function createGuard(cfg, opts = {}) {
 	return (pi) => {
+		if (!opts.ui) { // the main agent: its conversation keeps the record (subagents write to it through state.persist)
+			state.persist = (data) => {
+				try {
+					pi.appendEntry(MADE, data);
+				} catch {
+					// the record is a convenience
+				}
+			};
+			pi.on("session_start", (_e, ctx) => {
+				let records = [];
+				try {
+					records = (ctx.sessionManager.getEntries?.() ?? ctx.sessionManager.getBranch()).filter((e) => e.type === "custom" && e.customType === MADE).map((e) => e.data);
+				} catch {
+					// no session record to read
+				}
+				state.session = newSession();
+				const back = restoreSession(records);
+				if (back) {
+					state.session.start = back.start;
+					state.session.made = back.made;
+				} else state.persist({ start: state.session.start });
+			});
+		}
 		const readOnlyTool = (name) => pi.getAllTools().find((t) => t.name === name)?.annotations?.readOnlyHint === true;
 		pi.on("tool_call", async (event, ctx) => {
 			const cwd = ctx?.cwd ?? process.cwd();
@@ -81,7 +105,10 @@ export function createGuard(cfg, opts = {}) {
 				const verdict = decide({ tool, input: event.input, mode: state.mode, cwd, session: state.session,
 					rules: loadRules(cwd), blockedPaths: cfg.blockedPaths ?? [], readOnlyTool, extraDirs: state.extraDirs });
 				const made = (r) => {
-					if (!r && CREATES.has(tool) && event.input?.path) noteCreated(state.session, resolve(cwd, String(event.input.path)));
+					if (!r && CREATES.has(tool) && event.input?.path) {
+						const added = noteCreated(state.session, resolve(cwd, String(event.input.path)));
+						if (added.length) state.persist?.({ add: added });
+					}
 					return r;
 				};
 				if (verdict.action === "allow") return made(undefined);

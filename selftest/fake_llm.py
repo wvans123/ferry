@@ -335,6 +335,12 @@ def decide_agent(msgs):
                  ("bash", {"command": "rm made-now.txt && echo removed-new"})]
         if "TMP" in first:
             steps += [("bash", {"command": f"echo scratch > {tmp}"}), ("bash", {"command": f"rm {tmp} && echo removed-tmp"})]
+        if "GLOB" in first:  # a pattern, and a cd chain, over files this session made
+            steps += [("write", {"path": "tmp_a.txt", "content": "a\n"}), ("write", {"path": "tmp_b.txt", "content": "b\n"}),
+                      ("write", {"path": "sub/c.txt", "content": "c\n"}),
+                      ("bash", {"command": "rm tmp_*.txt && echo removed-glob"}),
+                      ("bash", {"command": "cd sub && rm c.txt && echo removed-cd"}),
+                      ("bash", {"command": "rm *.txt && echo removed-all-txt"})]  # old.txt matches too: this one must ask
         steps.append(("bash", {"command": "rm old.txt && echo removed-old"}))
         if len(tools) < len(steps):
             return ("tool", steps[len(tools)][0], steps[len(tools)][1])

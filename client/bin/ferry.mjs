@@ -434,7 +434,7 @@ async function run(args) {
 	let waitTimer = null;
 	permState.onAsk = (tool) => {
 		clearTimeout(waitTimer);
-		waitTimer = setTimeout(() => cfg.phone("Waiting for your approval", tool, "approval"), (cfg.phoneAfterSeconds ?? 300) * 1000);
+		waitTimer = setTimeout(() => cfg.phone("Waiting for your approval", tool, "approval"), (cfg.phoneApprovalSeconds ?? 60) * 1000);
 		waitTimer.unref?.();
 	};
 	permState.onAnswered = () => clearTimeout(waitTimer);

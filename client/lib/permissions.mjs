@@ -16,6 +16,7 @@
 // bypass a delete goes ahead only when everything it deletes was made in this ferry session.
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FERRY_HOME } from "./config.mjs";
 
@@ -212,55 +213,191 @@ const DELETERS = new Set(["rm", "rmdir", "rd", "del", "erase", "unlink", "remove
 const SCRIPT_DELETE = /shutil\.rmtree|\bos\.(remove|unlink|rmdir|removedirs)\b|\.(unlink|rmdir)\(|\b(rmSync|unlinkSync|rmdirSync)\b|\bfs(\.promises)?\.(rm|unlink|rmdir)\b/;
 const NET_DELETE = /\[(system\.)?io\.(file|directory)\]::delete/i;
 
-/** The paths a command deletes, as written: [] when it deletes nothing, null when it deletes something it cannot list. */
-export function deleteTargets(cmd) {
+const CD = /^(cd|chdir|pushd|set-location|sl|push-location)$/;
+const WHY_CMD = "a delete Ferry cannot read (find/xargs, rimraf, a script, git clean, a pipe)";
+
+/**
+ * The paths a command deletes, as written: { targets } ([] when it deletes nothing), or { why } when it deletes
+ * something that cannot be listed. Wildcards and variables stay as written (expandTarget resolves them). A chain
+ * `cd dir && rm x` (or `;`) gives the targets relative to dir; any other use of cd cannot be followed.
+ */
+export function deleteTargetsEx(cmd) {
 	const out = [];
-	let moved = false; // after a cd, relative paths no longer mean what they say
-	for (const seg of splitCommand(String(cmd ?? ""))) {
+	const text = String(cmd ?? "");
+	let base = ""; // the folder a simple cd chain moved to, as written
+	let moved = false; // a cd we cannot follow
+	const only = !/[|&\n]/.test(text.replace(/"[^"]*"|'[^']*'/g, "").replace(/&&/g, " ")); // && and ; only
+	for (const seg of splitCommand(text)) {
 		let w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
 		while (/^(sudo|doas|nohup|nice|time|command|exec|env)$/.test(prog(w[0] ?? ""))) w = w.slice(1).filter((x, i, a) => !a.slice(0, i + 1).every((y) => y.startsWith("-")));
 		const c = prog(w[0] ?? "");
 		const args = w.slice(1);
-		if (/^(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)$/.test(c)) moved = true;
-		if (c === "git" && args.includes("clean") && args.some((a) => /^-[a-z]*f|^--force/i.test(a))) return null;
-		if (c === "find" && args.some((a, i) => a === "-delete" || (/^-(exec|execdir|ok|okdir)$/.test(a) && DELETERS.has(prog(args[i + 1] ?? ""))))) return null;
-		if (c === "xargs" && args.some((a) => DELETERS.has(prog(a)))) return null;
-		if (w.some((x) => prog(x) === "rimraf") || NET_DELETE.test(seg)) return null;
-		if (/^(python[\d.]*|py|node|deno|bun)$/.test(c) && args.some((a) => /^(-c|-e|-p|--eval|--print|eval)$/.test(a)) && SCRIPT_DELETE.test(seg)) return null;
+		if (CD.test(c) || c === "popd" || c === "pop-location") {
+			const dirs = args.filter((x) => !/^-(path|literalpath|p|l|d)$/i.test(x) && !/^\/d$/i.test(x));
+			if (CD.test(c) && only && dirs.length === 1 && !/[`$(]|^-$/.test(dirs[0].replace(/^\$env:\w+|^\$\{?\w+\}?|^%\w+%/, "")) && !moved) {
+				const d = dirs[0];
+				const abs = /^([a-z]:|[\\/~$%])/i.test(d) || /^\$/.test(d);
+				base = abs || !base ? d : `${base}/${d}`;
+			} else moved = true;
+		}
+		if (c === "git" && args.includes("clean") && args.some((a) => /^-[a-z]*f|^--force/i.test(a))) return { why: "git clean -f" };
+		if (c === "find" && args.some((a, i) => a === "-delete" || (/^-(exec|execdir|ok|okdir)$/.test(a) && DELETERS.has(prog(args[i + 1] ?? ""))))) return { why: WHY_CMD };
+		if (c === "xargs" && args.some((a) => DELETERS.has(prog(a)))) return { why: WHY_CMD };
+		if (w.some((x) => prog(x) === "rimraf") || NET_DELETE.test(seg)) return { why: WHY_CMD };
+		if (/^(python[\d.]*|py|node|deno|bun)$/.test(c) && args.some((a) => /^(-c|-e|-p|--eval|--print|eval)$/.test(a)) && SCRIPT_DELETE.test(seg)) return { why: WHY_CMD };
 		if (!DELETERS.has(c)) continue;
-		if (moved) return null;
+		if (moved) return { why: "a delete after a cd that Ferry cannot follow (more than one folder, a pipe, a variable it does not know)" };
 		// -rf, -Recurse, -Path; /s /q only for cmd's own del/rd (elsewhere /c/Users/... is a Git Bash path)
 		const isSwitch = (a) => a.startsWith("-") || (/^(del|erase|rd|rmdir)$/.test(c) && /^\/[a-z](:\S*)?$/i.test(a));
 		const before = out.length;
 		let opts = true;
+		const named = [];
 		for (let i = 0; i < args.length; i++) {
 			const a = args[i];
 			if (opts && a === "--") opts = false;
-			else if (opts && /^-(include|exclude|filter)$/i.test(a)) return null;
+			else if (opts && /^-(include|exclude|filter)$/i.test(a)) return { why: "Remove-Item with -Include/-Exclude/-Filter" };
 			else if (opts && /^-(erroraction|ea|warningaction|wa|stream)$/i.test(a)) i++;
 			else if (opts && isSwitch(a)) continue;
-			else out.push(...(c === "rm" || c === "unlink" ? [a] : a.split(","))); // PowerShell: a,b
+			else named.push(...(c === "rm" || c === "unlink" ? [a] : a.split(","))); // PowerShell: a,b
 		}
-		if (out.length === before) return null; // no target named: a pipeline feeds it (ls | Remove-Item)
+		for (const t of named) out.push(base && !/^([a-z]:|[\\/~$%])/i.test(t) && !/^\$/.test(t) ? `${base}/${t}` : t);
+		if (out.length === before) return { why: "a delete whose target comes from a pipe (ls | Remove-Item)" }; // no target named
 	}
-	// ~ only at the start is the home folder; inside a name it is a Windows short name (C:/Users/RUNNER~1/...)
-	if (out.some((t) => !t || /[*?[\]{}$%`]|^~|^\(/.test(t))) return null;
-	if (!out.length && DELETES.some((re) => re.test(String(cmd ?? "")))) return null; // a delete inside cmd /c, sh -c...
-	return out;
+	if (out.some((t) => !t || /[`]|\$\(|^\(|[{}]/.test(t) && !/^\$\{\w+\}/.test(t))) return { why: "a delete whose target is built by a command or a brace list" };
+	if (!out.length && DELETES.some((re) => re.test(text))) return { why: "a delete inside cmd /c, sh -c ..." };
+	return { targets: out };
+}
+
+/** The paths a command deletes, as written: [] when it deletes nothing, null when it deletes something it cannot list. */
+export function deleteTargets(cmd) {
+	const r = deleteTargetsEx(cmd);
+	return r.why ? null : r.targets;
+}
+
+const ENV_OK = ["TEMP", "TMP", "TMPDIR", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "HOME"];
+/** A known variable's value, or undefined. */
+function envValue(name, env) {
+	const n = name.toUpperCase();
+	if (!ENV_OK.includes(n)) return undefined;
+	const got = Object.entries(env).find(([k]) => k.toUpperCase() === n)?.[1];
+	if (got) return got;
+	if (["TEMP", "TMP", "TMPDIR"].includes(n)) return tmpdir();
+	if (["HOME", "USERPROFILE"].includes(n)) return homedir();
+	return undefined;
+}
+
+/** %TEMP%, $env:TEMP, $TEMP, ${TEMP}, a leading ~: replaced by the real folder. null for any other variable. */
+export function expandVars(t, env = process.env) {
+	let bad = false;
+	let r = t.replace(/%(\w+)%|\$env:(\w+)|\$\{(\w+)\}|\$(\w+)/gi, (_m, a, b, c, d) => {
+		const v = envValue(a ?? b ?? c ?? d, env);
+		if (v === undefined) bad = true;
+		return v ?? "";
+	});
+	if (bad || /[%$]/.test(r)) return null;
+	if (/^~(?=$|[\\/])/.test(r)) r = r.replace(/^~/, homedir());
+	return r;
+}
+
+const GLOB_CAP = 2000;
+const hasGlob = (t) => /[*?[]/.test(t);
+const globRe = (seg) => new RegExp(`^${seg.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, WIN ? "i" : "");
+
+/** Everything an absolute path with wildcards matches ([] for none), or null when there are too many to list. */
+function globMatches(abs) {
+	const parts = abs.split(/[\\/]+/);
+	const root = /^[a-z]:$/i.test(parts[0]) ? `${parts.shift()}${sep}` : parts[0] === "" ? (parts.shift(), sep) : "";
+	let found = [root || "."];
+	let n = 0;
+	for (let i = 0; i < parts.length; i++) {
+		const seg = parts[i];
+		const next = [];
+		for (const dir of found) {
+			if (seg === "**") { // this folder and everything below it
+				const walk = (d) => {
+					next.push(d);
+					let list = [];
+					try {
+						list = readdirSync(d, { withFileTypes: true });
+					} catch {
+						return;
+					}
+					for (const e of list) {
+						if (++n > GLOB_CAP) return;
+						if (e.isDirectory() && !e.isSymbolicLink()) walk(join(d, e.name));
+					}
+				};
+				walk(dir);
+			} else if (!hasGlob(seg)) next.push(join(dir, seg));
+			else {
+				let list = [];
+				try {
+					list = readdirSync(dir);
+				} catch {
+					continue;
+				}
+				const re = globRe(seg);
+				for (const name of list) if (re.test(name)) next.push(join(dir, name));
+			}
+			if (n > GLOB_CAP || next.length > GLOB_CAP) return null;
+		}
+		found = next;
+	}
+	return found.filter((p) => existsOrLink(p));
+}
+const existsOrLink = (p) => {
+	try {
+		lstatSync(p);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+/** One delete target as written -> { paths: [absolute...] } or { why }. A pattern becomes the files it matches now. */
+export function expandTarget(t, cwd, env = process.env) {
+	const v = expandVars(t, env);
+	if (v === null) return { why: `${t} uses a variable Ferry does not know` };
+	const abs = resolve(cwd, gitBashPath(v));
+	if (!hasGlob(v)) return { paths: [abs] };
+	const found = globMatches(abs);
+	if (found === null) return { why: `${t} matches more than ${GLOB_CAP} files` };
+	return { paths: found };
 }
 
 /** A new ferry session: in bypass, what it makes may be deleted without asking. */
 export const newSession = () => ({ start: Date.now() - 50, made: new Set() }); // file clocks lag Date.now() by a few ms
+/**
+ * What a conversation made, rebuilt from the records saved with it: { start } first, then { add: [paths] } as files
+ * were made. null when there is no record (an older conversation): then only what is made from now on counts.
+ */
+export function restoreSession(records) {
+	let start = Infinity;
+	const made = new Set();
+	let any = false;
+	for (const d of records) {
+		if (!d || typeof d !== "object") continue;
+		if (Number.isFinite(d.start)) {
+			start = Math.min(start, d.start);
+			any = true;
+		}
+		for (const k of Array.isArray(d.add) ? d.add : []) if (typeof k === "string") made.add(k);
+	}
+	return any ? { start, made } : null;
+}
 const keyOf = (p) => (WIN ? resolve(p).toLowerCase() : resolve(p));
 /** Git Bash writes C:\x as /c/x; on Windows that is what it means */
 export const gitBashPath = (t, win = WIN) => (win ? t.replace(/^\/([a-z])(\/|$)/i, "$1:/") : t);
 
 /** Remember a path a file tool is about to create, with the folders it creates for it. */
 export function noteCreated(session, abs) {
+	const added = [];
 	for (let p = resolve(abs); !existsSync(p); p = resolve(p, "..")) {
 		session.made.add(keyOf(p));
+		added.push(keyOf(p));
 		if (p === resolve(p, "..")) break;
 	}
+	return added;
 }
 
 /** True when ferry made this path in this session (born after it started, or created by a file tool) and, for a
@@ -279,13 +416,16 @@ export function madeThisSession(p, session, budget = { n: 5000 }) {
 	return !st.isDirectory() || readdirSync(p).every((e) => madeThisSession(join(p, e), session, budget));
 }
 
-/** Why a delete in bypass mode still needs the user, or "" when it only deletes what this session made. */
-export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }) {
-	const targets = deleteTargets(cmd);
-	if (targets === null) return "deletes files Ferry cannot list (a pattern, a variable, find/xargs, a script, another folder or git clean)";
-	for (const t of targets) {
-		const abs = resolve(cwd, gitBashPath(t));
-		if (!madeThisSession(abs, session)) return `deletes ${t}, which Ferry did not create in this session`;
+/** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made. */
+export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }, env = process.env) {
+	const r = deleteTargetsEx(cmd);
+	if (r.why) return `deletes something Ferry cannot list: ${r.why}`;
+	for (const t of r.targets) {
+		const e = expandTarget(t, cwd, env);
+		if (e.why) return `deletes something Ferry cannot list: ${e.why}`;
+		for (const abs of e.paths) {
+			if (!madeThisSession(abs, session)) return `deletes ${abs === resolve(cwd, t) || t === abs ? t : `${abs} (from ${t})`}, which Ferry did not create in this session`;
+		}
 	}
 	return "";
 }
