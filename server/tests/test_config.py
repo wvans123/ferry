@@ -11,10 +11,10 @@ def env(monkeypatch, **kv):
         monkeypatch.setenv(k, v)
 
 
-def test_no_key_lists_deepseek_as_not_ready(monkeypatch):
+def test_no_key_does_not_invent_models(monkeypatch):
     env(monkeypatch)
     m = zero_config_models()
-    assert list(m) == ["deepseek"] and not m["deepseek"].api_key
+    assert m == {}
 
 
 def test_one_model_per_key_claude_first(monkeypatch):

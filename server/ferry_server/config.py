@@ -163,6 +163,9 @@ def finish(cfg: Config) -> None:
     """Check the routing and storage settings and fill in defaults."""
     if cfg.session_store not in ("disk", "memory", "none"):
         raise SystemExit(f'session_store must be "disk", "memory" or "none", not {cfg.session_store!r}')
+    if not cfg.models:
+        cfg.default_model = cfg.summary_model = ""
+        return
     cfg.default_model = cfg.default_model or next(iter(cfg.models))
     for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model), ("image", cfg.image_model), ("advisor", cfg.advisor_model)):
         if mid and mid not in cfg.models:
@@ -203,10 +206,10 @@ KEY_VARS = ", ".join(p[1] for p in PROVIDERS)
 
 def zero_config_models() -> dict[str, ModelConfig]:
     """FERRY_<ID>_MODEL / FERRY_<ID>_BASE_URL override a provider's defaults (e.g. FERRY_CLAUDE_MODEL=claude-opus-5-5);
-    FERRY_MODEL picks the default model (the first one listed). With no key at all, DeepSeek is listed as not ready."""
+    FERRY_MODEL picks the default model (the first one listed). With no keys, no models are enabled."""
     found = {}
     for pid, key_env, base, model, ctx, max_out, drop, rename in PROVIDERS:
-        if not os.environ.get(key_env) and pid != "deepseek":
+        if not os.environ.get(key_env):
             continue
         up = pid.upper()
         legacy_base = os.environ.get("FERRY_UPSTREAM_BASE_URL") if pid == "deepseek" else None
@@ -226,8 +229,6 @@ def zero_config_models() -> dict[str, ModelConfig]:
         extras = model_extras(found[pid].model)
         found[pid].vision = bool(extras.get("vision", True))
         found[pid].price = extras.get("price", {})
-    if len(found) > 1 and not os.environ.get("DEEPSEEK_API_KEY"):
-        found.pop("deepseek")  # only shown as a hint when nothing else is configured
     first = os.environ.get("FERRY_MODEL")
     if first in found:
         found = {first: found[first], **{k: v for k, v in found.items() if k != first}}
@@ -266,7 +267,7 @@ def _model_block(m: ModelConfig, commented: bool = False, note: str = "") -> str
 
 def models_template(found: dict[str, ModelConfig]) -> str:
     """The first models.toml: every provider with a key is active, the others are there to uncomment."""
-    default = next(iter(found))
+    default = next(iter(found), "")
     out = ["# Ferry 模型清单。改完保存，下一次请求就生效，不用重启服务端。",
            "# 每个 [models.名字] 是一个模型；客户端里 /model 列出的就是这些名字（expose = true 时）。",
            "# api_key_env 是放 Key 的环境变量名；Key 本身不要写在这个文件里。",
@@ -407,8 +408,6 @@ def apply_models_file(cfg: Config, path: Path) -> None:
     except tomllib.TOMLDecodeError as e:
         raise SystemExit(f"{path}: {e}") from None
     providers, models = parse_models(raw, load_secrets(cfg))
-    if not models:
-        raise SystemExit(f"{path}: no [models.*] left; keep at least one")
     r = raw.get("routing", {})
     trial = Config(models=models, default_model=os.environ.get("FERRY_MODEL") or r.get("default", ""),
                    summary_model=os.environ.get("FERRY_SUMMARY_MODEL") or r.get("summary", ""),

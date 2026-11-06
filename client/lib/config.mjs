@@ -319,6 +319,10 @@ export function ensureAgentDir(defaultModel, models = [defaultModel], thinking =
 	const tools = ["read", shell, "edit", "write", "grep", "find", "ls"];
 	const defaults = { defaultProvider: where.get(defaultModel) ?? "ferry", defaultModel, enableInstallTelemetry: false, defaultTools: tools };
 	const next = { ...defaults, ...cur };
+	// The live server catalog also replaces stale local provider/model preferences.
+	if (!where.has(next.defaultModel)) next.defaultModel = defaultModel;
+	next.defaultProvider = where.get(next.defaultModel) ?? "ferry";
+	next.enabledModels = models.map((m) => typeof m === "string" ? `ferry/${m}` : `${providerOf(m)}/${m.id}`);
 	// lists written by older Ferry versions, which nobody chose by hand: upgrade them
 	const old = JSON.stringify(next.defaultTools);
 	if (old === JSON.stringify(["read", "powershell", "edit", "write"]) || old === JSON.stringify(["read", "bash", "edit", "write"])) {
