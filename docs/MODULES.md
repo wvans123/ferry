@@ -40,7 +40,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 
 | 模块 | 做什么 | 代码 | 开关 | 自测 |
 |---|---|---|---|---|
-| 记忆 | 项目、个人记忆；全局记忆在服务端 | `client/lib/memory.mjs`、`server/ferry_server/globalmem.py` | `memory`；全局记忆在管理页 | F28、F56 |
+| 记忆 | 项目、个人记忆；全局记忆在服务端 | `client/lib/memory.mjs`、`server/ferry_server/globalmem.py` | `memory`；全局记忆在管理页 | F28、F56、F78、F88 |
 | 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个） | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89 |
 | 工具输出 | 待办、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48 |
 | /goal | 一直做到完成 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41 |
