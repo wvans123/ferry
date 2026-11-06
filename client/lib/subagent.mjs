@@ -15,12 +15,13 @@ import { AGENT_DIR, FERRY_HOME, findFerryModel } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
 import { createPrompt } from "./prompt.mjs";
 import { createWeb } from "./web.mjs";
-import { startSubagentJob, trackSubagent } from "./jobs.mjs";
+import { listJobs, startSubagentJob, trackSubagent } from "./jobs.mjs";
 import { createBigOutputs } from "./tools.mjs";
 import { createOffice } from "./office.mjs";
 import { promptWithRecovery, transientMessage } from "./upload.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
+const KEEP = 5; // finished subagents kept for a follow-up (task with resume)
 // no nesting; the task list, goal and background jobs belong to the main agent
 const NOT_FOR_SUBAGENTS = new Set(["task", "task_batch", "todo", "ask_user", "goal_update", "job_start", "job_output", "job_stop"]);
 
@@ -39,6 +40,51 @@ export async function withSlot(limit, fn, onWait) {
 		slots.running--;
 		slots.waiting.shift()?.();
 	}
+}
+
+/**
+ * Finished subagents (session and its Ferry provider), so the main agent can send one a follow-up (task with resume)
+ * and it goes on with its whole context, uploading only what is new. Only in this ferry window, the latest `max`;
+ * a stopped one is not kept.
+ */
+export function createKeeper(max = KEEP) {
+	const kept = new Map(); // id -> { session, agent }, oldest first
+	const busy = new Set(); // ids working on a follow-up now
+	return {
+		/** The kept subagent `id`, taken out while its follow-up runs; done() puts it back. */
+		take(id) {
+			if (busy.has(id)) throw new Error(`Subagent ${id} is still working on a follow-up; wait for its report, then resume it.`);
+			const entry = kept.get(id);
+			if (!entry) {
+				if (listJobs().some((j) => j.id === id && j.status === "running")) {
+					throw new Error(`Subagent ${id} is still running; wait for its report, then resume it.`);
+				}
+				throw new Error(`Subagent ${id} is gone (only the latest ${max} finished subagents of this ferry window are ` +
+					"kept, and stopped ones are not). Start a fresh task with the full prompt.");
+			}
+			kept.delete(id);
+			busy.add(id);
+			return entry;
+		},
+		/** A run of subagent `id` ended: keep it as the newest, or let it go when it was stopped. */
+		done(id, entry, stopped) {
+			busy.delete(id);
+			if (!entry) return;
+			if (stopped) return entry.session.dispose();
+			kept.delete(id);
+			kept.set(id, entry);
+			for (const [old, e] of kept) {
+				if (kept.size <= max) break;
+				kept.delete(old);
+				e.session.dispose();
+			}
+		},
+		ids: () => [...kept.keys()],
+		clear() {
+			for (const e of kept.values()) e.session.dispose();
+			kept.clear();
+		},
+	};
 }
 
 const BUILTIN = [
@@ -130,6 +176,8 @@ const Params = Type.Object({
 		"every detail it needs and say exactly what to report back." }),
 	background: Type.Optional(Type.Boolean({ description: "true: start it and return at once; you are told when it is " +
 		"done (job_output shows the report). Use it for long side tasks while you go on with other work." })),
+	resume: Type.Optional(Type.Number({ description: "The id of a finished subagent (its report names it) to send prompt " +
+		"to as a follow-up: it goes on with everything it already read. agent is then ignored." })),
 });
 
 const short = (v) => {
@@ -150,33 +198,48 @@ export function createSubagents(cfg, deps) {
 	return (pi) => {
 		if (cfg.subagents === false) return;
 		const agents = discoverAgents(process.cwd());
+		const keeper = createKeeper();
+		pi.on("session_shutdown", () => keeper.clear());
 		pi.registerTool({
 			name: "task",
 			label: "Subagent",
 			description: "Hand a self-contained job to a subagent with its own fresh context; you get back only its final " +
 				"report. Use it for wide searches (agent explore) or side tasks with many steps (agent general), so the " +
 				"main conversation stays small. Several task calls in one reply run at the same time. Do not use it for a " +
-				"single file read or a quick search you can do yourself.\nAgents:\n" +
+				"single file read or a quick search you can do yourself. To ask a finished subagent more, pass resume with " +
+				"its id instead of starting a new one.\nAgents:\n" +
 				agents.map((a) => `- ${a.name}: ${a.description}`).join("\n"),
 			promptSnippet: "Delegate searches and side tasks to subagents with fresh context",
 			parameters: Params,
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
 				const cwd = ctx?.cwd ?? process.cwd();
-				const agent = discoverAgents(cwd).find((a) => a.name === (params.agent || "general"));
+				const rid = params.resume === undefined ? undefined : Number(params.resume);
+				const prev = rid === undefined ? undefined : keeper.take(rid);
+				const agent = prev?.agent ?? discoverAgents(cwd).find((a) => a.name === (params.agent || "general"));
 				if (!agent) throw new Error(`No agent named "${params.agent}". Available: ${discoverAgents(cwd).map((a) => a.name).join(", ")}`);
 				const limit = Math.max(1, Number(cfg.maxParallel) || 3);
+				const name = `${agent.name}: ${params.description}${prev ? ` (follow-up to subagent ${rid})` : ""}`;
+				// a subagent's id is the job id of its first run; a follow-up continues the kept session
+				const go = async (id, sig, update) => {
+					let entry = prev;
+					try {
+						entry ??= { agent, session: await openSession({ cfg, deps, agent, label: `${agent.name}: ${params.description}`, ctx, cwd, pi }) };
+						return await runSubagent({ session: entry.session, agent, id, params, signal: sig, onUpdate: update });
+					} finally {
+						keeper.done(id, entry, sig.aborted);
+					}
+				};
 				if (params.background) {
-					const job = startSubagentJob(`${agent.name}: ${params.description}`, (sig) =>
-						withSlot(limit, () => runSubagent({ cfg, deps, agent, params, signal: sig, onUpdate: undefined, ctx, cwd, pi }))
-							.then((r) => r.content[0].text));
-					return { content: [{ type: "text", text: `Started background subagent ${job.id} (${job.name}). You will be told ` +
-						"when it is done; job_output shows its report." }], details: { id: job.id } };
+					const job = startSubagentJob(name, (sig, j) => withSlot(limit, () => go(rid ?? j.id, sig)).then((r) => r.content[0].text));
+					return { content: [{ type: "text", text: (prev ? `Sent the follow-up to subagent ${rid}; it works in the background as job ${job.id}.`
+						: `Started background subagent ${job.id} (${job.name}).`) + " You will be told when it is done; job_output shows its report." }],
+					details: { id: job.id } };
 				}
-				const t = trackSubagent(`${agent.name}: ${params.description}`); // shown in /tasks while it runs
+				const t = trackSubagent(name); // shown in /tasks while it runs
 				const stop = () => t.job.controller.abort();
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
-					const r = await withSlot(limit, () => runSubagent({ cfg, deps, agent, params, signal: t.job.controller.signal, onUpdate, ctx, cwd, pi }),
+					const r = await withSlot(limit, () => go(rid ?? t.job.id, t.job.controller.signal, onUpdate),
 						(n) => onUpdate?.({ content: [{ type: "text", text: `${agent.name}: ${params.description}\n  (waiting: ${limit} subagents already running, ${n} in line)` }], details: {} }));
 					t.end(r.content[0].text);
 					return r;
@@ -232,7 +295,8 @@ export function createSubagents(cfg, deps) {
 					}
 					const one = { ...params, description: `${params.description} #${i + 1}`, prompt: params.prompt.replaceAll("{item}", item) };
 					try {
-						const r = await runSubagent({ cfg, deps, agent, params: one, signal, onUpdate: undefined, ctx, cwd, pi });
+						const session = await openSession({ cfg, deps, agent, label: `${agent.name}: ${one.description}`, ctx, cwd, pi });
+						const r = await runSubagent({ session, agent, params: one, signal, onUpdate: undefined }).finally(() => session.dispose());
 						results[i] = { item, report: r.content[0].text.replace(/\n\n\[[^\]]*subagent:[^\]]*\]$/, "") };
 					} catch (e) {
 						results[i] = { item, error: String(e?.message ?? e) };
@@ -263,9 +327,9 @@ function pickModel(agent, ctx) {
 	return findFerryModel(reg, String(agent.model).replace(/^[^/]*\//, "")) ?? ctx?.model; // "kiro/x" or "x"
 }
 
-async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cwd, pi }) {
+/** A fresh session for the subagent, with its own Ferry provider (its own server conversation). */
+async function openSession({ cfg, deps, agent, label, ctx, cwd, pi }) {
 	const { createAgentSession, DefaultResourceLoader, SessionManager } = await import("@earendil-works/pi-coding-agent");
-	const label = `${agent.name}: ${params.description}`;
 	const parentTools = pi.getActiveTools().filter((t) => !NOT_FOR_SUBAGENTS.has(t));
 	const tools = (agent.tools ?? parentTools).filter((t) => !NOT_FOR_SUBAGENTS.has(t));
 	const role = agent.prompt;
@@ -301,6 +365,12 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 		thinkingLevel: pi.getThinkingLevel?.(),
 		tools,
 	});
+	return session;
+}
+
+/** One prompt in the subagent's session; the caller disposes of the session or keeps it (id: for a follow-up). */
+async function runSubagent({ session, agent, id, params, signal, onUpdate }) {
+	const label = `${agent.name}: ${params.description}`;
 	const steps = [];
 	let turns = 0;
 	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
@@ -333,19 +403,21 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 			const done = steps.slice(-5).map((s) => `  ${s}`).join("\n") || "  (nothing yet)";
 			throw new Error(`Subagent failed: ${left}` + (transientMessage(left)
 				? `\nThe network stopped its requests, also after trying again. Its last steps:\n${done}\n` +
-					"Files it already wrote are kept. To continue, run the task again and say what is done and what is left."
+					(id === undefined ? "Files it already wrote are kept. To continue, run the task again and say what is done and what is left."
+						: `Files it already wrote are kept. To continue, send it a follow-up with task resume: ${id}.`)
 				: ""));
 		}
 		if (!report.trim()) report = "(the subagent finished without a report)";
 		if (Buffer.byteLength(report) > MAX_REPORT_BYTES) report = `${report.slice(0, MAX_REPORT_BYTES)}\n...(report cut at 30 KB)`;
+		const tag = id === undefined ? `${agent.name} subagent` : `${agent.name} subagent ${id}`;
+		const more = id === undefined ? "" : `; task with resume: ${id} sends it a follow-up`;
 		return {
-			content: [{ type: "text", text: `${report}\n\n[${agent.name} subagent: ${turns} model calls, ${steps.length} tool calls]` }],
-			details: { agent: agent.name, description: params.description, steps: steps.length, turns, toolCalls: steps.slice(-50) },
+			content: [{ type: "text", text: `${report}\n\n[${tag}: ${turns} model calls, ${steps.length} tool calls${more}]` }],
+			details: { agent: agent.name, description: params.description, steps: steps.length, turns, toolCalls: steps.slice(-50), id },
 			usage,
 		};
 	} finally {
 		signal?.removeEventListener("abort", stop);
 		unsubscribe();
-		session.dispose();
 	}
 }

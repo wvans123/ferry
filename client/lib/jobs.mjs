@@ -88,14 +88,14 @@ export function startCommand(command, name, cwd) {
 	return job;
 }
 
-/** Track a background subagent: run() resolves to its report text. */
+/** Track a background subagent: run(signal, job) resolves to its report text. */
 export function startSubagentJob(name, run) {
 	const id = nextId++;
 	const controller = new AbortController();
 	const job = { id, kind: "subagent", name, status: "running", started: Date.now(), controller };
 	jobs.set(id, job);
 	refresh();
-	run(controller.signal).then((report) => {
+	run(controller.signal, job).then((report) => {
 		if (job.status === "running") job.status = "done";
 		job.report = report;
 	}, (e) => {

@@ -156,6 +156,14 @@ def decide_agent(msgs):
             if not tools:
                 return ("tool", "bash", {"command": "echo sub-approved-$((6*7))"})
             return ("text", "WORKER REPORT: " + text_of(tools[-1])[:60])
+        if "RESUMESECOND" in first:  # a follow-up: the first prompt, its file read and its report are still there
+            seen = [text_of(m) for m in msgs if m.get("role") in ("user", "assistant", "tool")]
+            return ("text", f"SECOND REPORT marker={any('MARK-7Q2' in t for t in seen)} "
+                            f"read={any(m.get('role') == 'tool' for m in msgs)} first={any('FIRST REPORT' in t for t in seen)}")
+        if "RESUMEFIRST" in first:
+            if not tools:
+                return ("tool", "read", {"path": "data/f03.txt", "limit": 2})
+            return ("text", "FIRST REPORT: read f03")
         if not tools:
             return ("tool", "ls", {"path": "data"})
         if len(tools) == 1:
@@ -194,6 +202,15 @@ def decide_agent(msgs):
             return ("tool", "task", {"agent": "explore", "description": "look around", "background": True,
                                      "prompt": "List the data folder and read the start of f03.txt."})
         return ("text", "BG: " + text_of(tools[-1])[:120])
+    if "RESUMETEST" in first:  # a subagent reports, then gets a follow-up with its context
+        if not tools:
+            return ("tool", "task", {"agent": "explore", "description": "first look",
+                                     "prompt": "RESUMEFIRST: read the start of data/f03.txt; remember MARK-7Q2."})
+        if len(tools) == 1:
+            sid = re.search(r"task with resume: (\d+)", text_of(tools[0]))
+            return ("tool", "task", {"resume": int(sid.group(1)) if sid else 999, "description": "follow up",
+                                     "prompt": "RESUMESECOND: what did you read, and what was the marker?"})
+        return ("text", "RESUMED: " + text_of(tools[-1])[:200])
     if "TASKTEST" in first:
         if not tools:
             return ("tool", "task", {"agent": "explore", "description": "look at the data folder",

@@ -204,6 +204,15 @@ def check_agent_features(root: Path, work: Path) -> None:
               f"主对话调用 task，子 agent 用自己的上下文跑了 {len(sub)} 次模型（ls、read、写报告），"
               f"主对话只多了 1 条结果；服务端调用记录标为 subagent")
 
+        before = len(jsonl(s.upstream))
+        c9, o9 = s.ferry("-p", "RESUMETEST: ask a subagent, then ask it more")
+        ups = jsonl(s.upstream)[before:]
+        second = [u for u in ups if "<ferry_subagent>" in system_text(u) and "RESUMESECOND" in json.dumps(u["messages"][-1])]
+        carried = bool(second) and "MARK-7Q2" in json.dumps(second[0]["messages"]) and "FIRST REPORT" in json.dumps(second[0]["messages"])
+        check("F89 子 agent 接着问", c9 == 0 and "RESUMED: SECOND REPORT marker=True read=True first=True" in o9 and carried,
+              "主对话先用 task 派子 agent 读文件写报告，再用 task 的 resume 追问同一个子 agent；第二次请求带着第一次的任务、"
+              "读到的文件和报告，主对话拿到第二份报告" if c9 == 0 and carried else o9[-400:])
+
         c4, o4 = s.ferry("-p", "BIGTEST: print a long output")
         saved = list((s.home / "outputs").rglob("bash-*.txt"))
         lines = saved[0].read_text(encoding="utf-8").count("\n") if saved else 0
