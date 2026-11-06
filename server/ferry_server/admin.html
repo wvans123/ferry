@@ -223,6 +223,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
           <div><label class="f" for="rDefault">默认模型</label><select id="rDefault"></select></div>
           <div><label class="f" for="rSummary">写上下文摘要用</label><select id="rSummary"></select></div>
           <div><label class="f" for="rImage">生成图片用</label><select id="rImage"></select></div>
+          <div><label class="f" for="rAdvisor">顾问模型</label><select id="rAdvisor"></select></div>
           <div><label class="f">&nbsp;</label><label class="switch"><input type="checkbox" id="rExpose"> 工作电脑可以用 /model 自己挑</label></div>
         </div>
         <div class="row" style="margin-top:14px"><button class="btn primary" id="saveRouting">保存</button><span class="msg" id="routingMsg"></span></div>
@@ -300,7 +301,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       <div class="row" style="margin-bottom:12px">
         <select id="cModel" style="width:auto"><option value="">全部模型</option></select>
         <select id="cStatus" style="width:auto"><option value="">全部结果</option><option value="ok">成功</option><option value="bad">失败</option></select>
-        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option><option value="subagent">子 agent</option></select>
+        <select id="cPurpose" style="width:auto"><option value="">全部用途</option><option value="agent">干活</option><option value="summary">写摘要</option><option value="subagent">子 agent</option><option value="advise">顾问</option><option value="btw">旁问</option><option value="recap">回顾</option></select>
         <span class="muted" id="cCount"></span>
       </div>
       <div class="card tablecard">
@@ -484,7 +485,7 @@ function hhmm(ts, sec = true) { return new Date(ts * 1000).toLocaleTimeString("z
 function when(ts) { const d = new Date(ts * 1000), t = new Date(); return (d.toDateString() === t.toDateString() ? "" : (d.getMonth() + 1) + "/" + d.getDate() + " ") + hhmm(ts); }
 function secs(ms) { return ms == null ? "–" : (ms / 1000).toFixed(1) + " 秒"; }
 function result(a) { return a.status === 200 ? '<span class="tag good">成功</span>' : `<span class="tag bad">HTTP ${a.status}</span>`; }
-function purpose(p) { return p === "summary" ? '<span class="tag lamp">写摘要</span>' : p === "subagent" ? '<span class="tag">子 agent</span>' : '<span class="tag">干活</span>'; }
+function purpose(p) { const side = { advise: "顾问", btw: "旁问", recap: "回顾" }[p]; if (side) return `<span class="tag lamp">${side}</span>`; return p === "summary" ? '<span class="tag lamp">写摘要</span>' : p === "subagent" ? '<span class="tag">子 agent</span>' : '<span class="tag">干活</span>'; }
 
 function systemView(text) {
   const m = /<server-rules>([\s\S]*?)<\/server-rules>/.exec(text || "");
@@ -562,6 +563,7 @@ async function loadProviders() {
   const opts = (sel, extra) => (extra ? `<option value="">${extra}</option>` : "") + all.map((o) => `<option value="${esc(o.id)}" ${o.id === sel ? "selected" : ""}>${esc(o.label)}</option>`).join("");
   $("rDefault").innerHTML = opts(P.routing.default); $("rSummary").innerHTML = opts(P.routing.summary, "和对话用的模型一样（推荐）");
   $("rImage").innerHTML = opts(P.routing.image, "不用（agent 不能生成图片）");
+  $("rAdvisor").innerHTML = opts(P.routing.advisor, "最贵的那个模型（和默认模型相同时不开）");
   $("rExpose").checked = P.routing.expose;
   $("provList").innerHTML = P.providers.map((p, i) => {
     const key = p.no_key ? '<span class="tag good">不需要 Key</span>'
@@ -585,7 +587,7 @@ async function loadProviders() {
 function payload(list, routing) {
   return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api, max_concurrent: p.max_concurrent || 0, rpm: p.rpm || 0, cooldown: p.cooldown || 60, fallback: p.fallback || "",
     models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, ...(m.price ? { price: m.price } : {}) })) })),
-    routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, image: $("rImage").value, expose: $("rExpose").checked } };
+    routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, image: $("rImage").value, advisor: $("rAdvisor").value, expose: $("rExpose").checked } };
 }
 async function saveAll(list, routing) { P = await api("providers", "PUT", payload(list, routing)); }
 $("saveRouting").onclick = async () => { try { await saveAll(P.providers); say("routingMsg", "已保存，下一次请求生效"); loadProviders(); } catch (e) { say("routingMsg", e.message, false); } };

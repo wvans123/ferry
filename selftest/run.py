@@ -1660,6 +1660,114 @@ def part_zero(base: Path, work: Path) -> None:
         s.close()
 
 
+def check_side(root: Path, work: Path) -> None:
+    """Side questions to the server: the advisor tool, /btw while the agent works, the recap of a long request."""
+    strong = ('\n[models.strong]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nmodel = "strong-model"\n'
+              'drop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\nprice = { input = 15, output = 75 }\n'
+              '\n[routing]\ndefault = "main"\nadvisor = "strong"\n')
+    s = Stack(root / "advisor", work, "agent", extra_toml=strong)
+    try:
+        c1, o1 = s.ferry("-p", "ADVISETEST: finish the plan")
+        calls = jsonl(s.upstream)
+        asked = [b for b in calls if b.get("model") == "strong-model"]
+        convo = json.dumps(asked[0]["messages"], ensure_ascii=False) if asked else ""
+        first = json.dumps(calls[0]["messages"][0], ensure_ascii=False) if calls else ""
+        audit = jsonl(s.data / "audit.jsonl")
+        ok = (c1 == 0 and len(asked) == 1 and "ADVICE saw_request=True saw_work=True question=True" in o1
+              and "save the file before you finish" in o1 and "tools" not in asked[0]
+              and "# The advisor" in first and "# Documents, decks and reports" in first and "agent review" in first
+              and any(a.get("purpose") == "advise" and a.get("status") == 200 for a in audit))
+        check("F83 顾问和交付前检查", ok, "服务端有顾问模型时，agent 多一个 advisor 工具：服务端用对话里的内容（含前面的工具结果）问顾问模型，不带工具，"
+              "建议原样作为工具结果回到 agent；调用记录里标为 advise；系统提示里有顾问用法、交付质量和 review 子 agent 的说明" if ok
+              else f"code={c1} asked={len(asked)} out={o1[-300:]!r} convo={convo[-200:]!r}")
+    finally:
+        s.close()
+    if WINDOWS:
+        print("  SKIP  F84 /btw、F85 回顾（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    def terminal(stack):
+        env = {**stack.env, "FERRY_SERVER": stack.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        seen = [b""]
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float) -> bool:
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen[0] += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[0]):
+                    return True
+            return False
+
+        def typed(text: bytes) -> None:
+            os.write(fd, text)
+            time.sleep(0.4)
+            os.write(fd, b"\r")
+
+        def stop() -> None:
+            for _ in range(2):
+                os.write(fd, b"\x03")
+                time.sleep(0.3)
+            try:
+                os.kill(pid, signal.SIGTERM)
+                os.waitpid(pid, 0)
+            except (ProcessLookupError, ChildProcessError):
+                pass
+        return wait_for, typed, stop, lambda: plain(seen[0])
+
+    # /btw while a slow command runs: the answer shows up before the command ends and the question never reaches the history
+    s = Stack(root / "btw", work, "agent")
+    try:
+        wait_for, typed, stop, screen = terminal(s)
+        started = wait_for("shift+tab", 60)
+        typed(b"BTWTEST: run the slow command")
+        running = wait_for("sleep 8", 20)
+        typed(b"/btw why is it slow today")
+        answered = wait_for("BTW ANSWER: you asked why is it slow today saw_request=True", 20)
+        early = "BTWFINISHED" not in screen()
+        finished = wait_for("BTWFINISHED saw_btw=False", 40)
+        stop()
+        ok = started and running and answered and early and finished
+        check("F84 /btw 旁问", ok, "agent 在跑一条慢命令时输入 /btw 提问：答案在命令结束前就显示出来（服务端用对话内容回答，不带工具），"
+              "agent 照常做完；这个问题和答案没有进对话（模型之后收到的消息里没有它）" if ok
+              else f"started={started} running={running} answered={answered} early={early} finished={finished} {screen()[-400:]!r}")
+    finally:
+        s.close()
+
+    # a request longer than phoneAfterSeconds: the recap is in the phone notification and on the status line
+    s = Stack(root / "recap", work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark"})
+    try:
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "config.json").write_text(json.dumps({"phoneAfterSeconds": 1}), encoding="utf-8")
+        wait_for, typed, stop, screen = terminal(s)
+        started = wait_for("shift+tab", 60)
+        typed(b"RECAPTEST: do the long thing")
+        done = wait_for("RECAPFINISHED", 40)
+        shown = wait_for("recap: RECAP: Building the deck for the review", 25)
+        time.sleep(1)
+        barks = [u for u in jsonl(s.upstream) if u.get("group") == "Ferry"]
+        stop()
+        ok = started and done and shown and any("Building the deck for the review" in b.get("body", "") for b in barks)
+        check("F85 做完推一句话回顾", ok, "一个超过 phoneAfterSeconds 的请求做完后：服务端用最便宜的模型写一两句回顾，"
+              "手机通知的正文是这句话（不是\"after N min\"），终端状态栏也显示" if ok
+              else f"started={started} done={done} shown={shown} barks={barks} {screen()[-300:]!r}")
+    finally:
+        s.close()
+
+
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
 # its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
 STEPS = [
@@ -1672,7 +1780,7 @@ STEPS = [
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
-    (check_upload_size, "upsize"),
+    (check_upload_size, "upsize"), (check_side, "side"),
 ]
 
 

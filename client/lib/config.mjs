@@ -44,6 +44,8 @@ export const DEFAULTS = {
 	thinking: "medium", // how long Claude / GPT think: low, medium, high, xhigh
 	trimOldOutputs: "80k", // past this many tokens of context, old long tool outputs are left out ("0" = never)
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
+	advisor: true, // the advisor tool (a stronger model reviews the work); only when the Ferry server has an advisor model
+	recap: true, // after a long request, one sentence on what was done and what comes next, in the phone notification and the status line
 	wakeOnJobEnd: true, // a background subagent or command that ends: the agent takes the result up at once (false: with your next message)
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification
@@ -95,6 +97,8 @@ export const ADVANCED_SETTINGS = {
 	chunkBytes: ["number", "largest single request body sent to the server, in bytes (a bigger commit goes up in parts; gets smaller by itself when the network stops a request)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
+	advisor: ["boolean", "let the agent ask a stronger model for a review (advisor tool, costs one model call each time); only when the server has an advisor model"],
+	recap: ["boolean", "after a long request, put a one-sentence recap of the work (made by the server) in the phone notification and the status line; off: a plain \"Done\""],
 	wakeOnJobEnd: ["boolean", "when a background subagent or command ends, the agent takes the result up at once, even if it had finished (false: it hears with your next message)"],
 	phoneAfterSeconds: ["number", "a request that took at least this long notifies the phone"],
 	phoneApprovalSeconds: ["number", "an approval left unanswered this long notifies the phone, once per question"],

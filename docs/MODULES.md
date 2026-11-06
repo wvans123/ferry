@@ -41,7 +41,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模块 | 做什么 | 代码 | 开关 | 自测 |
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端 | `client/lib/memory.mjs`、`server/ferry_server/globalmem.py` | `memory`；全局记忆在管理页 | F28、F56 |
-| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、general | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49 |
+| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49 |
 | 工具输出 | 待办、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48 |
 | /goal | 一直做到完成 | `client/lib/goal.mjs` | `goalMaxTurns`、`goalBudget` | F41 |
 | 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86 |
@@ -58,6 +58,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
 | 团队 | Paperclip 看板上的成员 | `client/lib/team.mjs`、`teamcli.mjs` | 由 Paperclip 启动时才生效 | F54 |
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |
+| 旁问、顾问、回顾 | `advisor` 工具、`/btw`、长请求做完的一句话回顾，共用服务端一个接口；`review` 子 agent 和交付质量提示在 `subagent.mjs`、`prompt.mjs` | `client/lib/side.mjs`、`server/ferry_server/side.py`；`sync.mjs` 里 `cfg.side` 记着对话的服务端副本 | `advisor`、`recap`；服务端管理页的顾问模型 | F83–F85 |
 | 问题报告 | `/report` 经服务端发 GitHub issue | `client/lib/report.mjs`、`server/ferry_server/report.py` | 服务端设了令牌才发到 GitHub | 单元测试 |
 
 `server/ferry_server/report.py` 是第一个按 `mount()` 写法接入的服务端模块，`search.py` 是第二个。其他服务端功能的接口还写在 `app.py` 里，以后动到哪个就顺手搬成这个样子。

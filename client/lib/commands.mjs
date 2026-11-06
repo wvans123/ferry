@@ -25,6 +25,7 @@ Conversation   /new  start a new one          /resume  go back to an earlier one
                /name <name>  name this one    /session  file, size and messages of this one
                /compact [what to keep]  summarise the history now, to free up context
                /rewind  go back to one of your messages: conversation, files, or both
+               /btw <question>  ask a side question, also while the agent works; not added to the conversation
 Work           /goal <objective>  keep working until it is done (/goal pause | resume | clear | budget)
                /tasks  background commands and subagents: output, stop
 Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
@@ -120,8 +121,9 @@ export function createCommands(cfg, deps) {
 		}));
 
 		let started = 0;
-		pi.on("before_agent_start", (event) => {
+		pi.on("before_agent_start", (event, ctx) => {
 			if (event.messageType === "user" && !(steerState.redirecting && started)) started = Date.now();
+			if (event.messageType === "user" && ctx?.hasUI) ctx.ui.setStatus("ferry-recap", undefined);
 		});
 		let lastStop = null; // how the last answer ended: an error stops the work
 		pi.on("message_end", (e) => {
@@ -136,7 +138,16 @@ export function createCommands(cfg, deps) {
 			if (ctx?.hasUI && started && !e?.aborted && secs >= (cfg.phoneAfterSeconds ?? 300)) {
 				const mins = `after ${Math.round(secs / 60)} min`;
 				if (lastStop?.reason === "error") cfg.phone?.("Stopped", `${mins}: ${String(lastStop.error ?? "an error").slice(0, 160)}`, "stopped");
-				else cfg.phone?.("Done", mins, "done");
+				else {
+					// a one-sentence recap of the work (side.mjs; "" when off, failed or slower than 15 s) replaces the plain text;
+					// not awaited, so the next request is not held up
+					const plain = mins;
+					void (async () => {
+						const recap = (await cfg.recapText?.(ctx)) || "";
+						if (recap) ctx.ui.setStatus("ferry-recap", `recap: ${recap}`);
+						cfg.phone?.("Done", recap || plain, "done");
+					})();
+				}
 			}
 			started = 0;
 			lastStop = null;
