@@ -11,6 +11,7 @@ import { basename, join } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { FERRY_HOME, FERRY_PROVIDERS, PROTOCOL, providerOf, serverHeaders } from "./config.mjs";
 import { GATEWAY_NOTE, gatewayPage, openGatewayPage, waitForServer, whoAnswered } from "./gateway.mjs";
+import { createUploader, imageStats } from "./upload.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const SALT = randomUUID();
@@ -116,7 +117,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	const refs = () => (cfg.features ?? []).includes("refs") && cfg.sessionStore !== "none";
 
 	/** What was in the way, for "ferry doctor" and for us: written to <FERRY_HOME>/logs/blocked.log (no message content). */
-	function logBlocked(path, sent, res, text) {
+	function logBlocked(path, sent, res, text, extra = {}) {
 		try {
 			mkdirSync(join(FERRY_HOME, "logs"), { recursive: true });
 			const h = {};
@@ -125,7 +126,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 				if (v) h[k] = v;
 			}
 			appendFileSync(join(FERRY_HOME, "logs", "blocked.log"), `${JSON.stringify({ at: new Date().toISOString(), path,
-				sent, status: res.status, headers: h, page: String(text ?? "").replace(/\s+/g, " ").slice(0, 600) })}\n`);
+				sent, ...extra, status: res.status, headers: h, page: String(text ?? "").replace(/\s+/g, " ").slice(0, 600) })}\n`);
 		} catch {
 			// not important
 		}
@@ -155,23 +156,22 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		});
 	}
 
-	function commit(...a) {
-		return oneAtATime(() => commitNow(...a));
-	}
+	// the part size now: it only gets smaller, when the network stops a request (upload.mjs)
+	const sizes = { chunk: Number(cfg.chunkBytes) || 512 * 1024 };
+	const uploader = createUploader(sizes, {
+		post,
+		log: logBlocked,
+		say: (t) => cfg.onNote?.(t),
+		gatewayConfirm: (res, text) => gatewayPage(res.headers.get("location") ?? "", text ?? ""),
+	});
 
-	async function commitNow(conv, base, baseHash, blob, signal, chunk = cfg.chunkBytes) {
-		const bytes = Buffer.from(blob, "utf8");
+	function commit(conv, base, baseHash, blob, signal) {
 		const q = new URLSearchParams({ conv, base: String(base), base_hash: baseHash });
-		if (bytes.length <= chunk) return post(`/v1/ferry/commit?${q}`, bytes, signal);
-		const upload = randomUUID();
-		const parts = Math.ceil(bytes.length / chunk);
-		for (let i = 0; i < parts; i++) {
-			const res = await post(`/v1/ferry/upload/${upload}/${i}`, bytes.subarray(i * chunk, (i + 1) * chunk), signal);
-			if (!res.ok) return res; // looked at by the caller (a gateway may stop one part)
-		}
-		q.set("upload", upload);
-		q.set("parts", String(parts));
-		return post(`/v1/ferry/commit?${q}`, "", signal);
+		return oneAtATime(() => uploader.commit(Buffer.from(blob, "utf8"), q, signal, () => imageStats(blob)).catch((e) => {
+			if (e instanceof FerryError || signal?.aborted) throw e;
+			throw new FerryError(`Ferry could not reach its server: ${e.message}. The conversation is kept; send your message again ` +
+				'(or tell the agent to continue). "ferry doctor" checks the connection.');
+		}));
 	}
 
 	async function shrink(payload, signal, api = "openai", sessionId = "") {
@@ -206,15 +206,8 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		const blob = (b, withTools, useRefs = refs()) => JSON.stringify({
 			append: msgs.slice(b).map((m, i) => (useRefs && haveBlobs.has(hashes[b + i]) && m.length > 200 ? { ref: hashes[b + i] } : m)),
 			tools: withTools ? toolsJson : null });
-		const notFerry = (r) => !r.headers.get("content-type")?.includes("json");
 
 		let res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
-		if (notFerry(res) && [403, 502, 503, 504].includes(res.status)) {
-			logBlocked("commit", blob(base, false).length, res, await res.clone().text().catch(() => ""));
-			// a hiccup, or something in the way that dislikes big requests: once more, in small parts
-			await new Promise((r) => setTimeout(r, 1500));
-			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal, 64 * 1024);
-		}
 		// the company gateway wants its confirmation again (it runs out after a while): open its page, wait until the
 		// server answers, and send again, so the agent's work goes on instead of stopping with an error
 		for (let again = 0; again < 2 && !res.headers.get("content-type")?.includes("json"); again++) {
@@ -248,7 +241,6 @@ export function createSyncProvider(cfg, models, opts = {}) {
 					`(${loc}): confirm there, then send your message again.`);
 			}
 			const text = await res.text().catch(() => "");
-			logBlocked("commit", msgs.length, res, text);
 			const who = whoAnswered({ status: res.status, headers: res.headers, body: text });
 			if (gatewayPage(loc, text)) {
 				// the gateway's page has no address of its own: open the server's, the gateway shows its page there

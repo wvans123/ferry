@@ -53,6 +53,8 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
 | Office | 读写 Word、Excel、PowerPoint、PDF；读旧版 .doc/.xls/.ppt；整个文件夹转成文本 | `client/lib/office.mjs`、`client/skills/office/` | — | F50、F75–F77 |
+| 分块上传和重试 | 每个请求体不超过块大小；被网关或 Cloudflare 挡下时重发、减半；子 agent 不因一次失败而停 | `client/lib/upload.mjs` | `chunkBytes` | F80 |
+| 隐藏模型名 | 右下角不显示模型名 | `client/lib/footer.mjs` | `showModel` | 单元测试 |
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
 | 团队 | Paperclip 看板上的成员 | `client/lib/team.mjs`、`teamcli.mjs` | 由 Paperclip 启动时才生效 | F54 |
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |

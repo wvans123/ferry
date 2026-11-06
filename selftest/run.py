@@ -911,11 +911,20 @@ def check_upload_delete(root: Path, work: Path) -> None:
                and "downloaded" in o1 and (proj / "got.zip").exists() and "SECRET-PAYLOAD-69" not in up)
         check("F69 上传每次都问", ok1, "全部放行模式加上 bash(curl*) 规则，curl 上传本机文件仍要确认（没有终端时拦下，说明规则和模式都放不行），"
               "文件没发出去；curl 下载照常不问" if ok1 else f"code={c1} {o1[-400:]!r}")
-        c2, o2 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra=full)
-        ok2 = (c2 == 0 and "DELETE:" in o2 and "removed-new" in o2 and not (proj / "made-now.txt").exists()
+        # every mode: what this session made goes (project folder, temp folder); what was there before always asks
+        tmpf = Path(tempfile.gettempdir()) / "ferry-f70-scratch.txt"
+        c2, o2 = s.ferry("-p", "DELETETEST-TMP: clean up", cwd=proj, env_extra=full)
+        ok2 = (c2 == 0 and "removed-new" in o2 and "removed-tmp" in o2 and not (proj / "made-now.txt").exists() and not tmpf.exists()
                and "did not create in this session" in o2 and "removed-old" not in o2 and (proj / "old.txt").exists())
-        check("F70 删除只放行本次新建的", ok2, "全部放行模式下，删除本次会话里 agent 新建的文件直接执行；删除原来就有的文件要确认"
-              if ok2 else f"code={c2} {o2[-400:]!r}")
+        c3, o3 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "acceptEdits"})
+        c4, o4 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "default"})
+        # default mode asks for the write itself (no terminal here), so only the old file is checked there
+        ok3 = (c3 == 0 and "removed-new" in o3 and "did not create in this session" in o3 and "removed-old" not in o3 and (proj / "old.txt").exists())
+        ok4 = (c4 == 0 and "removed-old" not in o4 and (proj / "old.txt").exists())
+        check("F70 删除只放行本次新建的", ok2 and ok3 and ok4,
+              "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样（全部放行、自动接受编辑已验证）；"
+              "删除原来就有的文件在每个模式下都要确认，也没有\"以后都允许\""
+              if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r}")
     finally:
         s.close()
 
@@ -1136,6 +1145,86 @@ def check_search_502(root: Path, work: Path) -> None:
         tunnel.shutdown()
         tunnel.server_close()
         s.close()
+
+
+def check_upload_size(root: Path, work: Path) -> None:
+    """A gateway in front of the server stops request bodies above 24 KB with an HTML 403 (issue #26)."""
+    import http.client
+    import struct
+    import threading
+    import zlib
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    limit = 24 * 1024
+    seen = {"passed": [], "stopped": 0}
+    (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(1500)), encoding="utf-8")
+    # a picture that does not shrink: noise, about 120 KB as PNG
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    noise = os.urandom(200 * 200 * 3)
+    raw = b"".join(b"\x00" + noise[y * 600:(y + 1) * 600] for y in range(200))
+    (work / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 200, 200, 8, 2, 0, 0, 0))
+                                   + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+    class Gateway(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def log_message(self, *a):
+            pass
+
+        def go(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if len(body) > limit:
+                seen["stopped"] += 1
+                page = b"<html><head><title>Proxy Notification</title></head><body>blocked</body></html>"
+                self.send_response(403)
+                for k, v in (("Content-Type", "text/html"), ("Server", "gateway"), ("Content-Length", str(len(page)))):
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(page)
+                return
+            seen["passed"].append(len(body))
+            conn = http.client.HTTPConnection("127.0.0.1", 8787, timeout=600)
+            conn.request(self.command, self.path, body or None, {k: v for k, v in self.headers.items() if k.lower() != "host"})
+            r = conn.getresponse()
+            self.send_response(r.status)
+            for k, v in r.getheaders():
+                if k.lower() not in ("transfer-encoding", "connection", "content-length"):
+                    self.send_header(k, v)
+            self.end_headers()
+            while part := r.read1(65536):
+                self.wfile.write(part)
+                self.wfile.flush()
+
+        do_GET = do_POST = do_PUT = do_DELETE = go
+
+    s = Stack(root, work, "agent")
+    gw = ThreadingHTTPServer(("127.0.0.1", 8789), Gateway)
+    threading.Thread(target=gw.serve_forever, daemon=True).start()
+    try:
+        env = {"FERRY_SERVER": "http://127.0.0.1:8789"}
+        c1, o1 = s.ferry("-p", "GATESIZE: read the notes and the picture", env_extra=env)
+        stopped = seen["stopped"]
+        log = s.home / "logs" / "blocked.log"
+        rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+        big = max(seen["passed"], default=0)
+        ok = (c1 == 0 and "picture received" in o1 and "notes=" in o1 and stopped >= 1 and 0 < big <= limit
+              and rows and all(r["sent"] > limit and r["total"] >= r["sent"] and "images" in r for r in rows)
+              and any(p > 100000 for p in [(work / "pic.png").stat().st_size]))
+        c2, o2 = s.ferry("doctor", "--upload", env_extra=env)
+        m = re.search(r"limit is about (\d+) KB", o2)
+        ok2 = bool(m) and 16 <= int(m.group(1)) <= 24 and "chunkBytes" in o2
+        check("F80 网关挡大请求时照样完成", ok and ok2,
+              f"网关挡下 24 KB 以上的请求（403 网页）：大工具结果和一张图片照样发完，通过网关的请求最大 {big:,} 字节；被挡的 {stopped} 个请求按实际大小"
+              "记进 blocked.log（第几块、整次大小、图片张数和字节数）；Ferry 自己把块减半后重发；doctor --upload 在 16 KB 和 64 KB 之间折半查找，"
+              f"找到上限约 {m.group(1) if m else '?'} KB 并建议略小的 chunkBytes" if ok and ok2
+              else f"run={ok} code={c1} stopped={stopped} biggest_passed={big} rows={rows[:2]} out={o1[-300:]!r} | doctor={ok2} code={c2} {o2[-500:]!r}")
+    finally:
+        gw.shutdown()
+        gw.server_close()
+        s.close()
+        for n in ("big-notes.txt", "pic.png"):
+            (work / n).unlink(missing_ok=True)
 
 
 def check_v018(root: Path, work: Path) -> None:
@@ -1526,6 +1615,7 @@ STEPS = [
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
+    (check_upload_size, "upsize"),
 ]
 
 

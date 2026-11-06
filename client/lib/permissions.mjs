@@ -280,12 +280,11 @@ export function madeThisSession(p, session, budget = { n: 5000 }) {
 }
 
 /** Why a delete in bypass mode still needs the user, or "" when it only deletes what this session made. */
-export function unsafeDeleteOf(cmd, cwd, dirs, session = { start: Infinity, made: new Set() }) {
+export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }) {
 	const targets = deleteTargets(cmd);
 	if (targets === null) return "deletes files Ferry cannot list (a pattern, a variable, find/xargs, a script, another folder or git clean)";
 	for (const t of targets) {
 		const abs = resolve(cwd, gitBashPath(t));
-		if (!dirs.some((d) => insideProject(d, abs))) return `deletes ${t}, which is outside the project`;
 		if (!madeThisSession(abs, session)) return `deletes ${t}, which Ferry did not create in this session`;
 	}
 	return "";
@@ -436,11 +435,59 @@ export function browserPrivacyOf(cmd) {
 	return "";
 }
 
+/**
+ * The blocked name this text refers to, or "". A blocked name matches a path-like token when it is a whole path segment
+ * ("config/.env", "C:\\x\\.ssh\\id_rsa", "secrets/key.pem") or a file name with an extension ("secrets.json",
+ * ".env.local"). Plain words do not match: not the "credentials" in {credentials:'include'}, not a sentence in quotes, not
+ * a heredoc's body. An unquoted word that is exactly a blocked name still does (cat secrets). That is for command text;
+ * the path a file tool is given (read, write, edit, office_read) is blocked when it contains the word anywhere.
+ */
+export function blockedHit(text, names, isCommand = true) {
+	const list = names.map((n) => String(n).toLowerCase()).filter(Boolean);
+	if (!list.length) return "";
+	const segHit = (tok) => {
+		for (const seg of tok.toLowerCase().split(/[\\/]+/)) {
+			const n = list.find((b) => seg === b || seg.startsWith(`${b}.`));
+			if (n) return n;
+		}
+		return "";
+	};
+	if (!isCommand) return list.find((b) => text.toLowerCase().includes(b)) ?? ""; // a tool's path: any path containing the word
+	const body = text.replace(/<<-?\s*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, " ");
+	const pathLike = (t) => /[\\/]/.test(t) || /^[.~]/.test(t) || /^[a-z]:/i.test(t) || /\.[a-z0-9]{1,8}$/i.test(t);
+	const tokens = []; // [text, quoted]
+	let cur = "";
+	let quote = "";
+	const flush = (q) => {
+		if (cur) tokens.push([cur, q]);
+		cur = "";
+	};
+	for (const ch of body) {
+		if (quote) {
+			if (ch === quote) {
+				flush(true);
+				quote = "";
+			} else if (/[\s,=(){}[\];|&<>]/.test(ch)) flush(true);
+			else cur += ch;
+		} else if (ch === '"' || ch === "'" || ch === "`") {
+			flush(false);
+			quote = ch;
+		} else if (/[\s,=(){}[\];|&<>]/.test(ch)) flush(false);
+		else cur += ch;
+	}
+	flush(!!quote);
+	for (const [raw, quoted] of tokens) {
+		const t = raw.replace(/:+$/, "") || raw;
+		const hit = (pathLike(raw) || !quoted) && (segHit(raw) || segHit(t));
+		if (hit) return hit;
+	}
+	return "";
+}
+
 export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [], session }) {
 	const shell = SHELL.has(tool);
 	const target = PATH_TOOLS.has(tool) ? input.path : shell ? input.command : undefined;
-	const low = typeof target === "string" ? target.toLowerCase() : "";
-	const hit = low && blockedPaths.map((p) => p.toLowerCase()).find((p) => low.includes(p));
+	const hit = typeof target === "string" ? blockedHit(target, blockedPaths, shell) : "";
 	if (hit) return { action: "deny", reason: "Access to this path is not allowed by local policy", blocked: hit };
 
 	const cmd = shell ? String(input.command ?? "") : "";
@@ -453,7 +500,7 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 
 	// a site tool is "read only" by its annotation, but which sites it contacts is still the user's choice
 	const writes = tool === "office_read" && input.out ? String(input.out) : ""; // batch mode writes .txt files into out
-	if (writes && blockedPaths.some((p) => writes.toLowerCase().includes(p.toLowerCase()))) return { action: "deny", reason: "Access to this path is not allowed by local policy" };
+	if (writes && blockedHit(writes, blockedPaths, false)) return { action: "deny", reason: "Access to this path is not allowed by local policy" };
 	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && !writes && (READ_ONLY.has(tool) || readOnlyTool(tool));
 	if (mode === "plan" && !readOnly && !NET.has(tool)) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
@@ -462,10 +509,17 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	// asked every time, even in full access and over allow rules; a "danger" prompt has no "always allow"
 	const always = shell ? browserPrivacyOf(cmd) || uploadOf(cmd) : "";
 	if (always) return { action: "ask", danger: always, segments, always: true };
-	if (mode === "bypass") {
-		const del = shell ? unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session) : "";
-		return del ? { action: "ask", danger: del, segments, always: true } : { action: "allow" };
+	// Deletes, in every mode: what Ferry made in this session goes ahead without asking, wherever it is (project, temp
+	// folder, any drive); anything else, or anything that cannot be listed, asks every time (no "always allow")
+	if (shell) {
+		const t = deleteTargets(cmd);
+		if (t === null || t.length) {
+			const del = unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session);
+			if (del) return { action: "ask", danger: del, segments, always: true };
+			if (segments.every((s) => { const x = deleteTargets(s); return (x && x.length) || isReadOnlySegment(s); })) return { action: "allow" };
+		}
 	}
+	if (mode === "bypass") return { action: "allow" };
 
 	const danger = shell ? dangerOf(cmd) : "";
 	if (danger) return { action: "ask", danger, segments };

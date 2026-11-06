@@ -55,7 +55,8 @@ test("modes decide what asks", () => {
 	assert.equal(d("edit", { path: "src/a.js" }, "acceptEdits"), "allow");
 	assert.equal(d("bash", { command: "npm test" }, "acceptEdits"), "ask");
 	assert.equal(d("edit", { path: join(tmpdir(), "elsewhere.txt") }, "acceptEdits"), "ask"); // outside the project
-	assert.equal(d("bash", { command: "rm -rf build" }, "acceptEdits"), "ask");
+	assert.equal(d("bash", { command: "rm -rf build" }, "acceptEdits"), "allow"); // nothing there yet: only this command could have made it
+	assert.equal(d("bash", { command: "rm -rf *.o" }, "acceptEdits"), "ask");
 	assert.equal(d("edit", { path: "a.js" }, "plan"), "deny");
 	assert.equal(d("bash", { command: "npm test" }, "plan"), "deny");
 	assert.equal(d("bash", { command: "git log" }, "plan"), "allow");
@@ -201,7 +202,7 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	assert.ok(v("rm old.txt").always);
 	assert.equal(v("rm -rf not-there").action, "allow"); // nothing there yet: only this command could make it
 	assert.equal(v("rm -rf *.txt").action, "ask");
-	assert.equal(v(`rm -rf ${join(tmpdir(), "elsewhere")}`).action, "ask"); // outside the project
+	assert.equal(v(`rm -rf ${join(tmpdir(), "elsewhere")}`).action, "allow"); // outside the project, but nothing there yet
 	assert.equal(v("git clean -fd").action, "ask");
 	P.noteCreated(session, join(proj, "new", "deep", "a.txt")); // the write tool is about to make new/deep/a.txt
 	mkdirSync(join(proj, "new", "deep"), { recursive: true });
