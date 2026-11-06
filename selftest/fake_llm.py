@@ -48,6 +48,16 @@ def decide(msgs):
         return ("text", f"BTW ANSWER: you asked {asked.group(1) if asked else '?'} saw_request={'BTWTEST' in last}")
     if "The user stepped away" in last:  # the recap of a long request
         return ("text", "RECAP: Building the deck for the review; next, check the figures.")
+    if "Propose at most three memories" in last:  # the Ferry server asks what to remember from the previous conversation
+        found = [{"action": "add", "scope": "project", "name": "uses-pnpm", "description": "this project uses pnpm, not npm",
+                  "content": "Use pnpm, never npm.\nWhy: the user said so.\nHow to apply: every install and build command.",
+                  "reason": "you said: always use pnpm here"}] if "MEMSEED" in last else []
+        return ("text", "```json\n" + json.dumps({"candidates": found}) + "\n```")
+    if "make them smaller and clearer" in last:  # /memory tidy; the pinned memory is not sent, deleting it must not happen
+        ops = [{"op": "merge", "scope": "project", "sources": ["tidy-a", "tidy-b"], "name": "tidy-ab", "description": "the report format",
+                "content": "Reports: Word, tracked changes on.", "reason": "both say how reports are made"},
+               {"op": "delete", "scope": "project", "name": "tidy-pinned", "reason": "looks old"}] if 'name="tidy-a"' in last else []
+        return ("text", json.dumps({"operations": ops}))
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if "Read files in data/." in json.dumps(msgs) and "big-notes.txt" in json.dumps(msgs):

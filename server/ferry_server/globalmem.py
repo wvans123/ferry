@@ -40,7 +40,7 @@ def index(data_dir: Path, user: str) -> str:
     lines = _index_lines(user_dir(data_dir, user))
     text = "\n".join(lines[:INDEX_MAX_LINES])
     if len(lines) > INDEX_MAX_LINES:
-        text += f"\n(index cut at {INDEX_MAX_LINES} lines)"
+        text += f"\n(index cut at {INDEX_MAX_LINES} lines: the oldest memories are not shown)"
     return text
 
 
@@ -67,13 +67,8 @@ def save(data_dir: Path, user: str, name: str, description: str, content: str) -
         if not (d / f"{n}.md").exists() and len(existing) >= MAX_FILES:
             raise ValueError(f"global memory is full ({MAX_FILES} memories): delete some first")
         (d / f"{n}.md").write_text(content + "\n", encoding="utf-8")
-        line = f"- [{n}]({n}.md): {description[:300]}"
-        lines = _index_lines(d)
-        at = next((i for i, ln in enumerate(lines) if ln.startswith(f"- [{n}](")), -1)
-        if at >= 0:
-            lines[at] = line
-        else:
-            lines.append(line)
+        # newest first: only the first INDEX_MAX_LINES lines are loaded
+        lines = [f"- [{n}]({n}.md): {description[:300]}"] + [ln for ln in _index_lines(d) if not ln.startswith(f"- [{n}](")]
         (d / INDEX).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return n
 

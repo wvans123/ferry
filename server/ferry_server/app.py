@@ -32,6 +32,7 @@ from . import PROTOCOL, __version__
 from .config import Config, provider_labels, refresh_models
 from .devices import Devices
 from . import globalmem
+from . import memreview
 from . import report as reports
 from . import search as web_search
 from . import side
@@ -958,4 +959,5 @@ def create_app(cfg: Config) -> FastAPI:
     reports.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
+    memreview.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     return app

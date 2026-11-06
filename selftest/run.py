@@ -310,6 +310,114 @@ def check_memory_overwrite(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_memory_review(root: Path, work: Path) -> None:
+    """A full memory index still shows a new memory; memories proposed from the previous conversation; /memory tidy."""
+    s = Stack(root, work, "agent")
+    try:
+        c1, _ = s.ferry("-p", "MEMTEST-SAVE: remember that tests use the real database")
+        folder = next((p for p in (s.home / "memory" / "projects").glob("*") if p.is_dir()), None)
+        index = folder / "MEMORY.md" if folder else root / "missing"
+        if folder:  # an index that filled up the old way (new lines at the end) before this memory was saved
+            index.write_text("".join(f"- [old-{i}](old-{i}.md): an old note {i}\n" for i in range(210)), encoding="utf-8")
+            (folder / "test-db.md").unlink()
+        c2, o2 = s.ferry("-p", "MEMTEST-SAVE: remember that tests use the real database")
+        c3, o3 = s.ferry("-p", "MEMTEST-RECALL: what do you remember?")
+        sys3 = system_text(jsonl(s.upstream)[-1])
+        saved = (folder / "test-db.md").read_text(encoding="utf-8") if folder and (folder / "test-db.md").exists() else ""
+        ok = (c1 == 0 and c2 == 0 and "Saved project memory" in o2 and c3 == 0 and "INDEX HAS test-db" in o3
+              and "This index is nearly full: 211 lines" in sys3 and index.read_text(encoding="utf-8").startswith("- [test-db]")
+              and re.match(r"---\nupdated: \d{4}-\d{2}-\d{2}\n---\nIntegration tests", saved) is not None)
+        check("F105 记忆目录满了也看得到新记忆", ok, "目录已有 210 行时再存一条：新的一行放在最前面，下一次对话的系统提示里看得到它；"
+              "目录超过八成时提示里让模型合并记忆；记忆文件开头记着更新日期" if ok
+              else f"c={c1},{c2},{c3} o3={o3[-200:]!r} full={'nearly full' in sys3} saved={saved[:80]!r}")
+        if WINDOWS:
+            print("  SKIP  F106 记忆候选、F107 /memory tidy（Windows 上没有伪终端，Linux 上检查）")
+            return
+        import pty
+        import select
+
+        s.ferry("-p", "MEMSEED: always use pnpm here, never npm")
+        s.ferry("-c", "-p", "MEMSEED: now run the build")
+        s.ferry("-c", "-p", "MEMSEED: thanks")
+        lines = index.read_text(encoding="utf-8")
+        (folder / "tidy-a.md").write_text("Reports are Word files.\n", encoding="utf-8")
+        (folder / "tidy-b.md").write_text("Reports keep tracked changes on.\n", encoding="utf-8")
+        (folder / "tidy-pinned.md").write_text("---\npinned: true\n---\nThe owner signs every report.\n", encoding="utf-8")
+        index.write_text("- [tidy-a](tidy-a.md): report files\n- [tidy-b](tidy-b.md): tracked changes\n"
+                         f"- [tidy-pinned](tidy-pinned.md): who signs\n{lines}", encoding="utf-8")
+        seen = b""
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float, since: int = 0) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[since:]):
+                    return True
+            return False
+
+        started = wait_for("shift+tab", 60)
+        asked = wait_for('New project memory "uses-pnpm"', 40) and "you said: always use pnpm here" in plain(seen)
+        time.sleep(0.3)
+        mark = len(seen)
+        os.write(fd, b"\r")  # Save
+        told = wait_for("Saved 1 memory from your last conversation", 15, mark)
+        pnpm = (folder / "uses-pnpm.md").read_text(encoding="utf-8") if (folder / "uses-pnpm.md").exists() else ""
+        reviewed = s.home / "memory" / "reviewed.json"
+        looked = list(json.loads(reviewed.read_text(encoding="utf-8")).values()) if reviewed.exists() else []
+        ok106 = started and asked and told and "updated: " in pnpm and "How to apply:" in pnpm and looked == [3]
+        check("F106 从上次对话提议记忆", ok106, "上次对话里说过三句以上的话：这次一打开，服务端的摘要模型读了上次对话（只发精简的文字稿），"
+              "提出一条记忆，终端里问要不要记；选 Save 才写进项目记忆；这段对话记为已看过，下次不再问" if ok106
+              else f"started={started} asked={asked} told={told} pnpm={pnpm[:80]!r} looked={looked} {plain(seen)[-500:]!r}")
+
+        mark = len(seen)
+        os.write(fd, b"/memory tidy")
+        time.sleep(0.4)
+        os.write(fd, b"\r")
+        shown = wait_for('Merge project memories "tidy-a" + "tidy-b" into "tidy-ab"', 40, mark)
+        time.sleep(0.3)
+        mark = len(seen)
+        os.write(fd, b"\r")  # Apply
+        applied = wait_for("Tidy: applied 1 of 1 change", 15, mark)
+        merged = (folder / "tidy-ab.md").read_text(encoding="utf-8") if (folder / "tidy-ab.md").exists() else ""
+        ok107 = (shown and applied and "tracked changes on" in merged and not (folder / "tidy-a.md").exists()
+                 and not (folder / "tidy-b.md").exists() and (folder / "tidy-pinned.md").exists()
+                 and "[tidy-ab](tidy-ab.md)" in index.read_text(encoding="utf-8") and "[tidy-a](" not in index.read_text(encoding="utf-8"))
+        check("F107 /memory tidy", ok107, "/memory tidy 把记忆发给服务端，模型提出合并两条、删一条固定的；固定的那条不会出现，"
+              "合并那条问过、选 Apply 后两条变成一条，目录跟着改" if ok107
+              else f"shown={shown} applied={applied} merged={merged[:80]!r} {plain(seen)[-500:]!r}")
+        # keep reading while ferry quits: on macOS a full terminal buffer blocks its writes, and then it never exits
+        for _ in range(2):
+            os.write(fd, b"\x03")
+            wait_for("\0", 0.3)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            for _ in range(50):
+                if os.waitpid(pid, os.WNOHANG)[0]:
+                    break
+                wait_for("\0", 0.1)
+            else:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+    finally:
+        s.close()
+
+
 def check_claude_goal_jobs(root: Path, work: Path) -> None:
     """Claude through the Anthropic Messages API (sync, prompt-cache markers, pictures, cost), /goal, background jobs."""
     (work / "pic.png").write_bytes(PNG_1PX)
@@ -1917,7 +2025,8 @@ STEPS = [
     (part_basic, ""), (part_long, ""), (part_nostore, ""), (part_drop, ""),
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
-    (check_agent_features, "agent"), (check_goal_todo, "goaltodo"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
+    (check_agent_features, "agent"), (check_goal_todo, "goaltodo"), (check_memory_overwrite, "memow"),
+    (check_memory_review, "memrev"), (check_web_browser, "web"), (check_gateway, "gateway"),
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_plan_switch, "plan"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
