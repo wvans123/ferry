@@ -55,15 +55,19 @@ the change needs.
    package-lock.json): grep for the spot you change and read that range.
 3. Test locally only what changed: the module's unit tests (`pytest server/tests/test_<name>.py`,
    `node --test client/test/<name>.test.mjs`) and its end-to-end checks, `python selftest/run.py --only F66,F67`
-   (`--list` shows which step holds which F; one step takes seconds). The full run (all unit tests and the whole
-   self-test on Linux and Windows, about 7 minutes) is CI's job on the pull request; do not repeat it locally. Do not
-   sit waiting for it either: open the PR, go on with other work or end the turn, and read the result when it is done
-   (fix it if it is red).
-4. A user-visible behaviour gets an end-to-end check in selftest/run.py with the next free F number, listed in GOAL.md.
+   (`--list` shows which step holds which F; one step takes seconds). The full run is CI's job; do not repeat it
+   locally. On a feature PR CI runs all unit tests on Linux and Windows and the self-test on Linux (about 4 minutes);
+   the Windows self-test runs after the merge on main and on the release PR, so a Windows-only break shows up there
+   before anything is published. Do not sit waiting for CI either: open the PR, go on with other work or end the
+   turn, and read the result when it is done (fix it if it is red). A unit test that waits on real timers (retry
+   back-off, cool-downs) shortens them, like the others in test_pool.py.
+4. A user-visible behaviour that needs the whole stack (client, server, fake model) gets an end-to-end check in
+   selftest/run.py with the next free F number, listed in GOAL.md. Checks of text alone (what the system prompt
+   says, a tool description) are unit tests, not F checks.
 5. Releases are batched: features collect on main, and when the owner wants the work PC updated, one small release
    PR runs `python scripts/bump.py x.y.z` (package.json, package-lock.json, server/pyproject.toml,
-   server/ferry_server/__init__.py) and nothing else. Merging it publishes: CI skips tests that already passed on the
-   PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes release
+   server/ferry_server/__init__.py) and nothing else. Its CI runs everything on both systems, the Windows self-test
+   included. Merging it publishes: CI skips tests that already passed on the PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes release
    v<version>; `ferry update` picks it up. Only a version with no release yet is published, so merging feature PRs
    publishes nothing.
 6. Feature PR title: what changed for the user; its description is a table 问题 / 改了什么 / 自测. Release PR title
