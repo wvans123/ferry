@@ -143,7 +143,7 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 - 把本机文件或数据发到网络上的命令，每次都问，"全部放行"也问，已有的 `bash(curl*)` 这类规则也放不过去，确认框里没有"以后都允许"。比如 `curl -d/-F/-T/--json`、`wget --post-file`、PowerShell 的 `Invoke-WebRequest -InFile/-Body/-Method Post`、往远程主机的 `scp`/`rsync`/`sftp`/`ftp`。提示是"Careful: this sends data from this computer to 主机名"。普通下载（`curl -L -o 文件 网址`）和发给本机 `localhost` 的请求不算。
 - 删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`）：所有模式下规则都一样。要删的东西都是这次 ferry 启动后 agent 自己新建的，就直接删，不问，不管在项目文件夹、%TEMP% 还是 D:\tmp。只要有一个不是这次新建的（原来就有的文件、带通配符或变量的路径、`cd` 之后的删除、`git clean`，以及列不出要删什么的写法，比如 `find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），就每次都问，也没有"以后都允许"。删文件夹时，里面每个文件都得是这次新建的。命令里除了删除还有别的操作时，其余部分按当前模式判断。计划模式仍然只读。 子 agent 要你批准时，主窗口会留一行"哪个子 agent 要做什么、为什么"，你回答后再留一行结果（只显示，不发给模型）。
 - 改项目文件夹以外的文件，总要先确认。
-- `.env`、`.ssh` 这类路径永远不碰（`blockedPaths` 可改）。只看像路径的写法：`.env`、`config/.env`、`~/.ssh/id_rsa`、`secrets/key.pem`、`secrets.json` 这样名字是完整的一段或文件名的，读写改和命令里都拦；普通文字和代码不拦，比如引号里一段话里的 secrets、`fetch(url, {credentials:'include'})`、heredoc 里的正文。
+- `.env`、`.ssh` 这类路径永远不碰（`blockedPaths` 可改）。read、write、edit 这类文件工具：路径里任何地方出现这个词就拦（比如 `Project Titan/notes.txt` 含 `titan`）。bash 命令：只看像路径的写法，`.env`、`config/.env`、`~/.ssh/id_rsa`、`secrets/key.pem`、`secrets.json` 这样名字是完整的一段或文件名的才拦；普通文字和代码不拦，比如引号里一段话里的 secrets、`fetch(url, {credentials:'include'})`、heredoc 里的正文。
 - 启动时用哪种模式：`ferry config set permissionMode acceptEdits`。
 
 ## agent 能做的事
@@ -268,7 +268,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `notify` | `true` | 长请求结束时响铃加通知 |
 | `phoneNotify` | `true` | 让服务端推手机通知（服务端要先在管理页设好 Bark） |
 | `blockedSites` | 空 | 永远不打开的网站（含子域名），比如邮箱、通讯、网盘 |
-| `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径（按路径的一段或文件名匹配，不是文字里出现就拦） |
+| `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径（文件工具按路径里是否含这个词；命令里按路径的一段或文件名匹配，文字里出现不拦） |
 | `proxy` | 空 | 连服务端用的代理，空表示用 `HTTPS_PROXY` 环境变量 |
 | `compactAt` | `90%` | 上下文用到多少时自动压缩：`50%`～`90%`，或 `off`（只在快超限时压缩）。越低每次请求越便宜，也越早丢细节 |
 | `compactKeep` | `20k` | 压缩时最近多少内容原样保留 |

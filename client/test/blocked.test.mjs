@@ -49,9 +49,12 @@ test("file tools check their path the same way", () => {
 			assert.equal(run(tool, { path: p }).action, "deny", `${tool} ${p}`);
 		}
 	}
-	for (const p of ["src/main.js", "docs/secrets-management.md", "notes/credentials-guide.txt", "envelope.txt"]) {
-		assert.notEqual(run("read", { path: p }).action, "deny", p);
+	// a file tool's path is blocked when it contains the word anywhere, not only as a whole segment
+	for (const p of ["docs/secrets-management.md", "notes/credentials-guide.txt", "Project Titan/notes.txt"]) {
+		assert.equal(P.decide({ tool: "read", input: { path: p }, mode: "bypass", cwd, rules: none, blockedPaths: [...NAMES, "titan"] }).action, "deny", p);
 	}
+	for (const p of ["src/main.js", "envelope.txt"]) assert.notEqual(run("read", { path: p }).action, "deny", p);
+	assert.equal(P.decide({ tool: "bash", input: { command: 'echo "对比 A/B 两种方案的 secrets 管理"' }, mode: "bypass", cwd, rules: none, blockedPaths: NAMES }).action, "allow");
 	// office_read with an out folder
 	assert.equal(run("office_read", { path: "a.docx", out: "secrets" }).action, "deny");
 });

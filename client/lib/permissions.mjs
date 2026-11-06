@@ -439,8 +439,8 @@ export function browserPrivacyOf(cmd) {
  * The blocked name this text refers to, or "". A blocked name matches a path-like token when it is a whole path segment
  * ("config/.env", "C:\\x\\.ssh\\id_rsa", "secrets/key.pem") or a file name with an extension ("secrets.json",
  * ".env.local"). Plain words do not match: not the "credentials" in {credentials:'include'}, not a sentence in quotes, not
- * a heredoc's body. An unquoted word that is exactly a blocked name still does (cat secrets). A path tool's path is
- * one token; in a command, quoted text counts only where a token in it looks like a path.
+ * a heredoc's body. An unquoted word that is exactly a blocked name still does (cat secrets). That is for command text;
+ * the path a file tool is given (read, write, edit, office_read) is blocked when it contains the word anywhere.
  */
 export function blockedHit(text, names, isCommand = true) {
 	const list = names.map((n) => String(n).toLowerCase()).filter(Boolean);
@@ -452,7 +452,7 @@ export function blockedHit(text, names, isCommand = true) {
 		}
 		return "";
 	};
-	if (!isCommand) return segHit(text);
+	if (!isCommand) return list.find((b) => text.toLowerCase().includes(b)) ?? ""; // a tool's path: any path containing the word
 	const body = text.replace(/<<-?\s*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, " ");
 	const pathLike = (t) => /[\\/]/.test(t) || /^[.~]/.test(t) || /^[a-z]:/i.test(t) || /\.[a-z0-9]{1,8}$/i.test(t);
 	const tokens = []; // [text, quoted]
