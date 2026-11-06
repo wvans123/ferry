@@ -82,6 +82,7 @@ class Config:
     max_upstream_bytes: int = 0  # 0 = no cap; otherwise old tool outputs are dropped to stay under it
     max_concurrent: int = 6      # model calls one user may have running at once; more wait their turn
     bark_url: str = ""           # Bark push address (https://api.day.app/<key>): notifications to an iPhone
+    stall_minutes: int = 15      # a run on a work computer silent this long: tell the phone (watchdog.py); 0 = off
     github_repo: str = "wvans123/ferry"  # where /report opens issues (the token is in <home>/github-token)
     shared_memory: bool = False  # global memory on the server, shared by all of a user's computers
     search_engine: str = ""      # "" every search source at once, "bing" none (the work PC reads Bing), "model:<id>" adds its search
@@ -126,6 +127,7 @@ def load(path: str | os.PathLike) -> Config:
         session_store=s.get("session_store", "disk"),
         max_concurrent=int(s.get("max_concurrent", 6)),
         bark_url=os.environ.get("FERRY_BARK_URL") or s.get("bark_url", ""),
+        stall_minutes=int(s.get("stall_minutes", 15)),
         github_repo=os.environ.get("FERRY_GITHUB_REPO") or s.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(s.get("shared_memory", False)),
         search_engine=s.get("search_engine", ""),
@@ -505,6 +507,7 @@ def load_default() -> Config:
         max_upstream_bytes=int(env("FERRY_MAX_UPSTREAM_BYTES") or saved.get("max_upstream_bytes", 0)),
         max_concurrent=int(saved.get("max_concurrent", 6)),
         bark_url=env("FERRY_BARK_URL") or saved.get("bark_url", ""),
+        stall_minutes=int(saved.get("stall_minutes", 15)),
         github_repo=env("FERRY_GITHUB_REPO") or saved.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(saved.get("shared_memory", False)),
         search_engine=saved.get("search_engine", ""),
@@ -535,6 +538,7 @@ def save_settings(cfg: Config) -> None:
         f"record_details = {'true' if cfg.record_details else 'false'}\n"
         f"max_concurrent = {int(cfg.max_concurrent)}\n"
         f"bark_url = {json.dumps(cfg.bark_url)}\n"
+        f"stall_minutes = {int(cfg.stall_minutes)}\n"
         f"github_repo = {json.dumps(cfg.github_repo)}\n"
         f"shared_memory = {'true' if cfg.shared_memory else 'false'}\n"
         f"search_engine = {json.dumps(cfg.search_engine)}\n", encoding="utf-8")

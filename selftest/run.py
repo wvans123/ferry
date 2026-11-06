@@ -2210,6 +2210,31 @@ def check_side(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_watchdog(root: Path, work: Path) -> None:
+    """A run that goes quiet half-way: the server tells the phone itself. Beats keep a long command quiet."""
+    s = Stack(root, work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark",
+                                               "FERRY_TEST_STALL_SECONDS": "3", "FERRY_TEST_WATCHDOG_TICK": "0.5"})
+    try:
+        def barks(title: str) -> list[dict]:
+            return [u for u in jsonl(s.upstream) if u.get("group") == "Ferry" and u.get("title") == title]
+
+        # no beats while the 6-second command runs: like a computer behind the gateway, asleep or off the network
+        c1, o1 = s.ferry("-p", "WATCHDOGTEST: run the long build", env_extra={"FERRY_TEST_HEARTBEAT_MS": "600000"})
+        time.sleep(1)
+        stalled, back = barks("Ferry 停了"), barks("Ferry 又连上了")
+        c2, o2 = s.ferry("-p", "WATCHDOGTEST: run it again", env_extra={"FERRY_TEST_HEARTBEAT_MS": "1000"})
+        time.sleep(4)  # past the threshold after the run: an end the server missed would show up now
+        quiet = len(barks("Ferry 停了")) == len(stalled) and len(barks("Ferry 又连上了")) == len(back)
+        ok = (c1 == 0 and "WATCHDOGFINISHED" in o1 and len(stalled) == 1 and len(back) == 1
+              and "网关要确认" in stalled[0].get("body", "") and work.name in stalled[0].get("body", "")
+              and c2 == 0 and "WATCHDOGFINISHED" in o2 and quiet)
+        check("F112 跑到一半没了消息，服务端推手机", ok, "agent 跑一条比阈值长的命令、客户端不发心跳：服务端推了一条“Ferry 停了”"
+              "（写着项目和可能的原因），回来后推一条“Ferry 又连上了”；每秒发心跳的同一条命令一条都没推" if ok
+              else f"c1={c1} c2={c2} stalled={stalled} back={back} quiet={quiet} | {o1[-200:]} | {o2[-200:]}")
+    finally:
+        s.close()
+
+
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
 # its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
 STEPS = [
@@ -2224,6 +2249,7 @@ STEPS = [
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"), (check_word_tracked, "wordtracked"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
+    (check_watchdog, "watchdog"),
 ]
 
 

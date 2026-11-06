@@ -443,6 +443,10 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "bash", {"command": "sleep 2; echo RECAPWORK"})
         return ("text", "RECAPFINISHED")
+    if "WATCHDOGTEST" in first:  # a command longer than the server's (shortened) stall threshold
+        if not tools:
+            return ("tool", "bash", {"command": "sleep 6; echo WATCHDOGWORK"})
+        return ("text", "WATCHDOGFINISHED")
     if "GATESIZE" in first:  # a long tool result and then a picture, through a gateway that stops big request bodies
         if not tools:
             return ("tool", "read", {"path": "big-notes.txt"})

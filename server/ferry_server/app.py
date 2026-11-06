@@ -36,6 +36,7 @@ from . import memreview
 from . import report as reports
 from . import search as web_search
 from . import side
+from . import watchdog
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
@@ -960,4 +961,5 @@ def create_app(cfg: Config) -> FastAPI:
     web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
     memreview.mount(app, cfg, client, lambda **row: write(audit_log, **row))
+    watchdog.mount(app, cfg, lambda **row: write(audit_log, **row))
     return app

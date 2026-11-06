@@ -98,6 +98,14 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 
 多用户的服务器改用完整配置文件 `ferry-server.toml`，参考 [server/ferry-server.example.toml](../server/ferry-server.example.toml)。模型和服务商写在数据目录的 `models.toml` 里，改了不用重启；只认文字的模型加一行 `vision = false`。
 
+## 手机通知
+
+管理页 → 设置 → 手机通知，贴上 Bark 地址。工作电脑要推的通知（做完了、目标卡住、确认框没人点）都经服务端发出去，见 [USAGE.md](USAGE.md#其他)。
+
+工作电脑连不上服务端时，它自己的通知也发不出来。所以服务端还会自己盯着：agent 干活时，ferry 每 5 分钟发一声“还在跑”，做完再发一声。一个还没做完的对话 15 分钟没有消息，服务端就推一条“Ferry 停了”，写着哪台电脑（用主令牌的写用户名）、哪个项目、几点以后没了消息，和常见原因：公司网关要确认、电脑睡眠或断网、ferry 退出了。同一台电脑同时停下的几个对话合成一条。之后又有消息，再推一条“Ferry 又连上了”，写着停了多久。每次停下这两条各推一次。
+
+多久算停，在 `server.toml` 里写 `stall_minutes = 15`（完整配置文件写在 `[server]` 下面），设成 `0` 就不盯。没设 Bark 地址时也不盯。记在内存里，服务端重启后忘掉，下一声“还在跑”到了再接着盯。调用记录里每条通知记一行（`watchdog`）。工作电脑上 `phoneNotify = false` 时不发“还在跑”，也就不会有这两条。
+
 ## 网页搜索
 
 搜索引擎给程序看的结果页质量差（实测搜"agent memory open source github"，Bing 前几条是字典里 agent 的释义），所以 agent 的 `web_search` 由服务端去搜。
