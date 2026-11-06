@@ -301,7 +301,9 @@ def decide_agent(msgs):
             return ("tool", "bash", {"command": "agent-browser open http://127.0.0.1:9100/js.html && agent-browser snapshot -i"})
         if len(tools) == 1:
             return ("tool", "bash", {"command": "agent-browser fill @e1 Ferry && agent-browser click @e2 && agent-browser get text body"})
-        return ("text", "BROWSER: " + text_of(tools[-1])[:300].replace("\n", " "))
+        # both outputs: a failed open or snapshot in the first call only shows up as "Unknown ref: e1" in the second
+        return ("text", "BROWSER: " + text_of(tools[-1])[:300].replace("\n", " ") + " | first call: "
+                + text_of(tools[0])[:300].replace("\n", " "))
     if "PASTTEST" in first:  # the user asks about another conversation
         if not tools:
             return ("tool", "past_conversations", {"action": "search", "query": "DIYCMD"})

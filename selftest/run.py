@@ -9,6 +9,7 @@ import argparse
 import inspect
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -1521,6 +1522,25 @@ def find_browser() -> str:
     return next((c for c in cands if c and Path(c).exists()), "")
 
 
+def warm_browser(browser: str, args: list[str], profile: Path) -> float:
+    """Start and close the browser once, outside Ferry, in an agent-browser session of its own; returns the seconds.
+
+    The first start on a fresh CI machine reads the browser from a cold disk and can take longer than the 30 s one
+    agent-browser command waits for its daemon; the command then fails and the check would measure the disk."""
+    win = sys.platform == "win32"
+    arch = "x64" if win else {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine())
+    ab = ROOT / "node_modules" / "agent-browser" / "bin" / f"agent-browser-{sys.platform}-{arch}{'.exe' if win else ''}"
+    env = {**os.environ, "AGENT_BROWSER_EXECUTABLE_PATH": browser, "AGENT_BROWSER_PROFILE": str(profile),
+           "AGENT_BROWSER_ARGS": "\n".join(args), "AGENT_BROWSER_SESSION": "ferry-selftest-warmup"}
+    t = time.time()
+    for cmd in (["open", "about:blank"], ["close"]):
+        try:
+            subprocess.run([str(ab), *cmd], env=env, capture_output=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return time.time() - t
+
+
 def check_web_browser(root: Path, work: Path) -> None:
     pages = {"FERRY_TEST_SEARCH_BASE": "http://127.0.0.1:9100"}
     s = Stack(root, work, "agent", server_env={**pages, "FERRY_SEARCH": "bing"})
@@ -1597,6 +1617,7 @@ def check_web_browser(root: Path, work: Path) -> None:
         extra = ["--no-sandbox"] if is_root or os.environ.get("CI") else []  # CI and root: no Chrome sandbox
         (s.home / "config.json").write_text(json.dumps({"browser": True, "browserHeadless": True,
                                                         "browserPath": browser, "browserArgs": extra}), encoding="utf-8")
+        warm = warm_browser(browser, extra, s.home / "warmup-profile")
         c2, o2 = s.ferry("-p", "BROWSERTEST: open the page", timeout=300, env_extra={"FERRY_PERMISSION_MODE": "bypass"})
         skill = "agent-browser" in system_text(jsonl(s.upstream)[-1])
         time.sleep(1)
@@ -1605,7 +1626,7 @@ def check_web_browser(root: Path, work: Path) -> None:
         check("F36 浏览器", c2 == 0 and "pelican-42" in o2 and "Hello Ferry" in o2 and skill and not left,
               f"agent 用 agent-browser 驱动本机浏览器（{Path(browser).name}）：读到脚本生成的内容，填表、点按钮；"
               "系统提示里有浏览器技能；ferry 退出后浏览器关掉" if "Hello Ferry" in o2 else
-              f"skill={skill} left={left} " + o2[-400:])
+              f"skill={skill} left={left} warm-up={warm:.0f}s " + o2[-700:])
     finally:
         s.close()
 
