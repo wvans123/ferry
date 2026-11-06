@@ -98,6 +98,36 @@ def decide_goal(msgs):
     return ("tool", "goal_update", {"status": "achieved", "summary": "three notes written", "evidence": "goal-note1..3.txt exist"})
 
 
+def decide_criteria(msgs, system):
+    """A /goal run without a terminal: assumed criteria first, then the work; a report missing one criterion comes back."""
+    calls = [tc["function"] for m in msgs if m.get("role") == "assistant" for tc in (m.get("tool_calls") or [])]
+    names = [c["name"] for c in calls]
+    results = [text_of(m) for m in msgs if m.get("role") == "tool"]
+    last = msgs[-1]
+    if "goal_update" not in names:
+        if "Nobody can answer questions in this run" not in system:
+            return ("text", "CRIT REPORT: no instruction to assume criteria")
+        return ("tool", "goal_update", {"status": "criteria", "criteria": ["crit-a.txt says A", "crit-b.txt says B"]})
+    if "write" not in names:
+        return ("tool", "write", {"path": "crit-a.txt", "content": "A\n"})
+    if names.count("write") == 1:
+        if last.get("role") == "tool":
+            return ("text", "wrote crit-a.txt")  # end the turn: Ferry sends the agent on, with the criteria
+        return ("tool", "write", {"path": "crit-b.txt", "content": "B\n"})
+    reports = [r for r in results if "Not accepted yet" in r or "Goal marked" in r]
+    if not reports:
+        return ("tool", "goal_update", {"status": "achieved", "summary": "both files written",
+                                        "checks": [{"criterion": 1, "evidence": "crit-a.txt contains A"}]})
+    if "Goal marked" not in reports[-1]:
+        return ("tool", "goal_update", {"status": "achieved", "summary": "both files written",
+                                        "checks": [{"criterion": 1, "evidence": "crit-a.txt contains A"},
+                                                   {"criterion": 2, "evidence": "crit-b.txt contains B"}]})
+    cont = [text_of(m) for m in msgs if m.get("role") == "user" and "Continue working toward the goal" in text_of(m)]
+    return ("text", f"CRIT REPORT recorded={'Recorded 2 completion criteria' in results[0]} "
+                    f"continued={bool(cont) and '2. crit-b.txt says B' in cont[0] and 'assumed' in cont[0]} "
+                    f"rejected={'no evidence for criteria 2' in reports[0]} accepted={'Goal marked achieved' in reports[-1]}")
+
+
 def decide_team(wake, tools):
     """One heartbeat of a Paperclip team member, by the task it was woken for."""
     issue = (re.search(r'"issueId":"([0-9a-f-]{36})"', wake) or re.search(r"issueId[\":\s]+([0-9a-f-]{36})", wake))
@@ -134,6 +164,7 @@ def decide_agent(msgs):
     # Ferry's own reminders (the to-do check) are not the user's request
     last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"
                      and not text_of(m).startswith("Before you stop: the to-do list")
+                     and not text_of(m).startswith("The to-do list has not been updated")
                      and not text_of(m).startswith("Attached image(s) from tool result")], default=0)  # OpenAI style: a tool's picture rides in a user message
     tools = [m for m in msgs[last_user:] if m.get("role") == "tool"]  # this request's tool results
     first = text_of(msgs[last_user]) if msgs else ""  # the latest user message picks the scenario
@@ -163,6 +194,8 @@ def decide_agent(msgs):
         return ("tool", "bash", {"command": "echo wrong > steer-wrong.txt"})
     if any("GOALTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
         return decide_goal(msgs)
+    if any("CRITTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
+        return decide_criteria(msgs, system)
     if "<ferry_subagent>" in system:  # a subagent's own conversation
         if "SUBBATCH" in first:  # one item of a task_batch
             return ("text", "ITEM " + first.split()[2] + " ok")
@@ -426,6 +459,16 @@ def decide_agent(msgs):
             return ("tool", "todo", {"todos": [{"content": "step one", "status": "completed"},
                                                {"content": "step two", "status": "in_progress"}]})
         return ("text", "TODO: " + text_of(tools[-1]).replace("\n", " | "))
+    if "TODOSTALE" in first:  # keeps working without touching the list: Ferry reminds it after 12 tool calls
+        notes = [text_of(m) for m in msgs if m.get("role") == "user" and text_of(m).startswith("The to-do list has not been updated")]
+        if notes:
+            return ("text", f"STALE reminded after={len(tools) - 1} item={'write the long report' in notes[0]} count={len(notes)}")
+        if not tools:
+            return ("tool", "todo", {"todos": [{"content": "write the long report", "status": "in_progress"},
+                                               {"content": "review it", "status": "pending"}]})
+        if len(tools) > 20:
+            return ("text", "STALE no reminder")
+        return ("tool", "read", {"path": "data/f00.txt", "limit": 1})
     return ("text", "OK")
 
 
