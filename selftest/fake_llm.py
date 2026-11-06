@@ -249,6 +249,12 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "write", {"path": "made-by-agent.txt", "content": "hello\n"})
         return ("text", "EDIT: " + text_of(tools[-1])[:400].replace("\n", " | "))
+    if first.startswith("Background job") and "napper" in first:  # Ferry woke the agent: the WAKETEST command ended
+        return ("text", f"WOKEN: ended={'exited with code 0' in first} out={'napped' in first}")
+    if "WAKETEST" in first:  # a background command that ends after the agent has finished its turn
+        if not tools:
+            return ("tool", "job_start", {"command": "sleep 4; echo napped", "name": "napper"})
+        return ("text", "WAKE: waiting for the napper")
     if "JOBTEST" in first:
         if not tools:
             return ("tool", "job_start", {"command": "for i in 1 2 3; do echo tick-$i; sleep 0.4; done; echo ticker-done", "name": "ticker"})

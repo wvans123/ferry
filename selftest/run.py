@@ -630,6 +630,13 @@ def check_tui(root: Path, work: Path) -> None:
         files_back = wait_for("Files put back", 15) and not made.exists()
         time.sleep(1.5)
         os.write(fd, b"\x03")
+        time.sleep(0.5)
+        # a background command that ends after the agent has finished: the agent takes it up by itself
+        typed(b"WAKETEST: start a background command")
+        waited = wait_for("WAKE: waiting for the napper", 60)
+        woken = wait_for("WOKEN: ended=True out=True", 30)
+        time.sleep(1.5)
+        os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
         resume = wait_for("ferry --session", 10) and "pi --session" not in plain(seen) and "Press Ctrl+C again to quit" in plain(seen)
@@ -646,6 +653,9 @@ def check_tui(root: Path, work: Path) -> None:
                    f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back} "
                    f"resume={resume}: "
                    f"{plain(seen)[-400:]!r}")
+        check("F86 后台任务做完自动接着干", waited and woken,
+              "agent 回完话停下以后后台命令才结束：agent 自己接着开一轮，拿到命令的结果和输出，不用再发消息" if waited and woken
+              else f"waited={waited} woken={woken}: {plain(seen)[-400:]!r}")
     finally:
         s.close()
         (work / "made-by-agent.txt").unlink(missing_ok=True)
