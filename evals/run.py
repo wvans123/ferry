@@ -93,7 +93,9 @@ def run_one(task, ferry: list[str], base: Path, server_home: Path, env: dict) ->
     (home / "config.json").write_text(json.dumps({
         "permissionMode": "bypass", "updateCheck": False, "notify": False, "phoneNotify": False,
         "browserHeadless": True}), encoding="utf-8")
-    env = {**env, "FERRY_HOME": str(home), "FERRY_SERVER_HOME": str(server_home), "PYTHONUTF8": "1"}
+    # the server Ferry starts must be the one prepare() installed for this Python, not another Python on the PATH
+    env = {**env, "FERRY_HOME": str(home), "FERRY_SERVER_HOME": str(server_home), "PYTHONUTF8": "1",
+           "FERRY_PYTHON": sys.executable}
     for k in ("FERRY_SERVER", "FERRY_TOKEN"):
         env.pop(k, None)
     t0 = time.time()
