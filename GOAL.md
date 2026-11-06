@@ -119,7 +119,7 @@
 
 ## 最近一次结果
 
-2026-11-06，v0.41.0，Linux，Node 22：新增 compact 单元测试 9 项（压缩线算法、失败两次就停、压缩后提示）；本地端到端跑了 F5、F21、F43、F48、F81、F82，全部检查由 CI 在 Linux 和 Windows 上跑过。真模型评测 `python evals/run.py` 在 0.26 之后没跑过，要补跑。
+2026-11-06，v0.41.0：18 个功能 PR（#32–#50），每个都在合并后由 CI 在 Linux 和 Windows 上跑过全部单元测试和自测（到 F110）；发版 PR 再跑一遍。真模型评测 `python evals/run.py` 在 0.26 之后没跑过，这一版改了 agent 的干活方式（/goal、待办、记忆、搜索、提示词），要在 Windows 上补跑；搜索另有 `python evals/search_eval.py`，要用服务端的 Key 跑。
 
 真模型评测第一次（v0.26.0，Windows，DeepSeek 默认模型）：7 个任务过了 6 个，共 518k token；没过的 fix_bug 是判分把 Windows 的换行当成了改动，0.27 已修。
 
