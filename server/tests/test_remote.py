@@ -39,10 +39,11 @@ def stack(monkeypatch, public_url="https://ferry.example.com"):
     async def auth(request: Request, call_next):  # what app.py's guard sets for a device token
         request.state.user = request.headers.get("x-user", "wesley")
         request.state.device_name = "工作电脑"
+        request.state.device_id = request.headers.get("x-device", "d1")
         return await call_next(request)
 
     clock = Clock()
-    remote.mount(app, cfg, lambda **r: rows.append(r), clock)
+    app.state.links = remote.mount(app, cfg, lambda **r: rows.append(r), clock)
     return TestClient(app), cfg, sent, clock, rows
 
 
@@ -229,3 +230,175 @@ def test_ready_needs_bark_and_a_public_address():
     assert remote.ready(Config(bark_url="https://api.day.app/K", public_url="https://f.example.com"))
     assert not remote.ready(Config(bark_url="https://api.day.app/K"))
     assert not remote.ready(Config(public_url="https://f.example.com"))
+
+
+# ---------- the phone console ----------
+
+SID = "0123456789abcdef"
+WORKING = {"state": "working", "project": "specs", "model": "kiro/claude-opus-5.5", "tasks": True,
+           "goal": {"objective": "Write the CR for 38.331", "status": "pursuing", "turns": 3},
+           "todo": [{"status": "completed", "text": "read the spec"}, {"status": "in_progress", "text": "draft the change"},
+                    {"status": "pending", "text": "check the revisions"}],
+           "steps": ["bash (python build.py)", "read (CR.docx)"], "reply": "Drafting section 5.3.1 now."}
+IDLE = {**WORKING, "state": "idle", "goal": None, "todo": [], "steps": [], "reply": "Done: the CR is saved."}
+
+
+def console(monkeypatch, status=WORKING):
+    c, cfg, sent, clock, rows = stack(monkeypatch)
+    assert c.put(f"/v1/ferry/console/{SID}", json=status).json() == {"ok": True}
+    got = c.post(f"/v1/ferry/console/{SID}/link", json={"push": True}).json()
+    assert got["pushed"] and got["link"].startswith("https://ferry.example.com/m/c_" + SID)
+    return c, cfg, sent, clock, rows, got["link"].removeprefix("https://ferry.example.com")
+
+
+def test_console_page_shows_the_session(monkeypatch):
+    c, _, sent, _, _, path = console(monkeypatch)
+    assert sent[-1]["link"].endswith(path) and sent[-1]["title"] == "Ferry · specs"
+    page = c.get(path)
+    t = page.text
+    assert page.status_code == 200 and "在干活" in t and "工作电脑 · specs · kiro/claude-opus-5.5" in t
+    assert "Write the CR for 38.331" in t and "进行中" in t and "第 3 轮" in t
+    assert "✓ read the spec" in t and "▶ draft the change" in t and "○ check the revisions" in t
+    assert "bash (python build.py)" in t and "Drafting section 5.3.1 now." in t
+    assert "发送插话" in t and "暂停目标" in t and "开始干" not in t and "继续目标" not in t
+    assert page.headers["cache-control"] == "no-store" and "<script" not in t and "http" not in t.split("<body>")[1]
+
+
+def test_controls_follow_the_state(monkeypatch):
+    inbox = Inbox()
+    s = inbox.report("wesley", "d1", "pc", SID, WORKING)
+    assert inbox.controls(s) == ["steer", "pause"]
+    s = inbox.report("wesley", "d1", "pc", SID, {**WORKING, "goal": {**WORKING["goal"], "status": "paused"}})
+    assert inbox.controls(s) == ["steer", "resume"]
+    s = inbox.report("wesley", "d1", "pc", SID, IDLE)
+    assert inbox.controls(s) == ["task"]
+    s = inbox.report("wesley", "d1", "pc", SID, {**IDLE, "tasks": False})
+    assert inbox.controls(s) == []
+    s = inbox.report("wesley", "d1", "pc", SID, {**IDLE, "goal": {"objective": "x", "status": "achieved", "turns": 9}})
+    assert inbox.controls(s) == ["task"]
+    assert inbox.command(s, "steer", "hi", "phone") == "not now" and inbox.command(s, "pause", "", "phone") == "not now"
+    assert inbox.command(s, "task", "  ", "phone") == "empty"
+
+
+def test_idle_page_offers_a_task_or_says_tasks_are_off(monkeypatch):
+    c, _, _, _, _, path = console(monkeypatch, IDLE)
+    t = c.get(path).text
+    assert "空闲" in t and "开始干" in t and "发送插话" not in t and "暂停目标" not in t and "Done: the CR is saved." in t
+    c.put(f"/v1/ferry/console/{SID}", json={**IDLE, "tasks": False})
+    t = c.get(path).text
+    assert "开始干" not in t and "remoteTasks" in t
+    assert "现在不能这样做" in c.post(path, data={"cmd": "task", "text": "make slides"}).text
+    assert c.get(f"/v1/ferry/console/{SID}/commands?wait=0").json() == {"commands": []}
+
+
+def test_commands_queue_and_poll_and_are_audited_without_text(monkeypatch):
+    c, _, _, _, rows, path = console(monkeypatch)
+    r = c.post(path, data={"cmd": "steer", "text": "use the 2026-09 version"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"{path}?done=steer"
+    assert "已发出插话" in c.get(r.headers["location"]).text
+    c.post(path, data={"cmd": "pause"})
+    got = c.get(f"/v1/ferry/console/{SID}/commands?wait=0").json()["commands"]
+    assert [(x["cmd"], x["text"], x["via"]) for x in got] == [("steer", "use the 2026-09 version", "phone"), ("pause", "", "phone")]
+    assert c.get(f"/v1/ferry/console/{SID}/commands?wait=0").json() == {"commands": []}, "taken once"
+    assert [r["cmd"] for r in rows if r.get("step") == "command"] == ["steer", "pause"]
+    assert not any("2026-09" in str(r) for r in rows), "the message's text is not logged"
+    c.put(f"/v1/ferry/console/{SID}", json={**WORKING, "last": {"cmd": "steer", "result": "delivered"}})
+    assert "插话已送到" in c.get(path).text
+
+
+def test_a_waiting_poll_hears_a_command():
+    async def run():
+        inbox = Inbox()
+        s = inbox.report("wesley", "d1", "pc", SID, WORKING)
+        asyncio.get_running_loop().call_later(0.02, lambda: inbox.command(s, "steer", "now", "phone"))
+        assert [x["text"] for x in await inbox.take(s, 5)] == ["now"]
+        assert await inbox.take(s, 0.01) == []
+    asyncio.run(run())
+
+
+def test_commands_are_capped_and_go_stale():
+    clock = Clock()
+    inbox = Inbox(clock)
+    s = inbox.report("wesley", "d1", "pc", SID, WORKING)
+    for i in range(remote.MAX_COMMANDS):
+        assert inbox.command(s, "steer", f"m{i}", "phone") == ""
+    assert inbox.command(s, "steer", "one more", "phone") == "too many"
+    clock.now += remote.COMMAND_S + 1
+    assert inbox.command(s, "steer", "fresh", "phone") == ""
+    assert [x["text"] for x in asyncio.run(inbox.take(s, 0))] == ["fresh"], "a command not taken in time is dropped"
+
+
+def test_status_upload_is_capped_and_trimmed(monkeypatch):
+    c, _, _, _, _, _ = console(monkeypatch)
+    assert c.put(f"/v1/ferry/console/{SID}", content=b"{" + b" " * remote.STATUS_BYTES + b"}").status_code == 413
+    s = Inbox().report("wesley", "d1", "pc", SID, {**WORKING, "steps": [f"s{i}" for i in range(30)], "reply": "x" * 5000,
+                                                    "goal": {"objective": "o", "status": "pursuing", "turns": "lots"}})
+    assert s["status"]["steps"] == [f"s{i}" for i in range(20, 30)] and len(s["status"]["reply"]) == 400
+    assert s["status"]["goal"]["turns"] == 0
+    odd = Inbox().report("wesley", "d1", "pc", SID, {"todo": {"a": 1}, "steps": "abc", "goal": "x", "last": [1]})["status"]
+    assert odd["todo"] == [] and odd["steps"] == [] and odd["goal"] is None and odd["last"] is None
+    assert c.put("/v1/ferry/console/NOT-HEX", json=WORKING).status_code == 400
+
+
+def test_a_session_is_one_device_and_one_user(monkeypatch):
+    c, _, _, _, _, path = console(monkeypatch)
+    for h in ({"x-user": "bob"}, {"x-device": "d2"}):
+        assert c.put(f"/v1/ferry/console/{SID}", json=IDLE, headers=h).status_code == 400
+        assert c.get(f"/v1/ferry/console/{SID}/commands?wait=0", headers=h).status_code == 404
+        assert c.post(f"/v1/ferry/console/{SID}/link", json={}, headers=h).status_code == 404
+        c.delete(f"/v1/ferry/console/{SID}/link", headers=h)
+        c.delete(f"/v1/ferry/console/{SID}", headers=h)
+    assert c.get(path).status_code == 200 and "在干活" in c.get(path).text
+    assert c.app.state.links("bob", SID) == "" and c.app.state.links("wesley", SID).startswith("https://ferry.example.com/m/c_")
+
+
+def test_revoke_and_renew_console_links(monkeypatch):
+    c, cfg, sent, clock, _, path = console(monkeypatch)
+    page = c.get(path).text
+    fresh = page.split("<a href='")[-1].split("'")[0]
+    assert fresh.startswith("/m/c_")
+    c.delete(f"/v1/ferry/console/{SID}/link")
+    assert c.get(path).status_code == 403 and c.get(fresh).status_code == 403
+    assert c.app.state.links("wesley", SID) == "", "pushes carry no console link while it is off"
+    again = c.post(f"/v1/ferry/console/{SID}/link", json={}).json()
+    assert again["link"] and not again["pushed"] and len(sent) == 1, "/phone without push only prints"
+    assert c.get(again["link"].removeprefix("https://ferry.example.com")).status_code == 200
+    assert c.get(path).status_code == 403, "an old link stays dead"
+
+    def later(hours):
+        for _ in range(hours * 2):  # the computer keeps reporting
+            clock.now += 1800
+            c.put(f"/v1/ferry/console/{SID}", json=WORKING)
+
+    later(11)
+    renewed = c.get(again["link"].removeprefix("https://ferry.example.com")).text.split("<a href='")[-1].split("'")[0]
+    later(2)
+    old = c.get(again["link"].removeprefix("https://ferry.example.com"))
+    assert old.status_code == 410 and "/phone" in old.text
+    assert c.get(renewed).status_code == 200, "opening the page renews the link"
+
+
+def test_ended_or_silent_sessions_go(monkeypatch):
+    c, _, _, clock, _, path = console(monkeypatch)
+    clock.now += remote.STALE_S + 60
+    assert "3 分钟没有消息" in c.get(path).text
+    clock.now += remote.SESSION_S
+    assert "控制台已关闭" in c.get(path).text
+    assert c.get(f"/v1/ferry/console/{SID}/commands?wait=0").status_code == 404
+    c.put(f"/v1/ferry/console/{SID}", json=WORKING)
+    assert c.get(path).status_code == 403, "a session opened again has a new key"
+    c.delete(f"/v1/ferry/console/{SID}")
+    assert c.app.state.links("wesley", SID) == ""
+
+
+def test_waiting_items_show_on_the_console_and_link_back(monkeypatch):
+    c, _, sent, _, _, path = console(monkeypatch)
+    item_id, item = link_of(c, sent, {**APPROVE, "session": SID})
+    t = c.get(path).text
+    assert "等你回答" in t and item in t, "the link already pushed keeps working"
+    page = c.get(item).text
+    assert "打开这个 Ferry 的控制台" in page and "/m/c_" + SID in page
+    c.delete(f"/v1/ferry/remote/{item_id}")
+    assert "在干活" in c.get(path).text
+    other_id, other = link_of(c, sent, APPROVE)
+    assert "控制台" not in c.get(other).text and other not in c.get(path).text

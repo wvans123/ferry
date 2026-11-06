@@ -24,7 +24,7 @@ def test_a_silent_run_gets_exactly_one_notice(monkeypatch):
     clock.now += 2 * 60
     out = d.tick()
     assert len(out) == 1
-    title, body = out[0]
+    title, body, _ = out[0]
     assert title == "Ferry 停了"
     assert "工作电脑 · specs" in body and "网关要确认" in body and "电脑睡眠或断网" in body and "ferry 退出" in body
     clock.now += 60 * 60
@@ -71,7 +71,7 @@ def test_runs_of_one_computer_share_a_notice_and_users_are_apart(monkeypatch):
     clock.now += 16 * 60
     out = d.tick()
     assert len(out) == 2
-    bodies = sorted(b for _, b in out)
+    bodies = sorted(b for _, b, _ in out)
     assert bodies[0].startswith("bob · specs")  # the main token is named by its user
     assert bodies[1].startswith("工作电脑 · code · specs")
     d.heard("bob", "main", "主令牌", "a", end=True)
@@ -92,3 +92,13 @@ def test_a_run_that_never_comes_back_is_forgotten(monkeypatch):
     assert len(d.tick()) == 1
     clock.now += 3 * 86400
     assert d.tick() == [] and d.runs == {}
+
+
+def test_notices_name_the_runs_phone_console(monkeypatch):
+    d, clock = dog(monkeypatch)
+    d.heard("wesley", "d1", "工作电脑", "run1", "specs", console="c0ffee12")
+    clock.now += 5 * 60
+    d.heard("wesley", "d1", "工作电脑", "run1")  # a beat without the id keeps it
+    clock.now += 16 * 60
+    assert d.tick()[0][2] == ("wesley", "c0ffee12")
+    assert d.heard("wesley", "d1", "工作电脑", "run1")[0][2] == ("wesley", "c0ffee12")

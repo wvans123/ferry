@@ -225,6 +225,20 @@ def decide_agent(msgs):
         if not [m for m in msgs if m.get("role") == "tool"]:
             return ("tool", "bash", {"command": "sleep 3; echo SLOWDONE"})
         return ("tool", "bash", {"command": "echo wrong > steer-wrong.txt"})
+    if users and users[-1].startswith("(from your phone) PHONETASK"):  # a new task from the phone console
+        return ("text", f"PHONETASKDONE {users[-1][len('(from your phone) '):][:40]}")
+    if any("PHONECONSOLE" in u for u in users) and "<ferry_subagent>" not in system:  # a /goal run watched on the phone
+        calls = [tc["function"]["name"] for m in msgs if m.get("role") == "assistant" for tc in (m.get("tool_calls") or [])]
+        said = " ".join(text_of(m) for m in msgs if m.get("role") == "assistant")
+        steer = [u for u in users if u.startswith("(from your phone) PHONESTEER")]
+        if steer and "PHONESTEERSEEN" not in said:  # the phone's message arrived as a user message
+            return ("text", f"PHONESTEERSEEN {steer[-1][len('(from your phone) '):][:40]}")
+        if "todo" not in calls:
+            return ("tool", "todo", {"todos": [{"content": "console step one", "status": "in_progress"},
+                                               {"content": "console step two", "status": "pending"}]})
+        if msgs[-1].get("role") == "tool":
+            return ("text", f"CONSOLETURN {calls.count('bash')}")  # end the turn; the goal sends it on
+        return ("tool", "bash", {"command": "sleep 2; echo CONSOLEWORK"})
     if any("GOALTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
         return decide_goal(msgs)
     if any("CRITTEST" in text_of(m) for m in msgs if m.get("role") == "user"):

@@ -510,8 +510,10 @@ def create_app(cfg: Config) -> FastAPI:
         """The client asks for a phone notification (goal finished, long request done, approval waiting)."""
         from .notify import send
         b = json.loads(await request.body() or b"{}")
-        ok, err = await send(cfg, str(b.get("title") or "Ferry"), str(b.get("body") or ""), str(b.get("kind") or ""))
-        write(audit_log, event="notify", user=request.state.user, kind=str(b.get("kind") or ""), ok=ok)
+        # the session's phone console opens when the push is tapped (remote.py)
+        link = request.app.state.console_link(request.state.user or "", str(b.get("session") or ""))
+        ok, err = await send(cfg, str(b.get("title") or "Ferry"), str(b.get("body") or ""), str(b.get("kind") or ""), link=link)
+        write(audit_log, event="notify", user=request.state.user, kind=str(b.get("kind") or ""), ok=ok, link=bool(link))
         return {"ok": ok, **({"error": err} if err else {})}
 
     # ---------- global memory, shared by all of a user's computers (off unless switched on) ----------
@@ -967,6 +969,6 @@ def create_app(cfg: Config) -> FastAPI:
     web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
     memreview.mount(app, cfg, client, lambda **row: write(audit_log, **row))
-    watchdog.mount(app, cfg, lambda **row: write(audit_log, **row))
-    remote.mount(app, cfg, lambda **row: write(audit_log, **row))
+    console_link = remote.mount(app, cfg, lambda **row: write(audit_log, **row))
+    watchdog.mount(app, cfg, lambda **row: write(audit_log, **row), console_link)
     return app

@@ -32,7 +32,7 @@ code map).
 | server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. Brought back in 0.30 at the owner's request in another form: search and public pages on the server (only the address goes up), intranet/private addresses still on the PC |
 | web_download tool | 0.24 | the agent downloads with curl like Cursor; commands get ferry's CA bundle and proxy |
 | web_render (Electron) and `ferry install-electron` | 0.24 | hardly needed, 100 MB download |
-| phone console `/m`, status reports, phone approvals | 0.24 | only showed titles; Bark notifications are enough. Phone approvals came back in 0.43 at the owner's request in another form: the Bark push links to a signed one-item page with the full command or question (remote.py, remote.mjs); still no console or status reports |
+| phone console `/m`, status reports, phone approvals | 0.24 | only showed titles; Bark notifications are enough. Phone approvals came back in 0.43 at the owner's request in another form: the Bark push links to a signed one-item page with the full command or question (remote.py, remote.mjs); a per-session console with a small status and commands (steer, pause the goal, a new task) followed, also asked for (#59, console.mjs) |
 | guessing vision support from the model name | 0.24 | every model takes pictures unless `vision = false` |
 | gateway check on a 10-minute timer | 0.22.4 | the page opens only when a request is blocked, or on `ferry check` |
 | auto permission mode (judge model) | 0.20, server part 0.25 | reason not recorded; Paperclip members use acceptEdits instead |

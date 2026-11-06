@@ -9,13 +9,13 @@ process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-goal-"));
 const { createGoal } = await import("../lib/goal.mjs");
 const { steerState } = await import("../lib/steer.mjs");
 
-function load(hasUI = true) {
+function load(hasUI = true, cfg = {}) {
 	const on = {};
 	const pi = { entries: [], sent: [], users: [], on: (n, f) => (on[n] = f), fire: (n, e, c) => on[n]?.(e, c),
 		registerTool: (t) => { pi.tool = t; }, registerCommand: (_n, c) => { pi.command = c.handler; },
 		appendEntry: (_t, d) => pi.entries.push(structuredClone(d)), sendMessage: (...a) => pi.sent.push(a),
 		sendUserMessage: (t) => pi.users.push(t) };
-	createGoal({})(pi);
+	createGoal(cfg)(pi);
 	const notes = [];
 	const ctx = { hasUI, cwd: process.cwd(), ui: { notify: (t) => notes.push(t), setStatus() {} },
 		sessionManager: { getBranch: () => [] }, waitForIdle: async () => {} };
@@ -117,4 +117,26 @@ test("achieved with evidence for each criterion is accepted at once; without cri
 	await u.pi.command("ship it", u.ctx);
 	await u.call({ status: "criteria", criteria: ["tests pass"] });
 	assert.match(await u.call({ status: "unmet", summary: "need the API key" }), /Goal marked unmet/);
+});
+
+test("the phone console: the goal line, a message from the phone counts as a change, resume while still working sends nothing", async () => {
+	const cfg = {};
+	const t = load(true, cfg);
+	assert.equal(cfg.goalNow(), null);
+	await t.pi.command("tidy the docs folder", t.ctx);
+	assert.deepEqual(cfg.goalNow(), { objective: "tidy the docs folder", status: "pursuing", turns: 0 });
+	t.pi.fire("input", { text: "(from your phone) keep the old file names", source: "extension" }, t.ctx);
+	t.pi.fire("input", { text: "Resume work on the goal", source: "extension" }, t.ctx);
+	assert.deepEqual(t.goal().changes.map((c) => c.text), ["(from your phone) keep the old file names"]);
+	const sent = t.pi.users.length;
+	t.ctx.isIdle = () => false;
+	await t.pi.command("pause", t.ctx);
+	assert.equal(cfg.goalNow().status, "paused");
+	await t.pi.command("resume", t.ctx);
+	assert.equal(cfg.goalNow().status, "pursuing");
+	assert.equal(t.pi.users.length, sent, "the running request simply goes on");
+	await t.pi.command("pause", t.ctx);
+	t.ctx.isIdle = () => true;
+	await t.pi.command("resume", t.ctx);
+	assert.match(t.pi.users.at(-1), /^Resume work on the goal: tidy the docs folder/);
 });

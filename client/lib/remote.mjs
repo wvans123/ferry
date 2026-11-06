@@ -7,11 +7,14 @@ import { serverHeaders } from "./config.mjs";
 
 const POLL_S = 25;
 
+/** How a message sent from the phone console starts (console.mjs), so the agent and /goal know where it came from. */
+export const PHONE_MARK = "(from your phone)";
+
 export function remoteOn(cfg) {
 	return cfg.phoneRemote !== false && cfg.phoneNotify !== false && Boolean(cfg.server) && (cfg.features ?? []).includes("remote");
 }
 
-async function call(cfg, method, path, body, signal, ms = 15000) {
+export async function call(cfg, method, path, body, signal, ms = 15000) {
 	const r = await fetch(`${cfg.server}${path}`, {
 		method,
 		headers: serverHeaders(cfg, body ? { "Content-Type": "application/json" } : {}),
@@ -24,7 +27,7 @@ async function call(cfg, method, path, body, signal, ms = 15000) {
 	return r.json();
 }
 
-const pause = (ms, signal) => new Promise((done) => {
+export const pause = (ms, signal) => new Promise((done) => {
 	const t = setTimeout(done, ms);
 	signal.addEventListener("abort", () => (clearTimeout(t), done()), { once: true });
 });
@@ -41,7 +44,8 @@ export function openRemote(cfg, item, { notifyAfter = cfg.phoneApprovalSeconds ?
 	let timer = null;
 	const answer = (async () => {
 		try {
-			id = (await call(cfg, "POST", "/v1/ferry/remote", item)).id ?? "";
+			// session: the console shows the item and its page links back to the console
+			id = (await call(cfg, "POST", "/v1/ferry/remote", { ...item, session: cfg.consoleId ?? "" })).id ?? "";
 		} catch {
 			return null; // the terminal still asks
 		}
