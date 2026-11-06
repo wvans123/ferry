@@ -30,6 +30,7 @@ Work           /goal <objective>  keep working until it is done (/goal pause | r
                /tasks  background commands and subagents: output, stop
 Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
                /memory user <text> for all projects)      /skills  what the agent knows how to do
+               /memory tidy  clean up;  /memory distill  learn from what keeps coming up in past conversations
 Information    /context [size]  how full the context is; with a size (400k, 1m, auto) change it
                /cost  tokens and money       /status  server, model, settings, and a quick check
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit

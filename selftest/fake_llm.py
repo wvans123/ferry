@@ -67,6 +67,20 @@ def decide(msgs):
                 "content": "Reports: Word, tracked changes on.", "reason": "both say how reports are made"},
                {"op": "delete", "scope": "project", "name": "tidy-pinned", "reason": "looks old"}] if 'name="tidy-a"' in last else []
         return ("text", json.dumps({"operations": ops}))
+    if "Write a short card about it" in last:  # /memory distill, step 1: one card per past conversation
+        said = re.findall(r"^\[User\]: (.*)$", last, re.M)
+        return ("text", json.dumps({"goal": "answer questions", "category": "chat", "outcome": "done",
+                                    "corrections": [q for q in said if "file path first" in q],
+                                    "feedback": [{"after": "an answer", "type": "unknown", "quote": said[-1] if said else ""}]}))
+    if "Find what keeps coming up" in last:  # /memory distill, step 2: two conversations asked for the same thing
+        cards = re.findall(r"^\[(?:NEW|old)\] session=(\S+) date=(\S+) project=.*\n(.*)$", last, re.M)
+        ev = [{"session": s, "date": d, "quote": "file path first"} for s, d, card in cards if "file path first" in card][:2]
+        items = [{"kind": "memory", "op": "update", "target": "user", "name": "answer-style", "reason": "you asked for it twice",
+                  "content": "Short answers. Give the file path first.\nWhy: asked in two conversations.\nHow to apply: every answer about a file.",
+                  "evidence": ev},
+                 {"kind": "rule", "op": "add", "target": "user-agents", "name": "path-rule", "content": "Give the file path first.",
+                  "evidence": ev}] if len(ev) == 2 else []  # the rule needs three conversations: Ferry drops it
+        return ("text", json.dumps({"items": items, "recurrence": []}))
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
     if "Read files in data/." in json.dumps(msgs) and "big-notes.txt" in json.dumps(msgs):

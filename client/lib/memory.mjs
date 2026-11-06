@@ -330,8 +330,9 @@ export function describeMemory(cwd) {
 		loadIndex(p) || "  (empty)",
 		"",
 		"They are plain Markdown files: edit or delete them in any editor (a \"pinned: true\" line in a file's header keeps",
-		"/memory tidy away from it). Ask the agent to remember or forget something, run /memory tidy to merge and clean up",
-		'(you confirm each change), or turn memory off with: ferry config set memory false',
+		"/memory tidy away from it). Ask the agent to remember or forget something, run /memory tidy to merge and clean up,",
+		"/memory distill to learn from what keeps coming up in past conversations (you confirm each change), or turn memory",
+		"off with: ferry config set memory false",
 	].join("\n");
 }
 
@@ -363,11 +364,12 @@ export function createMemory(cfg) {
 			event.systemPromptOptions.sections.ferry_memory = memorySection(ctx?.cwd ?? process.cwd());
 		});
 		pi.registerCommand("memory", {
-			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects here; /memory global <text>: all your computers); /memory tidy: merge and clean up",
+			description: "Show what Ferry remembers; /memory <text> saves a note (for this project; /memory user <text>: all projects here; /memory global <text>: all your computers); /memory tidy: merge and clean up; /memory distill: learn from what keeps coming up in past conversations",
 			handler: async (args, ctx) => {
 				const cwd = ctx.cwd ?? process.cwd();
 				let text = String(args ?? "").trim();
 				if (/^tidy$/i.test(text)) return cfg.memoryTidy ? cfg.memoryTidy(ctx) : tell(ctx, "/memory tidy needs a Ferry server");
+				if (/^distill$/i.test(text)) return cfg.memoryDistill ? cfg.memoryDistill(ctx) : tell(ctx, "/memory distill needs a Ferry server");
 				if (!text) {
 					const g = await refreshGlobal(cfg, true);
 					return tell(ctx, describeMemory(cwd) + (g.enabled ? `\n\nGlobal memory (on the Ferry server, all your computers; /memory global <text> saves one):\n${g.index || "  (empty)"}` : ""), "info");
