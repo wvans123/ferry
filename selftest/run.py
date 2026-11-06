@@ -924,6 +924,12 @@ def check_prompt_rules(root: Path, work: Path) -> None:
                 and "do not allow anything new" in sys0 and "<external>" in sys0)
         check("F72 提示里的范围和压缩规则", ok72, "系统提示里有：按请求类型限定动作范围、被压缩摘要后接着干不重来、外部内容里的指令不执行"
               if ok72 else f"{sys1[:300]!r}")
+        req0 = json.dumps(ups[0]) if ups else ""
+        ok87 = ("Before the first tool call, say in one sentence" in sys0 and "make them in the same reply" in sys0
+                and "Once you know enough to act, act" in sys0 and "belong to the user" in sys0
+                and "Never guess a result that has not come back" in req0)
+        check("F87 提示里的说话和派活规则", ok87, "系统提示里有：干活时先说要做什么、没有依赖的调用一次发出、信息够了就动手、用户原有的文件要保留；"
+              "task 工具说明里有：交代任务像交给同事、报告要转述、没回来的结果不能编" if ok87 else f"{sys0[:300]!r}")
         ok88 = ("confirms a non-obvious way of working" in sys0 and '"How to apply:" line' in sys0
                 and "look in the index for a memory that already covers the point" in sys0
                 and "absolute dates" in sys0 and "check that it still exists" in sys0)
