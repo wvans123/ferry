@@ -49,7 +49,8 @@ export const DEFAULTS = {
 	phoneApprovalSeconds: 60, // an approval left unanswered this long notifies the phone (once per question)
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
-	compactAt: "90%", // summarise the conversation once the context is this full (at the end of a request); "off" = only when it must
+	compactAt: "90%", // summarise the conversation once the context is this full (before each request to the model, also in the middle of work); "off" = only when it must
+	compactLimit: "400k", // ...or once it holds this many tokens, whichever comes first ("0" = no limit)
 	compactKeep: "20k", // how much of the latest conversation a summary keeps word for word
 	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
@@ -63,6 +64,8 @@ export const SETTINGS = {
 			"plan  read and search only", "bypass  nothing asks (protected paths stay blocked)"]],
 	compactAt: ["string", "summarise the conversation (compaction) once the context is this full; lower = cheaper requests, earlier summaries",
 		["50%", "60%", "70%", "80%", "90%  (default)", "off  only when the model's limit is reached"]],
+	compactLimit: ["string", "summarise once the context holds this many tokens, even if compactAt is not reached yet (a 1M-token model gets slow and dear long before 90%)",
+		["200k", "300k", "400k  (default)", "600k", "0  no limit, compactAt only"]],
 	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
 		["low", "medium  (default)", "high", "xhigh"]],
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
@@ -279,7 +282,7 @@ export function findFerryModel(registry, id) {
 
 /** Make sure pi's agent directory exists with Ferry defaults (the user's own changes are kept).
  * models: the server's models (or just ids); the default model is saved with the provider it is shown under. */
-export function ensureAgentDir(defaultModel, models = [defaultModel], thinking = "medium", compactKeep = "") {
+export function ensureAgentDir(defaultModel, models = [defaultModel], thinking = "medium", compactKeep = "", compact = null) {
 	const where = new Map(models.map((m) => (typeof m === "string" ? [m, "ferry"] : [m.id, providerOf(m)])));
 	scaffoldHome();
 	mkdirSync(join(AGENT_DIR, "extensions"), { recursive: true });
@@ -307,12 +310,68 @@ export function ensureAgentDir(defaultModel, models = [defaultModel], thinking =
 	// how much of the latest conversation a summary keeps word for word (compactKeep)
 	const keep = parseTokens(compactKeep);
 	if (keep) next.compaction = { ...(cur.compaction ?? {}), keepRecentTokens: keep };
+	if (compact) applyCompactReserves(next, models, compact);
 	writeFileSync(file, JSON.stringify(next, null, 2), "utf8");
 	// Shift+Tab switches the permission mode (like Claude Code); pi uses it for thinking levels, which the
 	// server-chosen model does not expose
 	const kb = join(AGENT_DIR, "keybindings.json");
 	const keys = existsSync(kb) ? JSON.parse(readFileSync(kb, "utf8")) : {};
 	if (!("app.thinking.cycle" in keys)) writeFileSync(kb, JSON.stringify({ ...keys, "app.thinking.cycle": [] }, null, 2), "utf8");
+}
+
+/** pi's own margin below the window; pi summarises when the context passes window - reserve. */
+export const PI_RESERVE = 16384;
+
+/** The size, in tokens, at which a model's conversation is summarised: compactAt of its window or compactLimit,
+ * whichever is smaller. 0 = pi's own rule (compactAt "off"). */
+export function compactThreshold(window, cfg) {
+	const at = String(cfg?.compactAt ?? "90%").trim().toLowerCase();
+	const pct = Number(at.replace("%", ""));
+	if (!(window > 0) || at === "off" || !(pct > 0 && pct < 100)) return 0;
+	const limit = parseTokens(cfg?.compactLimit ?? "400k");
+	return Math.round(Math.min((window * pct) / 100, limit > 0 ? limit : Infinity));
+}
+
+/** pi checks the context before every request, also between the steps of one request, against
+ * window - reserveTokens. Ferry sets that margin per model so the check lands on compactThreshold.
+ * Returns { "<provider>/<id>": reserveTokens }; a model that keeps pi's rule is not in it.
+ * The window is the server's, or the smaller one chosen with /context (as in sync.mjs modelDef). */
+export function compactReserves(models, cfg) {
+	const out = {};
+	for (const m of models ?? []) {
+		if (!m || typeof m !== "object" || !m.id) continue;
+		const own = Number(cfg?.contextWindow?.[m.id]) || 0;
+		const window = own > 0 ? Math.min(own, m.contextWindow ?? Infinity) : (m.contextWindow ?? 128000);
+		const at = compactThreshold(window, cfg);
+		if (at) out[`${providerOf(m)}/${m.id}`] = Math.max(PI_RESERVE, window - at);
+	}
+	return out;
+}
+
+/** Write compactReserves into pi's settings (compaction.modelOverrides); other settings of the user stay. */
+export function applyCompactReserves(settings, models, cfg) {
+	const reserves = compactReserves(models, cfg);
+	const over = { ...(settings.compaction?.modelOverrides ?? {}) };
+	for (const m of models ?? []) { // a model back on pi's rule loses the margin Ferry set earlier
+		const key = m && typeof m === "object" && m.id ? `${providerOf(m)}/${m.id}` : "";
+		if (key && !(key in reserves) && over[key]) {
+			const { reserveTokens: _drop, ...rest } = over[key];
+			if (Object.keys(rest).length) over[key] = rest; else delete over[key];
+		}
+	}
+	for (const [key, n] of Object.entries(reserves)) over[key] = { ...(over[key] ?? {}), reserveTokens: n };
+	settings.compaction = { ...(settings.compaction ?? {}) };
+	if (Object.keys(over).length) settings.compaction.modelOverrides = over;
+	else delete settings.compaction.modelOverrides;
+	if (!Object.keys(settings.compaction).length) delete settings.compaction;
+	return settings;
+}
+
+/** After /context changed a window: update the margins in pi's settings file. */
+export function writeCompactReserves(models, cfg) {
+	const file = join(AGENT_DIR, "settings.json");
+	const cur = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+	writeFileSync(file, JSON.stringify(applyCompactReserves(cur, models, cfg), null, 2), "utf8");
 }
 
 const HOME_README = `# Ferry: your settings for every project

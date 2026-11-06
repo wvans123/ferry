@@ -41,7 +41,7 @@ from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
 from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
-                     restore_cache_marks, wants_cache_marks)
+                     restore_cache_marks, summary_rules, wants_cache_marks)
 from .store import BaseMismatch, MissingBlobs, Store
 
 
@@ -603,9 +603,8 @@ def create_app(cfg: Config) -> FastAPI:
         project = unquote(request.headers.get("x-ferry-project", ""))  # sent URL-encoded: folder names can be Chinese
         rules = load_rules(cfg.rules_dir, project)
         rules = without_placeholder_note(rules)
-        if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
-            extra = (cfg.rules_dir / "_summary.md").read_text(encoding="utf-8").strip()
-            rules = f"{rules}\n\n{extra}".strip() if extra else rules
+        if purpose == "summary":
+            rules = f"{rules}\n\n{summary_rules(cfg.rules_dir)}".strip()
         apply_rules(payload, rules)
         user = request.state.user
         trimmed, size = cap_upstream(payload, cfg.max_upstream_bytes)
@@ -820,8 +819,8 @@ def create_app(cfg: Config) -> FastAPI:
                                  f"the Ferry server has no API key for model {model.id}: add it on the admin page"}}, status_code=503)
         project = unquote(request.headers.get("x-ferry-project", ""))
         rules = without_placeholder_note(load_rules(cfg.rules_dir, project))
-        if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
-            rules = f"{rules}\n\n{(cfg.rules_dir / '_summary.md').read_text(encoding='utf-8').strip()}".strip()
+        if purpose == "summary":
+            rules = f"{rules}\n\n{summary_rules(cfg.rules_dir)}".strip()
         if rules:  # after the client's own (cached) system prompt
             system = payload.get("system") or []
             if isinstance(system, str):

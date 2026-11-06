@@ -41,6 +41,8 @@ def decide(msgs):
         return ("text", f"From the page: the secret word is {word.group(1) if word else 'not there'}.")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
+    if "Read files in data/." in json.dumps(msgs) and "big-notes.txt" in json.dumps(msgs):
+        return ("text", "MIDCOMPACT: finished after the summary")  # the fixed summary is in the conversation: the request was summarised in the middle
     if MODE == "basic":
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
         if not tool_msgs:
@@ -259,6 +261,10 @@ def decide_agent(msgs):
         if len(tools) < 8:
             return ("tool", "read", {"path": "big-notes.txt"})
         return ("text", "TRIM: " + str(sum("was left out to keep the context small" in text_of(t) for t in tools)) + " left out")
+    if "MIDCOMPACT" in first:  # a long request: the context fills up while the agent works
+        if len(tools) < 8:
+            return ("tool", "read", {"path": "big-notes.txt"})
+        return ("text", "MIDCOMPACT: finished without a summary")
     if "BATCHTEST" in first:
         if not tools:
             return ("tool", "task_batch", {"description": "check four items", "items": ["alpha", "beta", "gamma", "delta"],

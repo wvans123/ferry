@@ -399,6 +399,40 @@ def check_v016(root: Path, work: Path) -> None:
             p.unlink()
 
 
+def check_compact_mid_run(root: Path, work: Path) -> None:
+    """The context is summarised in the middle of one long request, at compactLimit or compactAt, not after it."""
+    (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(400)), encoding="utf-8")
+
+    def run(setting: dict) -> tuple[int, str, list[dict]]:
+        s = Stack(root / ("at" if "compactAt" in setting else "limit"), work, "agent")
+        try:
+            s.home.mkdir(parents=True, exist_ok=True)
+            (s.home / "config.json").write_text(json.dumps(setting), encoding="utf-8")
+            code, out = s.ferry("-p", "MIDCOMPACT: read the notes again and again")
+            return code, out, jsonl(s.upstream)
+        finally:
+            s.close()
+
+    def is_summary(u: dict) -> bool:
+        return "context summarization assistant" in json.dumps(u.get("messages", [])[:1])
+
+    def verdict(setting: dict) -> tuple[bool, str]:
+        code, out, ups = run(setting)
+        kinds = ["summary" if is_summary(u) else "agent" for u in ups]
+        first = kinds.index("summary") if "summary" in kinds else -1
+        asked = json.dumps(ups[first].get("messages", [])[:1]) if first >= 0 else ""
+        ok = (code == 0 and "finished after the summary" in out and 0 < first and "agent" in kinds[first + 1:]
+              and "confidentiality" in asked)
+        return ok, (f"同一次请求做到一半，上下文到线就先写摘要（第 {first + 1} 个请求），摘要请求带着\"保留用户原话、保密要求、下一步\"的要求，"
+                    "摘要后接着做完" if ok else f"code={code} kinds={kinds} | {out[-300:]}")
+
+    ok, detail = verdict({"compactLimit": "20k"})
+    check("F81 长任务中途按 token 数压缩", ok, "compactLimit 20k：" + detail)
+    ok, detail = verdict({"compactAt": "15%", "compactLimit": "0"})
+    check("F82 长任务中途按百分比压缩", ok, "compactAt 15%：" + detail)
+    (work / "big-notes.txt").unlink(missing_ok=True)
+
+
 def check_context_and_mcp(root: Path, work: Path) -> None:
     """/context changes the context size for the model; ferry mcp imports and lists servers."""
     s = Stack(root, work, "agent")
@@ -1616,7 +1650,7 @@ STEPS = [
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
     (check_agent_features, "agent"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
-    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"),
+    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),

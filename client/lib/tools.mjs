@@ -27,6 +27,13 @@ const TodoParams = Type.Object({
 const MARK = { pending: "[ ]", in_progress: "[>]", completed: "[x]" };
 const render = (todos) => todos.map((t) => `${MARK[t.status] ?? "[ ]"} ${t.content}`).join("\n");
 
+/** The system prompt section for a task list with open items: short, at most 20 items. */
+export function todoSection(todos) {
+	const shown = todos.slice(0, 20).map((t) => ({ ...t, content: String(t.content).slice(0, 120) }));
+	return `Your task list at the start of this request (the todo tool keeps it; a later todo call is newer):\n${render(shown)}` +
+		(todos.length > shown.length ? `\n(${todos.length - shown.length} more items)` : "");
+}
+
 let shared = []; // the main agent's to-do list, for /tasks
 
 /** The to-do list as text, or "" when there is none. */
@@ -38,8 +45,8 @@ export function createTodo() {
 	return (pi) => {
 		let todos = [];
 		const show = (ctx) => {
-			if (!ctx?.hasUI) return;
 			shared = todos;
+			if (!ctx?.hasUI) return;
 			const open = todos.filter((t) => t.status !== "completed").length;
 			ctx.ui.setWidget("ferry-todo", todos.length && open ? [`To-do (${todos.length - open}/${todos.length} done)`,
 				...render(todos).split("\n").map((l) => `  ${l}`)] : undefined);
@@ -55,6 +62,12 @@ export function createTodo() {
 		};
 		pi.on("session_start", restore);
 		pi.on("session_tree", restore);
+		// While there are open items the list is part of the system prompt (like /goal), so it survives a summary.
+		// It is read at the start of a request; later todo calls in the conversation are newer.
+		pi.on("before_agent_start", (event) => {
+			if (todos.some((t) => t.status !== "completed")) event.systemPromptOptions.sections.ferry_todo = todoSection(todos);
+			else delete event.systemPromptOptions.sections.ferry_todo;
+		});
 		// Models often finish the work and forget to tick the list off. When the agent is about to stop with items
 		// still open on a list it used in this request, it is sent back to finish them (or mark them done), up to three times
 		// and only while the list keeps moving, so a real question to the user still ends the request.
