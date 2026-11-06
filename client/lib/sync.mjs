@@ -10,7 +10,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { FERRY_HOME, FERRY_PROVIDERS, PROTOCOL, providerOf, serverHeaders } from "./config.mjs";
-import { GATEWAY_NOTE, gatewayPage, openGatewayPage, waitForServer, whoAnswered } from "./gateway.mjs";
+import { gatewayPage, openGatewayPage, waitAtGateway, whoAnswered } from "./gateway.mjs";
 import { createUploader, imageStats } from "./upload.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -225,17 +225,15 @@ export function createSyncProvider(cfg, models, opts = {}) {
 
 		let res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
 		// the company gateway wants its confirmation again (it runs out after a while): open its page, wait until the
-		// server answers, and send again, so the agent's work goes on instead of stopping with an error
+		// server answers (up to gatewayWaitMinutes), and send again, so the agent's work goes on instead of stopping
 		for (let again = 0; again < 2 && !res.headers.get("content-type")?.includes("json"); again++) {
 			const loc = res.headers.get("location") ?? "";
 			const text = gatewayPage(loc) ? "" : await res.clone().text().catch(() => "");
 			const page = gatewayPage(loc) ? loc : gatewayPage("", text.slice(0, 30000)) ? `${cfg.server}/` : "";
 			if (!page) break;
-			openGatewayPage(page);
-			cfg.onGateway?.(GATEWAY_NOTE);
-			const through = await waitForServer(cfg, 180000, signal);
-			cfg.onGateway?.(undefined);
-			if (!through) break;
+			const stop = await waitAtGateway(cfg, page, signal);
+			if (stop) throw new FerryError(stop);
+			if (signal?.aborted) break;
 			res = await commit(conv, base, chain[base], blob(base, toolsHash && !knownTools.has(toolsHash)), signal);
 		}
 		if (res.status === 409) { // the server's copy differs or is gone: start it again (messages it has by reference)
@@ -251,7 +249,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (res.status === 426) throw new FerryError(`Ferry client and server versions do not match: ${await res.text()}`);
 		if (!res.headers.get("content-type")?.includes("json")) {
 			const loc = res.headers.get("location") ?? "";
-			if (gatewayPage(loc)) { // the gateway's confirmation ran out and nobody confirmed within 3 minutes
+			if (gatewayPage(loc)) { // the gateway still wants its confirmation (the wait was stopped, or it asked twice)
 				openGatewayPage(loc);
 				throw new FerryError("The company network gateway wants a confirmation again. It is open in your browser " +
 					`(${loc}): confirm there, then send your message again.`);

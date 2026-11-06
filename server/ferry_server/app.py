@@ -290,6 +290,8 @@ def create_app(cfg: Config) -> FastAPI:
                 "location": "https://example.cloudflareaccess.com/cdn-cgi/access/login/ferry"})
         gate_file = os.environ.get("FERRY_TEST_GATEWAY_FILE")  # self-test: a company gateway until "confirmed"
         if gate_file and not os.path.exists(gate_file):
+            with open(gate_file + ".blocked", "a", encoding="utf-8") as f:
+                f.write(f"{request.method} {request.url.path}\n")
             return Response(status_code=302, headers={"location": "http://127.0.0.1:9100/proxycontrolwarn?url=ferry"})
         if request.url.path == "/health" or request.url.path.startswith("/admin"):
             return await call_next(request)  # the admin page has its own, local-only sign-in
