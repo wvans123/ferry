@@ -138,6 +138,7 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 | 只读规划 | 不允许 | 只允许只读命令 |
 | 全部放行 | 不问 | 不问，上传和删除除外（见下） |
 
+- agent 也可以提议切换，但每次都要你点头。任务大、要求不清楚或者有几种做法要权衡时，它会说明原因，问你要不要先进只读规划；选 No 就照原来的模式接着做。规划时它把计划写出来后，会问你能不能开始；选 Yes 回到进规划前的模式，选 No 留在规划里，你接着提意见。回去的模式不会比你原来的更宽：用 Shift+Tab 从"全部放行"一路切到规划的，回到"自动改文件"。`ferry -p` 和团队成员没人回答，agent 不会提议切换。
 - 确认框里可以选"以后都允许这类命令"，比如以 `npm test` 开头的命令。规则按项目记住。
 - 危险操作（删整个目录、`git push --force`、`git reset --hard`、`curl … | sh`……）除了"全部放行"以外都会问，并说明危险在哪。
 - 把本机文件或数据发到网络上的命令，每次都问，"全部放行"也问，已有的 `bash(curl*)` 这类规则也放不过去，确认框里没有"以后都允许"。比如 `curl -d/-F/-T/--json`、`wget --post-file`、PowerShell 的 `Invoke-WebRequest -InFile/-Body/-Method Post`、往远程主机的 `scp`/`rsync`/`sftp`/`ftp`。提示是"Careful: this sends data from this computer to 主机名"。普通下载（`curl -L -o 文件 网址`）和发给本机 `localhost` 的请求不算。

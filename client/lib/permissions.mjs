@@ -644,7 +644,8 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	const readOnly = shell ? segments.every(isReadOnlySegment) : !NET.has(tool) && !writes && (READ_ONLY.has(tool) || readOnlyTool(tool));
 	if (mode === "plan" && !readOnly && !NET.has(tool)) {
 		return { action: "deny", reason: "Plan mode is on, so only reading and searching are allowed. Finish looking " +
-			"around, then present your plan; the user switches modes (Shift+Tab) when it should be carried out." };
+			"around and present your plan. To carry it out, ask the user to leave plan mode with switch_mode (target back), " +
+			"or they switch modes with Shift+Tab." };
 	}
 	// asked every time, even in full access and over allow rules; a "danger" prompt has no "always allow"
 	const always = shell ? browserPrivacyOf(cmd) || uploadOf(cmd) : "";

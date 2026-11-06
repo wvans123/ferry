@@ -29,7 +29,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模型接入 | 选模型、几家服务商分配和切换、限流和回退、Claude 原生接口、Responses 接口、费用 | `server/ferry_server/pool.py`、`presets.py`、`responses.py`、`usage.py`、`config.py` | F12、F25、F40、F60、F61 |
 | 上下文 | 服务端写摘要、请求封顶、按模型上下文长度 | `server/ferry_server/fit.py`、`prompt.py`；`client/lib/commands.mjs`（`/context`） | F5、F21、F43、F48 |
 | 提示词 | Ferry 自己的系统提示，服务端规则 | `client/lib/prompt.mjs`、`server/ferry_server/prompt.py` | F9、F10、F33、F63 |
-| 权限 | 四种模式、规则、危险命令、禁止目录 | `client/lib/permissions.mjs`、`guard.mjs` | F15、F32 |
+| 权限 | 四种模式、agent 提议进出计划模式（`switch_mode`）、规则、危险命令、禁止目录 | `client/lib/permissions.mjs`、`guard.mjs` | F15、F32、F90 |
 | 网络 | 公司代理、证书、网关确认页 | `client/lib/config.mjs`、`gateway.mjs` | F16、F27、F37、F62 |
 | 终端界面 | 斜杠命令、插话、标题、头部 | `client/lib/commands.mjs`、`steer.mjs`、`title.mjs`、`brand.mjs`、`trim.mjs` | F38、F53 |
 | 安装和更新 | 离线安装包、小更新包、`ferry update`（也升级本机服务端）、fd 和 rg | `client/lib/setup.mjs`、`toolbins.mjs` | F22、F24 |
