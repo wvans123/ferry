@@ -119,7 +119,9 @@
 
 ## 最近一次结果
 
-2026-11-06，v0.41.0：18 个功能 PR（#32–#50），每个都在合并后由 CI 在 Linux 和 Windows 上跑过全部单元测试和自测（到 F110）；发版 PR 再跑一遍。真模型评测 `python evals/run.py` 在 0.26 之后没跑过，这一版改了 agent 的干活方式（/goal、待办、记忆、搜索、提示词），要在 Windows 上补跑；搜索另有 `python evals/search_eval.py`，要用服务端的 Key 跑。
+2026-11-06，v0.41.0：18 个功能 PR（#32–#50），每个都在合并后由 CI 在 Linux 和 Windows 上跑过全部单元测试和自测（到 F110）；发版 PR 再跑一遍。搜索另有 `python evals/search_eval.py`，要用服务端的 Key 跑。
+
+真模型评测第二次（v0.41.0，macOS，DeepSeek 默认模型）：8 个任务全过，共 851k token、110 秒（`evals/results/20261106-233103-0.41.0.json`）。这次在 Mac 上跑，Windows 特有的部分（PowerShell、路径、公司代理）没覆盖，要在工作电脑上再跑一次。费用显示 0 是因为服务端没给这个模型填价格。
 
 真模型评测第一次（v0.26.0，Windows，DeepSeek 默认模型）：7 个任务过了 6 个，共 518k token；没过的 fix_bug 是判分把 Windows 的换行当成了改动，0.27 已修。
 

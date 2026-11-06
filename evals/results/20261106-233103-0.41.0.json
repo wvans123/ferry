@@ -1,0 +1,201 @@
+{
+ "date": "20261106-233103",
+ "ferry": "0.41.0",
+ "model": "deepseek (default model)",
+ "os": "darwin",
+ "tasks": {
+  "browser_page": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 20,
+   "calls": 10.0,
+   "tokens": 149039,
+   "cost": 0.0,
+   "notes": [
+    "read the script-built secret and the greeting after clicking"
+   ]
+  },
+  "excel_summary": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 11,
+   "calls": 6.0,
+   "tokens": 84959,
+   "cost": 0.0,
+   "notes": [
+    "all four regions, the total and the top region are right"
+   ]
+  },
+  "explore": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 6,
+   "calls": 4.0,
+   "tokens": 53884,
+   "cost": 0.0,
+   "notes": [
+    "45 s in fetcher/net/client.py"
+   ]
+  },
+  "fix_bug": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 10,
+   "calls": 7.0,
+   "tokens": 95762,
+   "cost": 0.0,
+   "notes": [
+    "tests pass"
+   ]
+  },
+  "gpp_download": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 28,
+   "calls": 8.0,
+   "tokens": 137992,
+   "cost": 0.0,
+   "notes": [
+    "downloaded 23501-k30.zip; title right (Network Slicing)"
+   ]
+  },
+  "rename": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 20,
+   "calls": 14.0,
+   "tokens": 206871,
+   "cost": 0.0,
+   "notes": [
+    "renamed, tests pass"
+   ]
+  },
+  "word_report": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 8,
+   "calls": 4.0,
+   "tokens": 54621,
+   "cost": 0.0,
+   "notes": [
+    "report.docx with the three sections and the numbers"
+   ]
+  },
+  "word_tracked": {
+   "runs": 1,
+   "passed": 1,
+   "seconds": 7,
+   "calls": 5.0,
+   "tokens": 67488,
+   "cost": 0.0,
+   "notes": [
+    "tracked change 10 -> 5, the rest untouched"
+   ]
+  }
+ },
+ "runs": [
+  {
+   "task": "browser_page",
+   "ok": true,
+   "note": "read the script-built secret and the greeting after clicking",
+   "seconds": 20,
+   "exit": 0,
+   "calls": 10,
+   "input": 16567,
+   "output": 888,
+   "cache_read": 131584,
+   "cost": 0.0
+  },
+  {
+   "task": "excel_summary",
+   "ok": true,
+   "note": "all four regions, the total and the top region are right",
+   "seconds": 11,
+   "exit": 0,
+   "calls": 6,
+   "input": 9357,
+   "output": 1106,
+   "cache_read": 74496,
+   "cost": 0.0
+  },
+  {
+   "task": "explore",
+   "ok": true,
+   "note": "45 s in fetcher/net/client.py",
+   "seconds": 6,
+   "exit": 0,
+   "calls": 4,
+   "input": 8802,
+   "output": 410,
+   "cache_read": 44672,
+   "cost": 0.0
+  },
+  {
+   "task": "fix_bug",
+   "ok": true,
+   "note": "tests pass",
+   "seconds": 10,
+   "exit": 0,
+   "calls": 7,
+   "input": 9323,
+   "output": 807,
+   "cache_read": 85632,
+   "cost": 0.0
+  },
+  {
+   "task": "gpp_download",
+   "ok": true,
+   "note": "downloaded 23501-k30.zip; title right (Network Slicing)",
+   "seconds": 28,
+   "exit": 0,
+   "calls": 8,
+   "input": 13338,
+   "output": 2030,
+   "cache_read": 122624,
+   "cost": 0.0
+  },
+  {
+   "task": "rename",
+   "ok": true,
+   "note": "renamed, tests pass",
+   "seconds": 20,
+   "exit": 0,
+   "calls": 14,
+   "input": 11012,
+   "output": 1939,
+   "cache_read": 193920,
+   "cost": 0.0
+  },
+  {
+   "task": "word_report",
+   "ok": true,
+   "note": "report.docx with the three sections and the numbers",
+   "seconds": 8,
+   "exit": 0,
+   "calls": 4,
+   "input": 8987,
+   "output": 706,
+   "cache_read": 44928,
+   "cost": 0.0
+  },
+  {
+   "task": "word_tracked",
+   "ok": true,
+   "note": "tracked change 10 -> 5, the rest untouched",
+   "seconds": 7,
+   "exit": 0,
+   "calls": 5,
+   "input": 8771,
+   "output": 477,
+   "cache_read": 58240,
+   "cost": 0.0
+  }
+ ],
+ "total": {
+  "runs": 8,
+  "passed": 8,
+  "seconds": 110,
+  "tokens": 850616,
+  "cost": 0.0
+ }
+}
