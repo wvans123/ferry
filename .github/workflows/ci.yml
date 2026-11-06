@@ -1,9 +1,11 @@
 name: test and release
 
-# Pull request: unit tests and the end-to-end self-test on Linux and Windows (skipped when only docs change).
-# Push to main: if the commit is a pull request that already passed those tests with the same files, the tests
-# are not run again. If package.json's version has no release yet, build the offline Windows package and
-# publish release v<version> (that is what `ferry update` downloads). So releasing = bumping the version.
+# Pull request: unit tests on Linux and Windows, the end-to-end self-test on Linux (nothing when only docs change).
+# A release pull request (it changes package.json's version) also runs the self-test on Windows.
+# Push to main: a feature merge runs everything on both systems (nobody waits for it, nothing is released). A
+# release merge whose pull request already passed with the same files is not tested again. If package.json's
+# version has no release yet, build the offline Windows package and publish release v<version> (that is what
+# `ferry update` downloads). So releasing = bumping the version.
 on:
   push:
     branches: [main]
@@ -25,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       test: ${{ steps.g.outputs.test }}
+      full: ${{ steps.g.outputs.full }}
     env:
       GH_TOKEN: ${{ github.token }}
       R: ${{ github.repository }}
@@ -34,16 +37,26 @@ jobs:
         run: |
           # docs/, eval results and top-level .md files; a SKILL.md inside client/ is code (the agent reads it)
           docs_only() { ! grep -qvE '^(docs/|evals/results/|[^/]+\.md$)' "$1"; }
-          verdict() { echo "test=$1" >> "$GITHUB_OUTPUT"; echo "tests: $1 ($2)"; }
+          # full: the self-test on Windows too
+          verdict() { echo "test=$1" >> "$GITHUB_OUTPUT"; echo "full=${3:-true}" >> "$GITHUB_OUTPUT"; echo "tests: $1, full: ${3:-true} ($2)"; }
+          ver() { gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/package.json?ref=$1" | jq -r .version; }
           if [ "${{ github.event_name }}" = pull_request ]; then
             gh api --paginate "repos/$R/pulls/${{ github.event.number }}/files" --jq '.[].filename' > files
-            if docs_only files; then verdict false "only docs changed"; else verdict true "code changed"; fi
+            if docs_only files; then verdict false "only docs changed"; exit 0; fi
+            if [ "$(ver ${{ github.event.pull_request.head.sha }})" != "$(ver ${{ github.event.pull_request.base.sha }})" ]; then
+              verdict true "a release" true
+            else
+              verdict true "a feature: the Windows self-test runs when it is merged and on the release" false
+            fi
             exit 0
           fi
           if [ "${{ github.event_name }}" != push ]; then verdict true "${{ github.event_name }}"; exit 0; fi
           sha=${{ github.sha }}
           gh api "repos/$R/commits/$sha" --jq '.files[].filename' > files
           if docs_only files; then verdict false "only docs changed"; exit 0; fi
+          if [ "$(ver $sha)" = "$(ver "$(gh api "repos/$R/commits/$sha" --jq '.parents[0].sha')")" ]; then
+            verdict true "a feature merge: everything, also the Windows self-test the pull request skipped"; exit 0
+          fi
           tree=$(gh api "repos/$R/commits/$sha" --jq .commit.tree.sha)
           head=$(gh api "repos/$R/commits/$sha/pulls" --jq '[.[] | select(.merged_at != null)][0].head.sha // empty')
           if [ -z "$head" ]; then verdict true "not from a pull request"; exit 0; fi
@@ -81,6 +94,7 @@ jobs:
           python -m pytest -q server/tests
           node --test "client/test/*.test.mjs"
       - name: end-to-end self-test (fake model, no API key)
+        if: matrix.os == 'ubuntu-latest' || needs.gate.outputs.full == 'true'
         run: python selftest/run.py
 
   release:

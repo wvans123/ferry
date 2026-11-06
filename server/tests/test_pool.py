@@ -118,6 +118,8 @@ def test_by_default_a_provider_keeps_its_same_named_model_apart(tmp_path, monkey
         return httpx.Response(503, json={"error": {"message": "overloaded"}}) if req.url.host == "a.example.com" else answer()
 
     cfg, app = make(tmp_path, monkeypatch, handler)
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0.2)
+    monkeypatch.setattr(app_mod, "RETRY_WAIT_S", 1.0)
     text = (tmp_path / "models.toml").read_text().replace('api_key_env = "KEY_B"\nshare = true', 'api_key_env = "KEY_B"\nname = "Relay B"')
     (tmp_path / "models.toml").write_text(text)
     cfg = load_default()
