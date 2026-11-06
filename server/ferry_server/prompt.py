@@ -23,6 +23,21 @@ def load_rules(rules_dir: Path | None, project: str) -> str:
     return "\n\n".join(t for t in texts if t)
 
 
+SUMMARY_NOTES = """When you write the summary, always also keep:
+- the user's own messages: word for word if short, otherwise faithfully;
+- confidentiality requirements and every "do not" instruction, word for word;
+- the /goal objective and how far it is, if the conversation has one;
+- files the work produces (paths) and how finished each is;
+- the next step."""
+
+
+def summary_rules(rules_dir: Path | None) -> str:
+    """What every summary keeps, then the owner's own rules/_summary.md if there is one."""
+    f = rules_dir / "_summary.md" if rules_dir else None
+    extra = f.read_text(encoding="utf-8").strip() if f and f.is_file() else ""
+    return f"{SUMMARY_NOTES}\n\n{extra}" if extra else SUMMARY_NOTES
+
+
 def apply_rules(payload: dict, rules: str) -> None:
     if not rules:
         return

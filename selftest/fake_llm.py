@@ -50,6 +50,11 @@ def decide(msgs):
         return ("text", "RECAP: Building the deck for the review; next, check the figures.")
     if msgs and "context summarization assistant" in text_of(msgs[0]):
         return ("text", "## Goal\nRead files in data/.\n## Progress\nSome files read.")
+    if "Read files in data/." in json.dumps(msgs) and "big-notes.txt" in json.dumps(msgs):
+        state["after_summary"] = state.get("after_summary", 0) + 1
+        if state["after_summary"] == 1:  # one more step after the summary (and the note), to see the upload stay incremental
+            return ("tool", "read", {"path": "big-notes.txt"})
+        return ("text", "MIDCOMPACT: finished after the summary")  # the fixed summary is in the conversation: the request was summarised in the middle
     if MODE == "basic":
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
         if not tool_msgs:
@@ -253,6 +258,12 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "write", {"path": "made-by-agent.txt", "content": "hello\n"})
         return ("text", "EDIT: " + text_of(tools[-1])[:400].replace("\n", " | "))
+    if first.startswith("Background job") and "napper" in first:  # Ferry woke the agent: the WAKETEST command ended
+        return ("text", f"WOKEN: ended={'exited with code 0' in first} out={'napped' in first}")
+    if "WAKETEST" in first:  # a background command that ends after the agent has finished its turn
+        if not tools:
+            return ("tool", "job_start", {"command": "sleep 4; echo napped", "name": "napper"})
+        return ("text", "WAKE: waiting for the napper")
     if "JOBTEST" in first:
         if not tools:
             return ("tool", "job_start", {"command": "for i in 1 2 3; do echo tick-$i; sleep 0.4; done; echo ticker-done", "name": "ticker"})
@@ -268,6 +279,12 @@ def decide_agent(msgs):
         if len(tools) < 8:
             return ("tool", "read", {"path": "big-notes.txt"})
         return ("text", "TRIM: " + str(sum("was left out to keep the context small" in text_of(t) for t in tools)) + " left out")
+    if "MIDCOMPACT" in first:  # a long request: the context fills up while the agent works
+        if not tools:  # a file the work produces: the note after the summary lists it
+            return ("tool", "write", {"path": "mid-out.txt", "content": "draft\n"})
+        if len(tools) < 9:
+            return ("tool", "read", {"path": "big-notes.txt"})
+        return ("text", "MIDCOMPACT: finished without a summary")
     if "BATCHTEST" in first:
         if not tools:
             return ("tool", "task_batch", {"description": "check four items", "items": ["alpha", "beta", "gamma", "delta"],

@@ -399,6 +399,47 @@ def check_v016(root: Path, work: Path) -> None:
             p.unlink()
 
 
+def check_compact_mid_run(root: Path, work: Path) -> None:
+    """The context is summarised in the middle of one long request, at compactLimit or compactAt, not after it."""
+    (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(400)), encoding="utf-8")
+
+    bases: list[int] = []  # base of each upload after the summary: the note must not make the client send everything again
+
+    def run(setting: dict) -> tuple[int, str, list[dict]]:
+        s = Stack(root / ("at" if "compactAt" in setting else "limit"), work, "agent")
+        try:
+            s.home.mkdir(parents=True, exist_ok=True)
+            (s.home / "config.json").write_text(json.dumps(setting), encoding="utf-8")
+            code, out = s.ferry("-p", "MIDCOMPACT: read the notes again and again")
+            audit = jsonl(s.data / "audit.jsonl")
+            at = next((i for i, a in enumerate(audit) if a.get("purpose") == "summary"), len(audit))
+            bases.clear()
+            bases.extend(a.get("base") or 0 for a in audit[at:] if a.get("event") == "commit")
+            return code, out, jsonl(s.upstream)
+        finally:
+            s.close()
+
+    def is_summary(u: dict) -> bool:
+        return "context summarization assistant" in json.dumps(u.get("messages", [])[:1])
+
+    def verdict(setting: dict) -> tuple[bool, str]:
+        code, out, ups = run(setting)
+        kinds = ["summary" if is_summary(u) else "agent" for u in ups]
+        first = kinds.index("summary") if "summary" in kinds else -1
+        asked = json.dumps(ups[first].get("messages", [])[:1]) if first >= 0 else ""
+        ok = (code == 0 and "finished after the summary" in out and 0 < first and "agent" in kinds[first + 1:]
+              and "confidentiality" in asked and bases and len(bases) >= 2 and bases[-1] > 0
+              and "mid-out.txt" in json.dumps(ups[-1]) and "just summarised" in json.dumps(ups[-1]))
+        return ok, (f"同一次请求做到一半，上下文到线就先写摘要（第 {first + 1} 个请求），摘要请求带着\"保留用户原话、保密要求、下一步\"的要求，"
+                    "摘要后接着做完，摘要后再走一步，上传仍是增量（base 大于 0）" if ok else f"code={code} kinds={kinds} bases={bases} | {out[-300:]}")
+
+    ok, detail = verdict({"compactLimit": "20k", "compactKeep": "2k"})
+    check("F81 长任务中途按 token 数压缩", ok, "compactLimit 20k：" + detail)
+    ok, detail = verdict({"compactAt": "15%", "compactLimit": "0", "compactKeep": "2k"})
+    check("F82 长任务中途按百分比压缩", ok, "compactAt 15%：" + detail)
+    (work / "big-notes.txt").unlink(missing_ok=True)
+
+
 def check_context_and_mcp(root: Path, work: Path) -> None:
     """/context changes the context size for the model; ferry mcp imports and lists servers."""
     s = Stack(root, work, "agent")
@@ -589,6 +630,13 @@ def check_tui(root: Path, work: Path) -> None:
         files_back = wait_for("Files put back", 15) and not made.exists()
         time.sleep(1.5)
         os.write(fd, b"\x03")
+        time.sleep(0.5)
+        # a background command that ends after the agent has finished: the agent takes it up by itself
+        typed(b"WAKETEST: start a background command")
+        waited = wait_for("WAKE: waiting for the napper", 60)
+        woken = wait_for("WOKEN: ended=True out=True", 30)
+        time.sleep(1.5)
+        os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
         resume = wait_for("ferry --session", 10) and "pi --session" not in plain(seen) and "Press Ctrl+C again to quit" in plain(seen)
@@ -605,6 +653,9 @@ def check_tui(root: Path, work: Path) -> None:
                    f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back} "
                    f"resume={resume}: "
                    f"{plain(seen)[-400:]!r}")
+        check("F86 后台任务做完自动接着干", waited and woken,
+              "agent 回完话停下以后后台命令才结束：agent 自己接着开一轮，拿到命令的结果和输出，不用再发消息" if waited and woken
+              else f"waited={waited} woken={woken}: {plain(seen)[-400:]!r}")
     finally:
         s.close()
         (work / "made-by-agent.txt").unlink(missing_ok=True)
@@ -1724,7 +1775,7 @@ STEPS = [
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
     (check_agent_features, "agent"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
-    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"),
+    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),

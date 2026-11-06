@@ -167,23 +167,6 @@ export function createCommands(cfg, deps) {
 			};
 		});
 
-		// compactAt: summarise once the context is this full, at the end of a request (not in the middle of work)
-		pi.on("agent_settled", (e, ctx) => {
-			const pct = Number(String(cfg.compactAt ?? "90%").replace("%", ""));
-			if (e?.aborted || !(pct > 0 && pct < 100)) return;
-			const u = ctx.getContextUsage?.();
-			if (!u?.tokens || !u.contextWindow || (u.tokens / u.contextWindow) * 100 < pct) return;
-			if (ctx.hasUI) ctx.ui.setStatus("ferry-compact", `context ${Math.round((u.tokens / u.contextWindow) * 100)}% full: summarising (compactAt ${pct}%)`);
-			ctx.compact({
-				onComplete: () => ctx.hasUI && ctx.ui.setStatus("ferry-compact", undefined),
-				onError: (err) => {
-					if (!ctx.hasUI) return;
-					ctx.ui.setStatus("ferry-compact", undefined);
-					ctx.ui.notify(`Summarising the conversation failed: ${err.message}`, "warning");
-				},
-			});
-		});
-
 		// "?" on its own shows the help, like Claude Code
 		pi.on("input", (event, ctx) => {
 			if (String(event.text ?? "").trim() !== "?") return { action: "continue" };
@@ -296,11 +279,14 @@ export function createCommands(cfg, deps) {
 			saveConfig({ contextWindow: all });
 			cfg.contextWindow = all;
 			deps.reregister(pi, cfg);
+			deps.compactReserves?.(cfg); // the summary threshold follows the new size
 			const fresh = findFerryModel(ctx.modelRegistry, model.id);
 			if (fresh) await pi.setModel(fresh);
 			const size = fresh?.contextWindow ?? n;
 			tell(ctx, `Context size for ${model.id}: ${fmt(size)} tokens${n ? "" : " (the most the server allows)"}. ` +
 				"Smaller is cheaper per request and summarises sooner; bigger keeps more history.", "info");
+			// pi reads its settings file at start: a reload makes it use the new summary threshold now
+			if (ctx.hasUI) await ctx.reload?.().catch(() => {});
 		}
 
 		pi.registerCommand("config", {
