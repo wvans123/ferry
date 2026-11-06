@@ -92,6 +92,7 @@ class Config:
     default_model: str = ""
     summary_model: str = ""
     image_model: str = ""          # the model behind the agent's image_create tool (an image model or a Responses one)
+    advisor_model: str = ""        # the model the agent's advisor tool asks ("" = the most expensive model, see side.py)
     expose_models: bool = False  # true: clients may also pick a model by name
     home: Path | None = None     # set in zero-config mode
     models_file: Path | None = None  # zero-config: models.toml, re-read whenever it changes
@@ -151,6 +152,7 @@ def load(path: str | os.PathLike) -> Config:
     r = raw.get("routing", {})
     cfg.default_model, cfg.summary_model = r.get("default", ""), r.get("summary", "")
     cfg.image_model = r.get("image", "")
+    cfg.advisor_model = r.get("advisor", "")
     cfg.expose_models = bool(r.get("expose", False))
     finish(cfg)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
@@ -162,7 +164,7 @@ def finish(cfg: Config) -> None:
     if cfg.session_store not in ("disk", "memory", "none"):
         raise SystemExit(f'session_store must be "disk", "memory" or "none", not {cfg.session_store!r}')
     cfg.default_model = cfg.default_model or next(iter(cfg.models))
-    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model), ("image", cfg.image_model)):
+    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model), ("image", cfg.image_model), ("advisor", cfg.advisor_model)):
         if mid and mid not in cfg.models:
             raise SystemExit(f"routing {what} = {mid!r} is not one of the models: {', '.join(cfg.models)}")
     if "auto" in cfg.models:
@@ -410,7 +412,7 @@ def apply_models_file(cfg: Config, path: Path) -> None:
     r = raw.get("routing", {})
     trial = Config(models=models, default_model=os.environ.get("FERRY_MODEL") or r.get("default", ""),
                    summary_model=os.environ.get("FERRY_SUMMARY_MODEL") or r.get("summary", ""),
-                   image_model=r.get("image", ""),
+                   image_model=r.get("image", ""), advisor_model=r.get("advisor", ""),
                    expose_models=bool(r.get("expose", False)) or os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true"),
                    session_store=cfg.session_store)
     if trial.default_model not in models:
@@ -418,6 +420,7 @@ def apply_models_file(cfg: Config, path: Path) -> None:
     finish(trial)
     cfg.models, cfg.providers, cfg.default_model = trial.models, providers, trial.default_model
     cfg.summary_model, cfg.expose_models, cfg.image_model = trial.summary_model, trial.expose_models, trial.image_model
+    cfg.advisor_model = trial.advisor_model
 
 
 def render_models_toml(providers: list[dict], models: list[dict], routing: dict) -> str:
@@ -428,6 +431,8 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
     out.append(f"summary = {_toml_value(routing.get('summary', ''))}")
     if routing.get("image"):
         out.append(f"image = {_toml_value(routing['image'])}")
+    if routing.get("advisor"):
+        out.append(f"advisor = {_toml_value(routing['advisor'])}")
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]

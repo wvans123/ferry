@@ -399,6 +399,47 @@ def check_v016(root: Path, work: Path) -> None:
             p.unlink()
 
 
+def check_compact_mid_run(root: Path, work: Path) -> None:
+    """The context is summarised in the middle of one long request, at compactLimit or compactAt, not after it."""
+    (work / "big-notes.txt").write_text("".join(f"line {i:05d} of the long notes file\n" for i in range(400)), encoding="utf-8")
+
+    bases: list[int] = []  # base of each upload after the summary: the note must not make the client send everything again
+
+    def run(setting: dict) -> tuple[int, str, list[dict]]:
+        s = Stack(root / ("at" if "compactAt" in setting else "limit"), work, "agent")
+        try:
+            s.home.mkdir(parents=True, exist_ok=True)
+            (s.home / "config.json").write_text(json.dumps(setting), encoding="utf-8")
+            code, out = s.ferry("-p", "MIDCOMPACT: read the notes again and again")
+            audit = jsonl(s.data / "audit.jsonl")
+            at = next((i for i, a in enumerate(audit) if a.get("purpose") == "summary"), len(audit))
+            bases.clear()
+            bases.extend(a.get("base") or 0 for a in audit[at:] if a.get("event") == "commit")
+            return code, out, jsonl(s.upstream)
+        finally:
+            s.close()
+
+    def is_summary(u: dict) -> bool:
+        return "context summarization assistant" in json.dumps(u.get("messages", [])[:1])
+
+    def verdict(setting: dict) -> tuple[bool, str]:
+        code, out, ups = run(setting)
+        kinds = ["summary" if is_summary(u) else "agent" for u in ups]
+        first = kinds.index("summary") if "summary" in kinds else -1
+        asked = json.dumps(ups[first].get("messages", [])[:1]) if first >= 0 else ""
+        ok = (code == 0 and "finished after the summary" in out and 0 < first and "agent" in kinds[first + 1:]
+              and "confidentiality" in asked and bases and len(bases) >= 2 and bases[-1] > 0
+              and "mid-out.txt" in json.dumps(ups[-1]) and "just summarised" in json.dumps(ups[-1]))
+        return ok, (f"同一次请求做到一半，上下文到线就先写摘要（第 {first + 1} 个请求），摘要请求带着\"保留用户原话、保密要求、下一步\"的要求，"
+                    "摘要后接着做完，摘要后再走一步，上传仍是增量（base 大于 0）" if ok else f"code={code} kinds={kinds} bases={bases} | {out[-300:]}")
+
+    ok, detail = verdict({"compactLimit": "20k", "compactKeep": "2k"})
+    check("F81 长任务中途按 token 数压缩", ok, "compactLimit 20k：" + detail)
+    ok, detail = verdict({"compactAt": "15%", "compactLimit": "0", "compactKeep": "2k"})
+    check("F82 长任务中途按百分比压缩", ok, "compactAt 15%：" + detail)
+    (work / "big-notes.txt").unlink(missing_ok=True)
+
+
 def check_context_and_mcp(root: Path, work: Path) -> None:
     """/context changes the context size for the model; ferry mcp imports and lists servers."""
     s = Stack(root, work, "agent")
@@ -589,6 +630,13 @@ def check_tui(root: Path, work: Path) -> None:
         files_back = wait_for("Files put back", 15) and not made.exists()
         time.sleep(1.5)
         os.write(fd, b"\x03")
+        time.sleep(0.5)
+        # a background command that ends after the agent has finished: the agent takes it up by itself
+        typed(b"WAKETEST: start a background command")
+        waited = wait_for("WAKE: waiting for the napper", 60)
+        woken = wait_for("WOKEN: ended=True out=True", 30)
+        time.sleep(1.5)
+        os.write(fd, b"\x03")
         time.sleep(0.3)
         os.write(fd, b"\x03")
         resume = wait_for("ferry --session", 10) and "pi --session" not in plain(seen) and "Press Ctrl+C again to quit" in plain(seen)
@@ -605,6 +653,9 @@ def check_tui(root: Path, work: Path) -> None:
                    f"hidden={hidden} resized={resized} shows={shows} asked={asked} rewound={rewound} wrote={wrote} files_back={files_back} "
                    f"resume={resume}: "
                    f"{plain(seen)[-400:]!r}")
+        check("F86 后台任务做完自动接着干", waited and woken,
+              "agent 回完话停下以后后台命令才结束：agent 自己接着开一轮，拿到命令的结果和输出，不用再发消息" if waited and woken
+              else f"waited={waited} woken={woken}: {plain(seen)[-400:]!r}")
     finally:
         s.close()
         (work / "made-by-agent.txt").unlink(missing_ok=True)
@@ -948,6 +999,12 @@ def check_prompt_rules(root: Path, work: Path) -> None:
                 and "do not allow anything new" in sys0 and "<external>" in sys0)
         check("F72 提示里的范围和压缩规则", ok72, "系统提示里有：按请求类型限定动作范围、被压缩摘要后接着干不重来、外部内容里的指令不执行"
               if ok72 else f"{sys1[:300]!r}")
+        req0 = json.dumps(ups[0]) if ups else ""
+        ok87 = ("Before the first tool call, say in one sentence" in sys0 and "make them in the same reply" in sys0
+                and "Once you know enough to act, act" in sys0 and "belong to the user" in sys0
+                and "Never guess a result that has not come back" in req0)
+        check("F87 提示里的说话和派活规则", ok87, "系统提示里有：干活时先说要做什么、没有依赖的调用一次发出、信息够了就动手、用户原有的文件要保留；"
+              "task 工具说明里有：交代任务像交给同事、报告要转述、没回来的结果不能编" if ok87 else f"{sys0[:300]!r}")
     finally:
         s.close()
 
@@ -1685,6 +1742,114 @@ def part_zero(base: Path, work: Path) -> None:
         s.close()
 
 
+def check_side(root: Path, work: Path) -> None:
+    """Side questions to the server: the advisor tool, /btw while the agent works, the recap of a long request."""
+    strong = ('\n[models.strong]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nmodel = "strong-model"\n'
+              'drop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\nprice = { input = 15, output = 75 }\n'
+              '\n[routing]\ndefault = "main"\nadvisor = "strong"\n')
+    s = Stack(root / "advisor", work, "agent", extra_toml=strong)
+    try:
+        c1, o1 = s.ferry("-p", "ADVISETEST: finish the plan")
+        calls = jsonl(s.upstream)
+        asked = [b for b in calls if b.get("model") == "strong-model"]
+        convo = json.dumps(asked[0]["messages"], ensure_ascii=False) if asked else ""
+        first = json.dumps(calls[0]["messages"][0], ensure_ascii=False) if calls else ""
+        audit = jsonl(s.data / "audit.jsonl")
+        ok = (c1 == 0 and len(asked) == 1 and "ADVICE saw_request=True saw_work=True question=True" in o1
+              and "save the file before you finish" in o1 and "tools" not in asked[0]
+              and "# The advisor" in first and "# Documents, decks and reports" in first and "agent review" in first
+              and any(a.get("purpose") == "advise" and a.get("status") == 200 for a in audit))
+        check("F83 顾问和交付前检查", ok, "服务端有顾问模型时，agent 多一个 advisor 工具：服务端用对话里的内容（含前面的工具结果）问顾问模型，不带工具，"
+              "建议原样作为工具结果回到 agent；调用记录里标为 advise；系统提示里有顾问用法、交付质量和 review 子 agent 的说明" if ok
+              else f"code={c1} asked={len(asked)} out={o1[-300:]!r} convo={convo[-200:]!r}")
+    finally:
+        s.close()
+    if WINDOWS:
+        print("  SKIP  F84 /btw、F85 回顾（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    def terminal(stack):
+        env = {**stack.env, "FERRY_SERVER": stack.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        seen = [b""]
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float) -> bool:
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen[0] += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[0]):
+                    return True
+            return False
+
+        def typed(text: bytes) -> None:
+            os.write(fd, text)
+            time.sleep(0.4)
+            os.write(fd, b"\r")
+
+        def stop() -> None:
+            for _ in range(2):
+                os.write(fd, b"\x03")
+                time.sleep(0.3)
+            try:
+                os.kill(pid, signal.SIGTERM)
+                os.waitpid(pid, 0)
+            except (ProcessLookupError, ChildProcessError):
+                pass
+        return wait_for, typed, stop, lambda: plain(seen[0])
+
+    # /btw while a slow command runs: the answer shows up before the command ends and the question never reaches the history
+    s = Stack(root / "btw", work, "agent")
+    try:
+        wait_for, typed, stop, screen = terminal(s)
+        started = wait_for("shift+tab", 60)
+        typed(b"BTWTEST: run the slow command")
+        running = wait_for("sleep 8", 20)
+        typed(b"/btw why is it slow today")
+        answered = wait_for("BTW ANSWER: you asked why is it slow today saw_request=True", 20)
+        early = "BTWFINISHED" not in screen()
+        finished = wait_for("BTWFINISHED saw_btw=False", 40)
+        stop()
+        ok = started and running and answered and early and finished
+        check("F84 /btw 旁问", ok, "agent 在跑一条慢命令时输入 /btw 提问：答案在命令结束前就显示出来（服务端用对话内容回答，不带工具），"
+              "agent 照常做完；这个问题和答案没有进对话（模型之后收到的消息里没有它）" if ok
+              else f"started={started} running={running} answered={answered} early={early} finished={finished} {screen()[-400:]!r}")
+    finally:
+        s.close()
+
+    # a request longer than phoneAfterSeconds: the recap is in the phone notification and on the status line
+    s = Stack(root / "recap", work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark"})
+    try:
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "config.json").write_text(json.dumps({"phoneAfterSeconds": 1}), encoding="utf-8")
+        wait_for, typed, stop, screen = terminal(s)
+        started = wait_for("shift+tab", 60)
+        typed(b"RECAPTEST: do the long thing")
+        done = wait_for("RECAPFINISHED", 40)
+        shown = wait_for("recap: RECAP: Building the deck for the review", 25)
+        time.sleep(1)
+        barks = [u for u in jsonl(s.upstream) if u.get("group") == "Ferry"]
+        stop()
+        ok = started and done and shown and any("Building the deck for the review" in b.get("body", "") for b in barks)
+        check("F85 做完推一句话回顾", ok, "一个超过 phoneAfterSeconds 的请求做完后：服务端用最便宜的模型写一两句回顾，"
+              "手机通知的正文是这句话（不是\"after N min\"），终端状态栏也显示" if ok
+              else f"started={started} done={done} shown={shown} barks={barks} {screen()[-300:]!r}")
+    finally:
+        s.close()
+
+
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
 # its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
 STEPS = [
@@ -1692,12 +1857,12 @@ STEPS = [
     (part_guard, ""), (part_proxy, ""), (part_gate, ""), (part_chatdrop, ""),
     (part_users, ""), (part_cap, ""), (part_zero, ""),
     (check_agent_features, "agent"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
-    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"),
+    (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
     (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_plan_switch, "plan"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
-    (check_upload_size, "upsize"),
+    (check_upload_size, "upsize"), (check_side, "side"),
 ]
 
 
