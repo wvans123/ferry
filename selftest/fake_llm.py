@@ -390,6 +390,16 @@ def decide_agent(msgs):
             return ("tool", "ask_user", {"questions": [{"question": "Which format?", "options": [{"label": "Word"}, {"label": "PPT"}],
                                                         "recommended": ["PPT"]}]})
         return ("text", "ASK: " + text_of(tools[-1])[:160])
+    if "PLANTEST" in first:  # propose plan mode, get refused a write, ask to leave plan mode, write
+        steps = [("switch_mode", {"target": "plan", "reason": "PLANREASON: a big change with trade-offs"}),
+                 ("write", {"path": "plan-mode.txt", "content": "done\n"}),
+                 ("switch_mode", {"target": "back", "reason": "PLANREADY: write plan-mode.txt"}),
+                 ("write", {"path": "plan-mode.txt", "content": "done\n"})]
+        if len(tools) < len(steps):
+            return ("tool", steps[len(tools)][0], steps[len(tools)][1])
+        out = [text_of(t) for t in tools]
+        return ("text", f"PLANMODE entered={'plan mode is on' in out[0]} refused={'Plan mode is on' in out[1]} "
+                        f"left={'plan mode is off' in out[2]} wrote={'Successfully wrote' in out[3]}")
     if "LIMITTEST" in first:  # answered by the fallback (an OpenAI-style model) while Claude's account cools down
         if not tools:
             return ("tool", "bash", {"command": "echo fallback-step"})

@@ -776,6 +776,82 @@ def check_steer(root: Path, work: Path) -> None:
         (work / "steer-wrong.txt").unlink(missing_ok=True)
 
 
+def check_plan_switch(root: Path, work: Path) -> None:
+    """The agent proposes plan mode and later asks to leave it; the user answers both questions in the terminal."""
+    if WINDOWS:
+        print("  SKIP  F90 agent 提议计划模式（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    s = Stack(root, work, "agent")
+    seen = b""
+    made = work / "plan-mode.txt"
+    made.unlink(missing_ok=True)
+    try:
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float, since: int = 0) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[since:]):
+                    return True
+            return False
+
+        started = wait_for("shift+tab", 60)
+        os.write(fd, b"PLANTEST: a big change")
+        time.sleep(0.4)
+        os.write(fd, b"\r")
+        proposed = wait_for("Switch to plan mode?", 30) and "PLANREASON" in plain(seen)
+        time.sleep(0.3)
+        mark = len(seen)
+        os.write(fd, b"\r")  # Yes
+        footer = wait_for("plan: read-only (shift+tab)", 15, mark)
+        asked_back = wait_for("Switch to: full access", 30, mark) and "PLANREADY" in plain(seen[mark:])
+        time.sleep(0.3)
+        mark = len(seen)
+        os.write(fd, b"\r")  # Yes
+        done = wait_for("PLANMODE entered=True refused=True left=True wrote=True", 30, mark) and made.exists()
+        restored = "full access: nothing asks (shift+tab)" in plain(seen[mark:])
+        # keep reading while ferry quits: on macOS a full terminal buffer blocks its writes, and then it never exits
+        for _ in range(2):
+            os.write(fd, b"\x03")
+            wait_for("\0", 0.3)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            for _ in range(50):
+                if os.waitpid(pid, os.WNOHANG)[0]:
+                    break
+                wait_for("\0", 0.1)
+            else:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        ok = started and proposed and footer and asked_back and done and restored
+        check("F90 agent 提议计划模式", ok, "agent 提议进计划模式，问你同意后底栏变成只读规划，写文件被拒；计划好后 agent 请求开始，"
+              "再问你，同意后回到原来的模式，文件写成" if ok
+              else f"started={started} proposed={proposed} footer={footer} asked_back={asked_back} done={done} "
+                   f"restored={restored}: {plain(seen)[-600:]!r}")
+    finally:
+        s.close()
+        made.unlink(missing_ok=True)
+
+
 def check_team(root: Path, work: Path) -> None:
     """Ferry run by Paperclip (its pi adapter): the team tool works the board; only Ferry's models are listed."""
     import threading
@@ -1788,7 +1864,7 @@ STEPS = [
     (part_users, ""), (part_cap, ""), (part_zero, ""),
     (check_agent_features, "agent"), (check_memory_overwrite, "memow"), (check_web_browser, "web"), (check_gateway, "gateway"),
     (check_resume_upload, "resume"), (check_v016, "v016"), (check_context_and_mcp, "ctx"), (check_compact_mid_run, "compact"),
-    (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_team, "team"),
+    (check_project_mcp, "pmcp"), (check_tui, "tui"), (check_steer, "steer"), (check_plan_switch, "plan"), (check_team, "team"),
     (check_v019, "v019"), (check_v022, "v022"), (check_prompt_rules, "rules"), (check_v023, "v023"),
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
