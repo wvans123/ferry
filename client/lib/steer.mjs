@@ -2,7 +2,9 @@
 //
 //   Enter         while the agent works: your message waits and goes in at the next step (pi's own "steering")
 //   Enter again   on an empty input line: interrupt now. What the agent is writing is stopped and tool calls it has not
-//                 started are skipped; a tool that is already running (a build, the tests) is allowed to finish.
+//                 started are skipped; a tool that is already running (a build, the tests) gets about 3 seconds to
+//                 finish, then it is stopped (its whole process tree is killed, its output so far stays and its result
+//                 says the user interrupted). A long or hung command never blocks the interruption.
 //                 Then your message goes in as a normal message, followed by a note to the agent: it was interrupted,
 //                 what it was doing at that moment, and that your message is a change of course to re-plan around.
 //   Alt+Enter     after the agent has finished
@@ -12,6 +14,9 @@
 // The input box is pi's (InteractiveMode, not exported), so it is patched by file like trim.mjs does.
 import { currentTodo } from "./tools.mjs";
 
+/** How long an interruption waits for a running tool before stopping it. */
+export const STEER_GRACE_MS = 3000;
+
 export const steerState = {
 	pending: null,      // { text, doing, waitedFor } while an interruption is on its way
 	redirecting: false, // true while the interrupted run is stopped and the new one starts (goal mode keeps going)
@@ -19,6 +24,7 @@ export const steerState = {
 	doing: "",          // what the agent is doing, for the note
 	skipped: 0,         // tool calls not run because of the interruption
 	waiter: null,
+	stopping: false,    // the running tool is being stopped by the interruption (its result gets a line saying so)
 	request: "",        // the user's request the agent was working on (the note quotes it)
 };
 
@@ -30,8 +36,9 @@ function describe(tool, args) {
 }
 
 /** What the agent is told after your message (exported for tests). */
-export function steerNote({ doing, waitedFor, partial, request }, skipped = 0, todo = currentTodo()) {
-	const at = waitedFor ? `running ${waitedFor}; it was allowed to finish and its result is above`
+export function steerNote({ doing, waitedFor, stopped, partial, request }, skipped = 0, todo = currentTodo()) {
+	const at = waitedFor ? (stopped ? `running ${waitedFor}; it did not finish within ${STEER_GRACE_MS / 1000} seconds, so the running command was stopped and its output so far is above`
+		: `running ${waitedFor}; it was allowed to finish and its result is above`)
 		: doing ? doing : "working";
 	const asked = request ? request.replace(/\s+/g, " ").trim() : "";
 	return "[Ferry: the user's message just before this note interrupted you while you were working" +
@@ -45,6 +52,15 @@ export function steerNote({ doing, waitedFor, partial, request }, skipped = 0, t
 		"something you did was wrong, say which of your changes need undoing and fix them; update the to-do list); " +
 		"or something the user forgot to say (take it in, adjust what is affected, including work already done, and carry on). " +
 		"Where it conflicts with your earlier plan, it wins; the rest of the request still stands unless it says otherwise.]";
+}
+
+/** Wait for the running tool (st.waiter is called when the turn ends), at most ms. Resolves "idle", "finished" or "timeout". */
+export function waitForTool(st, ms) {
+	if (!st.running) return Promise.resolve("idle");
+	return new Promise((done) => {
+		const t = setTimeout(() => done("timeout"), ms);
+		st.waiter = () => { clearTimeout(t); done("finished"); };
+	});
 }
 
 const SKIPPED = "Not run: the user interrupted with new instructions (they follow).";
@@ -74,6 +90,10 @@ export function createSteer() {
 			st.skipped++;
 			return { block: true, reason: SKIPPED };
 		});
+		pi.on("tool_result", (e) => {
+			if (!st.stopping || e.parentToolCallId || !e.isError) return undefined;
+			return { content: [...(e.content ?? []), { type: "text", text: "[Stopped: the user interrupted, so this command was killed before it finished. The output above is partial.]" }] };
+		});
 		pi.on("turn_end", () => {
 			if (st.pending && st.waiter) st.waiter();
 		});
@@ -98,10 +118,12 @@ async function steerNow(mode) {
 	st.skipped = 0;
 	mode.updatePendingMessagesDisplay();
 	mode.ui.requestRender();
-	if (st.running) await new Promise((done) => (st.waiter = done)); // a tool is running: let it finish
+	// a tool is running: give it a moment to finish, then stop it (abort kills the command's whole process tree)
+	const waited = await waitForTool(st, STEER_GRACE_MS);
 	st.waiter = null;
 	if (st.pending !== p) return true; // cancelled with Esc
 	st.redirecting = true;
+	if (waited === "timeout" && st.running) { p.stopped = true; st.stopping = true; }
 	try {
 		await session.abort();
 		// a reply stopped half-way is left out of what the model sees; tell it the gist, so "no, not that" makes sense
@@ -118,6 +140,7 @@ async function steerNow(mode) {
 	} finally {
 		st.pending = null;
 		st.redirecting = false;
+		st.stopping = false;
 		mode.updatePendingMessagesDisplay();
 		mode.ui.requestRender();
 	}
@@ -157,7 +180,7 @@ export async function installSteerKeys() {
 			const p = steerState.pending;
 			if (p) {
 				if (!c.children.length) c.addChild(new Spacer(1));
-				const when = steerState.running || p.waitedFor ? " (when the running tool finishes)" : "";
+				const when = steerState.running || p.waitedFor ? " (waits 3 s for the running command, then stops it)" : "";
 				c.addChild(new TruncatedText(theme.fg("warning", `Interrupting${when}: ${p.text}`), 1, 0));
 			} else if (this.session.getSteeringMessages().length && this.session.isStreaming) {
 				c.addChild(new TruncatedText(theme.fg("dim", "↳ Enter on an empty line to interrupt now"), 1, 0));

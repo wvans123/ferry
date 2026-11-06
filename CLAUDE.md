@@ -47,8 +47,9 @@ skill file (the agent calls it with bash) over a new tool definition.
 Keep each change small and cheap: tokens go into reading big files and waiting for tests, so do neither more than
 the change needs.
 
-1. One issue or one module per change. Start a fresh branch from the current main (`claude/<short-name>`); never
-   keep adding to an old branch. One branch, one PR, one small version; squash-merge it and delete the branch.
+1. One issue or one module per change; a PR may also cover several related issues or small fixes. Start a fresh
+   branch from the current main (`claude/<short-name>`); never keep adding to an old branch. One branch, one PR, one
+   small version; squash-merge it and delete the branch.
 2. Read only what the module needs: its own files, the one line that plugs it in, docs/MODULES.md. Do not read the
    big shared files whole (selftest/run.py, server/ferry_server/admin.html, app.py, client/bin/ferry.mjs,
    package-lock.json): grep for the spot you change and read that range.
@@ -70,11 +71,10 @@ the change needs.
    (real DeepSeek) and pushes the result file in evals/results/; compare it with the previous one. Keep
    `python evals/run.py --verify` passing when tasks change.
 
-How the owner splits the work: one main session plans and reviews; each module is built in its own session
-(complex modules with Opus, simple ones with Sonnet), tests run with Haiku; the main session accepts and merges.
+How the owner splits the work: the main session plans and reviews; a task goes to one agent (or one new Sonnet session in the project), not split into many; the main session accepts and merges.
 
 Work comes from real problems: `/report` in ferry turns one into a GitHub issue (posted by the owner's Ferry
-server, label-free, title starts with `[report]`). Take one issue per branch / PR. A real failure that can be
+server, label-free, title starts with `[report]`). One branch / PR may take several related issues. A real failure that can be
 reproduced with made-up content becomes a new task in evals/tasks/.
 
 Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `integrations`
@@ -89,7 +89,7 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
   private addresses, `localSites`, files, and pages the server cannot reach are read on the PC; logins and site
   operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
 - Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses
-  automated sign-in), waits for the sign-in, then connects agent-browser; private-data commands always ask.
+  automated sign-in), waits for the sign-in, then connects agent-browser; `--headed` on a sign-in page is blocked (#30); private-data commands always ask.
 - Models (0.32): each server provider is its own pi provider, so /model shows `kiro/claude-opus-5.5`; "ferry" holds
   `auto` and pooled models. Same-named models are pooled only between providers with `share = true` (0.29's
   `separate` is gone). Client lookups go through `findFerryModel` / `FERRY_PROVIDERS` in config.mjs.

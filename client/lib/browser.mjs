@@ -174,6 +174,38 @@ export function browserHide(opts = {}) {
 	return true;
 }
 
+// ---------- guards against a refused sign-in (issue #30) ----------
+// `agent-browser --headed` is still a controlled browser (CDP, navigator.webdriver), so sign-in pages refuse it. The
+// way in is `ferry browser login`. Two hooks keep the agent from going the other way.
+
+const SIGNIN_URL = /(accounts\.google\.com|login\.microsoftonline\.com|login\.live\.com|appleid\.apple\.com|github\.com\/login|servicelogin|sign-?in|login)/i;
+const LOGIN_ADVICE = "Run `ferry browser login <url>` (long timeout); the user signs in there and you carry on in that window.";
+const REFUSAL = /(This browser or app may not be secure|此浏览器或应用可能不安全|Couldn.t sign you in[\s\S]{0,80}browser|browser[\s\S]{0,40}(is not|isn.t) supported|You can.t get there from here|不支持此浏览器)/i;
+const urlsIn = (text) => String(text ?? "").match(/https?:\/\/[^\s"'<>)]+/gi) ?? [];
+const isShell = (name) => ["bash", "powershell", "job_start"].includes(name);
+
+/** tool_call: a headed agent-browser aimed at a sign-in page is blocked (exported for tests). */
+export function headedSignInGuard(event) {
+	const cmd = String(event?.input?.command ?? "");
+	if (!isShell(event?.toolName) || !/\bagent-browser\b/.test(cmd)) return undefined;
+	if (!/(--headed\b|AGENT_BROWSER_HEADED=(1|true)\b)/i.test(cmd)) return undefined;
+	if (!urlsIn(cmd).some((u) => SIGNIN_URL.test(u))) return undefined;
+	return { block: true, reason: "Sign-in pages refuse a browser under automation. Run `ferry browser login <url>` (long timeout); " +
+		"the user signs in there and you carry on in that window." };
+}
+
+/** tool_result: the output of an agent-browser command shows a sign-in refusal: tell the agent what to do (exported for tests). */
+export function refusalNote(event) {
+	const cmd = String(event?.input?.command ?? "");
+	if (!["bash", "powershell", "job_output"].includes(event?.toolName) || event?.parentToolCallId) return undefined;
+	if (event.toolName !== "job_output" && !/\bagent-browser\b/.test(cmd)) return undefined;
+	const text = (event.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+	if (!REFUSAL.test(text)) return undefined;
+	const page = urlsIn(cmd)[0];
+	return { content: [...event.content, { type: "text",
+		text: `[Ferry: this sign-in page refuses a browser under automation. Run \`ferry browser login ${page ?? "<that page>"}\` (long timeout) and let the user sign in there; then carry on in that window. Do not use --headed.]` }] };
+}
+
 /** The pi extension: the browser skill while the browser is on; close the browser when ferry exits. */
 export function createBrowser(status) {
 	return (pi) => {
@@ -190,7 +222,9 @@ export function createBrowser(status) {
 		let used = false;
 		pi.on("tool_call", (event) => {
 			if (/\bagent-browser\b/.test(String(event.input?.command ?? ""))) used = true;
+			return headedSignInGuard(event);
 		});
+		pi.on("tool_result", (event) => refusalNote(event));
 		pi.on("session_shutdown", () => {
 			if (existsSync(WINDOW_FILE)) browserHide(); // a login window Ferry opened: closed with ferry
 			else if (used) spawnSync(BROWSER_BIN, ["close", "--all"], { timeout: 5000, stdio: "ignore", windowsHide: true });

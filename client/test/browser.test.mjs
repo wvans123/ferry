@@ -116,3 +116,54 @@ test("ferry browser login: an ordinary window, the agent connects once the user 
 	assert.ok(!runs.some((x) => x.startsWith("connect")));
 	assert.equal(browserHide({ run }), false, "nothing left open");
 });
+
+test("a headed agent-browser on a sign-in page is blocked and pointed to ferry browser login (#30)", async () => {
+	const { headedSignInGuard } = await import("../lib/browser.mjs");
+	const bash = (command, toolName = "bash") => ({ toolName, input: { command } });
+	for (const c of [
+		'agent-browser --headed open "https://accounts.google.com/ServiceLogin?continue=https://youtube.com"',
+		"agent-browser --headed open https://login.microsoftonline.com/",
+		"AGENT_BROWSER_HEADED=1 agent-browser open https://github.com/login",
+		"agent-browser open https://appleid.apple.com --headed",
+		"agent-browser --headed open https://example.com/user/sign-in",
+		"agent-browser close && agent-browser --headed open https://www.youtube.com/signin",
+	]) {
+		const r = headedSignInGuard(bash(c));
+		assert.ok(r?.block, c);
+		assert.match(r.reason, /ferry browser login <url>/);
+		assert.match(r.reason, /refuse a browser under automation/);
+	}
+	assert.ok(headedSignInGuard(bash("agent-browser --headed open https://accounts.google.com", "powershell"))?.block);
+	// everything else passes
+	for (const c of [
+		"agent-browser open https://accounts.google.com",                 // not headed: left to the user's choice
+		"agent-browser --headed open https://www.3gpp.org/ftp",          // headed but not a sign-in page
+		"curl --headed https://accounts.google.com",                      // not agent-browser
+		"ferry browser login https://accounts.google.com",
+	]) assert.equal(headedSignInGuard(bash(c)), undefined, c);
+	assert.equal(headedSignInGuard({ toolName: "read", input: { path: "agent-browser --headed https://accounts.google.com" } }), undefined);
+});
+
+test("a sign-in refusal in agent-browser output gets a note to use ferry browser login (#30)", async () => {
+	const { refusalNote } = await import("../lib/browser.mjs");
+	const ev = (command, text, toolName = "bash") => ({ toolName, input: { command }, isError: false, content: [{ type: "text", text }] });
+	let r = refusalNote(ev("agent-browser --headed open https://accounts.google.com/ServiceLogin", "Couldn't sign in\nThis browser or app may not be secure. Try using a different browser."));
+	assert.equal(r.content.length, 2);
+	assert.match(r.content[1].text, /ferry browser login https:\/\/accounts\.google\.com\/ServiceLogin/);
+	assert.match(r.content[0].text, /may not be secure/, "the output stays");
+	r = refusalNote(ev("agent-browser snapshot -i", "此浏览器或应用可能不安全。请尝试使用其他浏览器。"));
+	assert.match(r.content[1].text, /ferry browser login <that page>/);
+	r = refusalNote(ev("agent-browser get text body", "You can't get there from here"));
+	assert.ok(r, "Microsoft's wording");
+	// other output, other commands, other tools: nothing added
+	assert.equal(refusalNote(ev("agent-browser snapshot -i", "Welcome back")), undefined);
+	assert.equal(refusalNote(ev("cat notes.txt", "This browser or app may not be secure")), undefined);
+	assert.equal(refusalNote(ev("x", "This browser or app may not be secure", "read")), undefined);
+});
+
+test("the browser extension wires both guards", async () => {
+	const h = {};
+	createBrowser({ on: true })({ on: (n, f) => { (h[n] ??= []).push(f); } });
+	assert.ok(h.tool_call.some((f) => f({ toolName: "bash", input: { command: "agent-browser --headed open https://accounts.google.com" } })?.block));
+	assert.ok(h.tool_result.some((f) => f({ toolName: "bash", input: { command: "agent-browser open x" }, content: [{ type: "text", text: "This browser or app may not be secure" }] })));
+});

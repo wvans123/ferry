@@ -37,8 +37,8 @@ test("Excel: create, set cells keeping the rest, read values and formulas", () =
 });
 
 /** A one-page PDF with one line of text. */
-function makePdf(text) {
-	const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`;
+function makePdf(text, extraOps = "") {
+	const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET${extraOps}`;
 	const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
 		`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
@@ -57,6 +57,19 @@ test("PDF: text per page", async () => {
 	const t = await readPdf(f);
 	assert.match(t, /1 pages/);
 	assert.match(t, /Hello Ferry PDF/);
+});
+
+test("PDF: pdf.js warnings are not printed", async () => {
+	// An unknown operator makes pdf.js warn while it renders/parses the page; extractText parses the stream.
+	const f = join(dir, "warn.pdf");
+	writeFileSync(f, makePdf("Quiet PDF", "\n1 2 3 zzz\n"), "latin1");
+	const seen = [];
+	const orig = { log: console.log, warn: console.warn };
+	console.log = console.warn = (...a) => seen.push(a.join(" "));
+	let t;
+	try { t = await readPdf(f); } finally { Object.assign(console, orig); }
+	assert.match(t, /Quiet PDF/);
+	assert.deepEqual(seen, []);
 });
 
 // Old binary files. The fixtures were made with LibreOffice from made-up text and repacked to keep only the streams

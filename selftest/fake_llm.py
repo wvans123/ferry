@@ -131,11 +131,16 @@ def decide_agent(msgs):
         notes = [u for u in users if "interrupted you" in u]
         if notes:
             out = " ".join(text_of(m) for m in msgs if m.get("role") == "tool")
+            if "HANG" in users[0]:  # a command that never finishes: the interruption stops it after a few seconds
+                return ("text", f"HUNGSTOP stopped={'was stopped' in notes[-1]} marked={'Stopped: the user interrupted' in out} "
+                                f"finished={'HUNGDONE' in out}")
             order = users[-1].startswith("[Ferry: the user's message") and "TURN" in users[-2]
             return ("text", f"STEERED slow={'SLOWDONE' in out} order={order} ran={'running bash' in notes[-1]} "
                             f"wrote={'writing your next step' in notes[-1]} gist={'explaining at length' in notes[-1]} wish={users[-2][:12]}")
         if users[-1].startswith("TURN"):  # sent the ordinary way (after Esc put it back in the input box)
             return ("text", f"PLAIN {users[-1][:7]}")
+        if "HANG" in users[0] and not [m for m in msgs if m.get("role") == "tool"]:
+            return ("tool", "bash", {"command": "echo HUNGSTART; sleep 60; echo HUNGDONE"})
         if "SLOWTALK" in users[0]:
             return ("slowtext", "I am explaining at length. " * 40)
         if not [m for m in msgs if m.get("role") == "tool"]:

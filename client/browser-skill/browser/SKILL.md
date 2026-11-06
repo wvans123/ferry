@@ -51,6 +51,9 @@ Full reference, matched to the installed version: `agent-browser skills get core
   carry on there with the usual commands. When the window is no longer needed, `ferry browser hide`; the next
   command runs in the background again, still signed in. If it says the window was closed or nobody signed in,
   tell the user and stop that part.
+- A bot wall such as YouTube's "Sign in to confirm you're not a bot" is a login case too: run
+  `ferry browser login https://accounts.google.com/ServiceLogin?continue=<the page>`, never `agent-browser --headed`
+  (a headed window is still under automation and Google refuses the sign-in).
 - A site asks for a permission (camera, location, notifications): never grant it yourself. If the task needs it, open
   the window the same way (`ferry browser login <page>`) and let the user answer the browser's question.
 - A company gateway's confirmation page ("are you sure you want to visit…"): tell the user; do not click through it.

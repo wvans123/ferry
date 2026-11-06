@@ -317,7 +317,9 @@ export function readPptx(path) {
 
 export async function readPdf(path, pages) {
 	const { extractText, getDocumentProxy } = await import("unpdf");
-	const pdf = await getDocumentProxy(new Uint8Array(typeof path === "string" ? readFileSync(path) : path));
+	// verbosity 0 = errors only: pdf.js prints font warnings ("Warning: TT: undefined function") to the console, which
+	// lands in the TUI input box.
+	const pdf = await getDocumentProxy(new Uint8Array(typeof path === "string" ? readFileSync(path) : path), { verbosity: 0 });
 	const { text } = await extractText(pdf, { mergePages: false });
 	let [a, b] = [1, text.length];
 	if (pages) {
