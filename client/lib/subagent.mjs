@@ -5,7 +5,8 @@
 // A subagent runs inside this ferry process, talks to the same Ferry server (as its own conversation) and
 // asks for approval in the main window, exactly like the main agent.
 //
-// Built in: explore (read-only search), research (the web) and general (same tools as the main agent).
+// Built in: explore (read-only search), research (the web), review (checks a finished deliverable against the request)
+// and general (same tools as the main agent).
 // Your own: Markdown files with a name/description/tools header in
 //   <project>/.ferry/agents/, <project>/.claude/agents/ (Claude Code's format) or <FERRY_HOME>/agents/.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -127,6 +128,25 @@ Finish with a report for an agent who has read nothing:
 Keep facts and your own conclusions apart.`,
 	},
 	{
+		name: "review",
+		description: "Read-only. Checks a finished deliverable (a document, a deck, a report, code) against the user's original " +
+			"request, as someone who did not make it. Give it the request and the file paths; it lists concrete problems with " +
+			"their locations and does not rewrite anything. Use it before delivering important work.",
+		tools: ["read", "grep", "find", "ls", "office_read", "web_fetch", "web_search"],
+		prompt: `You are a reviewer. You did not make the work you are given; check it against the request, as a careful
+colleague would before it goes to the customer. You cannot change anything.
+- Open the deliverable itself (office_read for Word, Excel, PowerPoint and PDF; read for text and code) and read all of it.
+- Compare it with the request point by point: is everything asked for there, in the form asked for, at the length and
+  for the reader the request names?
+- Check facts, numbers, names and dates against the sources named in the task; recompute any arithmetic. Check that
+  parts agree with each other (figures, terms, section references, the summary against the body).
+- Look for thin or generic passages, empty or placeholder text, broken layout you can see in the text, and claims
+  nothing supports.
+Finish with a short list of concrete problems, most serious first, each with where it is (file, page or slide, section)
+and what is wrong. Do not rewrite the work and do not list what is fine; if you find nothing wrong, say what you
+checked in one or two lines.`,
+	},
+	{
 		name: "general",
 		description: "Does a self-contained piece of work with the same tools as you (reading, editing, running commands; " +
 			"the user approves changes as usual). Use it for multi-step side tasks whose details the main conversation does not need.",
@@ -170,7 +190,7 @@ export function discoverAgents(cwd) {
 }
 
 const Params = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Which agent: explore, research, general, or one listed in the description. Default general." })),
+	agent: Type.Optional(Type.String({ description: "Which agent: explore, research, review, general, or one listed in the description. Default general." })),
 	description: Type.String({ description: "3 to 6 words saying what the subagent does (shown to the user)" }),
 	prompt: Type.String({ description: "The complete task. The subagent sees nothing of this conversation, so include " +
 		"every detail it needs and say exactly what to report back." }),
@@ -204,10 +224,16 @@ export function createSubagents(cfg, deps) {
 			name: "task",
 			label: "Subagent",
 			description: "Hand a self-contained job to a subagent with its own fresh context; you get back only its final " +
-				"report. Use it for wide searches (agent explore) or side tasks with many steps (agent general), so the " +
-				"main conversation stays small. Several task calls in one reply run at the same time. Do not use it for a " +
-				"single file read or a quick search you can do yourself. To ask a finished subagent more, pass resume with " +
-				"its id instead of starting a new one.\nAgents:\n" +
+				"report. Use it for independent pieces of work that can run side by side, wide searches across many files or " +
+				"pages (agent explore or research), or side tasks with many steps (agent general), so this conversation keeps " +
+				"the conclusion and not the material. Several task calls in one reply run at the same time.\n" +
+				"A subagent costs more than it looks: it knows only what you write in prompt, details get lost on the way there " +
+				"and back, and several at once spend many tokens. A few reads, or a search whose target you know, do yourself.\n" +
+				"Write prompt as for a capable colleague who has seen nothing: the goal, what you already know or have ruled " +
+				"out, which files, pages or folders to look at, how far to go, and what to report.\n" +
+				"Once you hand something off, do not also do it yourself. The user does not see the report: tell them what " +
+				"matters in it. Never guess a result that has not come back; if the user asks, say it is still running.\n" +
+				"To ask a finished subagent more, pass resume with its id instead of starting a new one.\nAgents:\n" +
 				agents.map((a) => `- ${a.name}: ${a.description}`).join("\n"),
 			promptSnippet: "Delegate searches and side tasks to subagents with fresh context",
 			parameters: Params,
@@ -341,7 +367,7 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi }) {
 		noThemes: true,
 		extensionFactories: [
 			{ name: "ferry-sync", factory: deps.makeSync() },
-			{ name: "ferry-prompt", factory: createPrompt(cfg) },
+			{ name: "ferry-prompt", factory: createPrompt(cfg, { subagent: true }) },
 			{ name: "ferry-guard", factory: createGuard(cfg, { ui: ctx?.hasUI ? ctx.ui : undefined, label }) },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg) },
 			{ name: "ferry-web", factory: createWeb(cfg) },

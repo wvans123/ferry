@@ -38,8 +38,8 @@ export function createTodo() {
 	return (pi) => {
 		let todos = [];
 		const show = (ctx) => {
-			if (!ctx?.hasUI) return;
 			shared = todos;
+			if (!ctx?.hasUI) return;
 			const open = todos.filter((t) => t.status !== "completed").length;
 			ctx.ui.setWidget("ferry-todo", todos.length && open ? [`To-do (${todos.length - open}/${todos.length} done)`,
 				...render(todos).split("\n").map((l) => `  ${l}`)] : undefined);

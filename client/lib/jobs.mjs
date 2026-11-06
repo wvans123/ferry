@@ -3,7 +3,9 @@
 //   job_output  see how it is doing: state and the latest output
 //   job_stop    stop it
 // Subagents started with task(background: true) are listed here too. /tasks shows everything and can stop it.
-// When a job ends you get a notice, and the agent is told with your next message. Jobs stop when ferry exits.
+// When a job ends you get a notice and the agent is told. In the window it takes the result up at once, like Cursor and
+// Claude Code: a turn of its own when it was idle, its next step when it is working. A job you stopped, ferry -p, or
+// wakeOnJobEnd = false: it is told with your next message. Jobs stop when ferry exits.
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,7 +14,8 @@ import { FERRY_HOME, findBash } from "./config.mjs";
 
 const jobs = new Map(); // id -> job, shared by the main agent and its subagents
 let nextId = 1;
-let hooks = { ui: null, tell: () => {} };
+let hooks = { ui: null, wake: false, tell: () => {} };
+const WAKE_NOTE = "\n(From Ferry, not the user: use the result now; if nothing else needs doing, tell the user briefly what came of it.)";
 const DIR = join(FERRY_HOME, "jobs", String(process.pid));
 
 function tailOf(text, lines = 40, maxBytes = 8000) {
@@ -31,7 +34,8 @@ function finished(job) {
 		: `exited with code ${job.code}`;
 	hooks.ui?.notify(`${what} ${how}. /tasks to see it.`, job.status === "done" ? "info" : "warning");
 	const body = job.kind === "subagent" ? (job.report ?? job.error ?? "") : tailOf(output(job), 30);
-	hooks.tell(`${what} ${how}.${body ? `\n${job.kind === "subagent" ? "Report" : "Last output"}:\n${body}` : ""}`);
+	const wake = hooks.wake && job.status !== "stopped";
+	hooks.tell(`${what} ${how}.${body ? `\n${job.kind === "subagent" ? "Report" : "Last output"}:\n${body}` : ""}${wake ? WAKE_NOTE : ""}`, wake);
 }
 
 function output(job) {
@@ -130,12 +134,16 @@ export const listJobs = () => [...jobs.values()];
 export const describeJob = (j) => `#${j.id} ${j.kind === "subagent" ? (j.foreground ? "subagent" : "background subagent") : "background command"} ` +
 	`${j.status} ${age(j)}  ${j.name}`;
 
-export function createJobs(deps = { todoText: () => "" }) {
+export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
 	return (pi) => {
-		hooks.tell = (text) => pi.sendMessage({ customType: "ferry-job", content: text, display: false }, { deliverAs: "nextTurn" });
+		// steer: at the next step while the agent works; triggerTurn: a run of its own when it is idle
+		hooks.tell = (text, wake) => pi.sendMessage({ customType: "ferry-job", content: text, display: false },
+			wake ? { triggerTurn: true, deliverAs: "steer" } : { deliverAs: "nextTurn" });
+		hooks.wake = false;
 		pi.on("session_start", (_e, ctx) => {
 			if (!ctx.hasUI) return;
 			hooks.ui = ctx.ui;
+			hooks.wake = cfg.wakeOnJobEnd !== false;
 			refresh = () => {
 				const running = [...jobs.values()].filter((j) => j.status === "running");
 				ctx.ui.setWidget("ferry-jobs", running.length ? [`Running (${running.length}, /tasks to see them):`,
@@ -143,6 +151,7 @@ export function createJobs(deps = { todoText: () => "" }) {
 			};
 		});
 		pi.on("session_shutdown", () => {
+			hooks.wake = false;
 			for (const j of jobs.values()) stopJob(j);
 		});
 
