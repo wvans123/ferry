@@ -14,10 +14,19 @@ Streams text in 3-character pieces and tool arguments in two pieces.
 import json
 import re
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG, MODE = sys.argv[1], sys.argv[2]
+# requests arrive on parallel threads (the server asks several search sources at once), and appends to one file from
+# several handles are not atomic on Windows: a line written at the same moment can overwrite another
+LOG_LOCK = threading.Lock()
+
+
+def log(row: dict) -> None:
+    with LOG_LOCK, open(LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 9100
 state = {"next_file": 0}
 REJECT = ("store", "max_completion_tokens")
@@ -644,8 +653,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):  # the provider's model list, for the admin page's "fetch models"
         if self.path.startswith("/search"):  # a Bing-like results page, for web_search
-            with open(LOG, "a", encoding="utf-8") as f:  # so a test can see what the client asked Bing for
-                f.write(json.dumps({"bing_path": self.path, "bing_cookie": self.headers.get("Cookie", "")}) + "\n")
+            log({"bing_path": self.path, "bing_cookie": self.headers.get("Cookie", "")})  # what the client asked Bing for
             return self.send_html('<ol><li class="b_algo"><h2><a href="http://127.0.0.1:9100/page.html">Ferry test page</a>'
                                   '</h2><div class="b_caption"><p>A page about ferries.</p></div></li></ol>')
         if self.path == "/gated":  # a site the company gateway wants confirmed first
@@ -690,8 +698,7 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
         body = json.loads(raw)
-        with open(LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(body, ensure_ascii=False) + "\n")
+        log(body)
         if self.path.endswith("/images/generations"):  # an image model: a tiny real PNG
             import base64
             png = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
