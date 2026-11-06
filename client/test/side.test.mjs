@@ -132,4 +132,5 @@ test("the review subagent is built in, read-only, and can read Office files", ()
 	assert.ok(r.tools.includes("office_read"));
 	assert.ok(!r.tools.some((t) => ["write", "edit", "bash"].includes(t)));
 	assert.match(r.prompt, /did not make/);
+	assert.match(r.prompt, /review checklist .*skills[\\/]review[\\/]SKILL\.md/);
 });

@@ -78,6 +78,7 @@ export const DEFAULTS = {
 	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
 	caFile: "", // a PEM file with more certificates to trust, e.g. the company proxy's, if the computer's own are not enough
+	officeAuthor: "", // the name on Word tracked changes and comments the agent makes; empty = the Office user name (as Word does)
 };
 
 /** The settings worth changing, shown by /config and `ferry config`: key -> [type, explanation, choices?]. */
@@ -127,6 +128,7 @@ export const ADVANCED_SETTINGS = {
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],
 	systemCerts: ["boolean", "also trust the HTTPS certificates this computer trusts (needed when a company proxy checks HTTPS)"],
 	caFile: ["string", "a PEM file with more certificates to trust (full path), e.g. the company proxy's; empty = none"],
+	officeAuthor: ["string", "the name on Word tracked changes and comments the agent makes (empty: the Office user name, as Word itself uses)"],
 };
 
 /** "400k", "1m", "1.5M", "200000" -> tokens; 0 when it is not a size. */

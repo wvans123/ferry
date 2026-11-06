@@ -354,6 +354,35 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "office_read", {"path": "docs", "out": "docs-txt"})
         return ("text", "DOCFOLDER: " + text_of(tools[-1])[:600].replace("\n", " | "))
+    if "CRCOVERTEST" in first:  # a CR: cover cells filled without tracking, a new paragraph in the clause as a tracked change
+        steps = [("office_edit", {"path": "cr.docx", "track": False, "edits": [
+                     {"fill": "Faster reporting", "label": "Title:"}, {"fill": "Example Corp", "label": "Source to WG:"}]}),
+                 ("office_edit", {"path": "cr.docx", "author": "Example Delegate", "edits": [
+                     {"insert": "The UE shall also log the report.", "after": "every 10 s."}]}),
+                 ("office_read", {"path": "cr.docx"})]
+        if len(tools) < len(steps):
+            return ("tool", *steps[len(tools)])
+        return ("text", "CRCOVER: " + text_of(tools[-1])[:800].replace("\n", " | "))
+    if "WORDCOMMENTTEST" in first:  # a comment on text, read back
+        if not tools:
+            return ("tool", "office_edit", {"path": "cr.docx", "author": "Example Delegate", "date": "2026-11-06",
+                                            "edits": [{"comment": "Why 10 s?", "find": "every 10 s"}]})
+        if len(tools) == 1:
+            return ("tool", "office_read", {"path": "cr.docx"})
+        return ("text", "WORDCOMMENT: " + text_of(tools[-1])[:800].replace("\n", " | "))
+    if "ACCEPTALLTEST" in first:  # every tracked change accepted
+        if not tools:
+            return ("tool", "office_edit", {"path": "cr.docx", "edits": [{"accept": "all"}]})
+        if len(tools) == 1:
+            return ("tool", "office_read", {"path": "cr.docx"})
+        return ("text", "ACCEPTALL: " + text_of(tools[-2])[:200].replace("\n", " ") + " || " + text_of(tools[-1])[:800].replace("\n", " | "))
+    if "NESTEDINSTEST" in first:  # words inside another author's tracked insertion changed
+        if not tools:
+            return ("tool", "office_edit", {"path": "alice.docx", "author": "Bob",
+                                            "edits": [{"find": "send the report", "replace": "send a short report"}]})
+        if len(tools) == 1:
+            return ("tool", "office_read", {"path": "alice.docx"})
+        return ("text", "NESTEDINS: " + text_of(tools[-1])[:600].replace("\n", " | "))
     if "OFFICETEST" in first:
         names = [n for m in msgs if m.get("role") == "assistant" for n in [c["function"]["name"] for c in (m.get("tool_calls") or [])]]
         if not names:

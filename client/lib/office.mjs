@@ -1,11 +1,14 @@
 // Office files without Office: read Word (with tracked changes and comments), Excel, PowerPoint and PDF; change Word
-// text as tracked changes and Excel cells; create Word and Excel files. Works on the files themselves, so nothing
-// needs to be installed and no window on the screen is touched. A .docx/.xlsx/.pptx is a zip of XML files.
+// documents as tracked changes (wordedit.mjs) and Excel cells; create Word and Excel files. Works on the files
+// themselves, so nothing needs to be installed and no window on the screen is touched. A .docx/.xlsx/.pptx is a zip of XML files.
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { Type } from "typebox";
 import { wrapExternal } from "./external.mjs";
+import { editDocx, officeUser } from "./wordedit.mjs";
+
+export { editDocx };
 
 const MAX_OUT = 60_000;
 
@@ -36,6 +39,7 @@ function paragraphText(p, show = true) {
 	};
 	while ((m = re.exec(p))) {
 		const tok = m[0];
+		if (tok.endsWith("/>") && /^<w:(ins|del)\b/.test(tok)) continue; // a paragraph mark inserted or deleted, no text
 		if (tok.startsWith("<w:ins")) mode = "ins";
 		else if (tok === "</w:ins>" || tok === "</w:del>") mode = "";
 		else if (tok.startsWith("<w:del") && !tok.startsWith("<w:delText")) mode = "del";
@@ -87,95 +91,23 @@ export function readDocx(path, { revisions = "show" } = {}) {
 		const list = /<w:numPr>/.test(b) ? "- " : "";
 		lines.push(h ? `${"#".repeat(h)} ${text}` : `${list}${text}`);
 	}
-	const comments = [...z.text("word/comments.xml").matchAll(/<w:comment\b([^>]*)>([\s\S]*?)<\/w:comment>/g)].map((c) =>
-		`[comment ${attr(c[1], "w:id")}] ${unesc(attr(c[1], "w:author") ?? "")}: ${(c[2].match(/<w:p[ >][\s\S]*?<\/w:p>/g) ?? []).map((p) => paragraphText(p)).join(" ")}`);
+	// a reply names its parent's last paragraph in commentsExtended.xml
+	const parentOf = Object.fromEntries([...z.text("word/commentsExtended.xml").matchAll(/<w15:commentEx\b([^>]*?)\/?>/g)]
+		.map((m) => [attr(m[1], "w15:paraId"), attr(m[1], "w15:paraIdParent")]));
+	const all = [...z.text("word/comments.xml").matchAll(/<w:comment\b([^>]*)>([\s\S]*?)<\/w:comment>/g)].map((c) =>
+		({ id: attr(c[1], "w:id"), head: c[1], paras: c[2].match(/<w:p[ >][\s\S]*?<\/w:p>/g) ?? [] }));
+	const byPara = Object.fromEntries(all.flatMap((c) => c.paras.map((p) => [attr(p, "w14:paraId"), c.id])));
+	const comments = all.map((c) => {
+		const parent = byPara[parentOf[attr(c.paras.at(-1) ?? "", "w14:paraId")]];
+		return `[comment ${c.id}] ${unesc(attr(c.head, "w:author") ?? "")}${parent !== undefined ? ` (reply to ${parent})` : ""}: ${c.paras.map((p) => paragraphText(p)).join(" ")}`;
+	});
 	let out = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 	if (tracked && show) out = `(tracked changes: {+inserted+} {-deleted-})\n\n${out}`;
 	if (comments.length) out += `\n\nComments:\n${comments.join("\n")}`;
 	return out;
 }
 
-/** Runs of a paragraph that carry visible text: [{ start, end, rPr, text, plain }] with offsets into the paragraph XML. */
-function runsOf(p) {
-	const dels = [...p.matchAll(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/g)].map((m) => [m.index, m.index + m[0].length]);
-	const runs = [];
-	for (const m of p.matchAll(/<w:r(?:\s[^>]*)?>([\s\S]*?)<\/w:r>/g)) {
-		if (dels.some(([a, b]) => m.index >= a && m.index < b)) continue;
-		const inner = m[1];
-		const rPr = /<w:rPr>[\s\S]*?<\/w:rPr>/.exec(inner)?.[0] ?? "";
-		const rest = inner.replace(rPr, "");
-		const text = [...rest.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/>/g)].map((t) => (t[0] === "<w:tab/>" ? "\t" : unesc(t[1]))).join("");
-		const plain = rest.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>|<w:tab\/>|<w:lastRenderedPageBreak\/>|<w:proofErr[^>]*\/>/g, "").trim() === "";
-		if (text) runs.push({ start: m.index, end: m.index + m[0].length, rPr, text, plain });
-	}
-	return runs;
-}
-
 const tEl = (s) => `<w:t${/^\s|\s$/.test(s) ? ' xml:space="preserve"' : ""}>${esc(s)}</w:t>`;
-const runXml = (rPr, s) => `<w:r>${rPr}${tEl(s)}</w:r>`;
-
-/** Replace text in a .docx, as tracked changes by default. edits: [{ find, replace, all }]. Returns per-edit counts. */
-export function editDocx(path, edits, { track = true, author = "Ferry", out = path } = {}) {
-	const z = openZip(path);
-	let doc = z.text("word/document.xml");
-	let nextId = Math.max(1000, ...[...doc.matchAll(/w:id="(\d+)"/g)].map((m) => +m[1] + 1));
-	const date = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-	const rev = (kind) => `<w:${kind} w:id="${nextId++}" w:author="${esc(author)}" w:date="${date}">`;
-	const report = [];
-	for (const e of edits) {
-		let count = 0;
-		let skipped = 0;
-		const find = String(e.find ?? "");
-		if (!find) throw new Error("an edit has an empty find");
-		const total = (doc.match(/<w:p[ >][\s\S]*?<\/w:p>/g) ?? []).reduce((n, p) => n + paragraphText(p, false).split(find).length - 1, 0);
-		if (total === 0) throw new Error(`Not found: "${find.slice(0, 80)}" (text must be inside one paragraph)`);
-		if (total > 1 && !e.all) throw new Error(`"${find.slice(0, 80)}" occurs ${total} times: make it longer to be unique, or set all: true`);
-		doc = doc.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (p) => {
-			let guard = 0;
-			let from = 0; // search after the last replacement, so a replacement that contains the text is not replaced again
-			for (;;) {
-				const runs = runsOf(p);
-				const text = runs.map((r) => r.text).join("");
-				const at = text.indexOf(find, from);
-				if (at < 0 || guard++ > 50) return p;
-				let pos = 0;
-				const hit = [];
-				for (const r of runs) {
-					const a = pos;
-					const b = pos + r.text.length;
-					pos = b;
-					if (b <= at || a >= at + find.length) continue;
-					hit.push({ r, from: Math.max(0, at - a), to: Math.min(r.text.length, at + find.length - a) });
-				}
-				if (hit.some((h) => !h.r.plain)) { // a field, picture or note in the way: leave this one to Word
-					skipped++;
-					from = at + find.length;
-					if (!e.all) return p;
-					continue;
-				}
-				const pieces = [];
-				hit.forEach((h, i) => {
-					const before = h.r.text.slice(0, h.from);
-					const mid = h.r.text.slice(h.from, h.to);
-					const after = h.r.text.slice(h.to);
-					let x = before ? runXml(h.r.rPr, before) : "";
-					if (track) x += `${rev("del")}<w:r>${h.r.rPr}<w:delText${/^\s|\s$/.test(mid) ? ' xml:space="preserve"' : ""}>${esc(mid)}</w:delText></w:r></w:del>`;
-					if (i === hit.length - 1 && e.replace) x += track ? `${rev("ins")}${runXml(hit[0].r.rPr, e.replace)}</w:ins>` : runXml(hit[0].r.rPr, e.replace);
-					if (after) x += runXml(h.r.rPr, after);
-					pieces.push([h.r.start, h.r.end, x]);
-				});
-				for (const [a, b, x] of pieces.reverse()) p = p.slice(0, a) + x + p.slice(b);
-				from = at + (e.replace ?? "").length;
-				count++;
-				if (!e.all) return p;
-			}
-		});
-		report.push({ find: find.slice(0, 60), replaced: count, skipped });
-	}
-	z.put("word/document.xml", doc);
-	writeFileSync(out, zipSync(z.files));
-	return report;
-}
 
 // ---------- Excel ----------
 
@@ -910,7 +842,8 @@ export function createXlsx(path, sheets) {
 
 const cut = (s) => (s.length > MAX_OUT ? `${s.slice(0, MAX_OUT)}\n...(cut at ${MAX_OUT / 1000}k characters: ask for fewer pages, a sheet or a range)` : s);
 
-export function createOffice() {
+/** cfg.officeAuthor: the name on Word changes and comments when the agent gives none (empty: Office's user name). */
+export function createOffice(cfg = {}) {
 	return (pi) => {
 		pi.registerTool({
 			name: "office_read",
@@ -958,19 +891,43 @@ export function createOffice() {
 		pi.registerTool({
 			name: "office_edit",
 			label: "Edit Office",
-			description: "Change a Word or Excel file in place, keeping its formatting. Word: replace text, by default as tracked " +
-				"changes (like a 3GPP change request: the reader sees what was deleted and inserted); find must be inside one " +
-				"paragraph and unique unless all: true. Excel: set cells (numbers, text, or formulas starting with =). " +
-				"Read the file with office_read first. To make a new file use office_create.",
-			promptSnippet: "Change Word text as tracked changes, or Excel cells, keeping the formatting",
+			description: "Change a Word or Excel file in place, keeping its formatting. Word, by default as tracked changes (like " +
+				"a 3GPP change request: the reader sees what was deleted and inserted). Each edit is one of: {find, replace} " +
+				"replace text (inside one paragraph, unique unless all: true); {insert, after|before, style?} new paragraph(s) " +
+				"next to the paragraph holding that text, formatted like it; {deleteParagraph, through?} delete that paragraph " +
+				"(through another one); {fill, label|table+row+col|after} write into an empty table cell (label = the text of " +
+				"the cell to its left, e.g. \"Title:\") or the next empty paragraph after a text; {comment, find} or " +
+				"{comment, replyTo} a comment on text, or a reply to comment N; {accept|reject: \"all\" or an author} resolve " +
+				"tracked changes. Any edit may set track for itself. The result is checked before it is saved; on a problem " +
+				"nothing is saved. Excel: set cells (numbers, text, or formulas starting with =). Read the file with office_read " +
+				"first. To make a new file use office_create.",
+			promptSnippet: "Change Word as tracked changes (text, paragraphs, empty cells, comments, accept/reject), or Excel cells",
 			parameters: Type.Object({
 				path: Type.String(),
 				edits: Type.Optional(Type.Array(Type.Object({
-					find: Type.String(), replace: Type.String({ description: "Empty to delete" }),
+					find: Type.Optional(Type.String({ description: "Text to replace, or to comment on" })),
+					replace: Type.Optional(Type.String({ description: "Empty to delete" })),
 					all: Type.Optional(Type.Boolean()),
-				}), { description: "Word: text replacements" })),
+					insert: Type.Optional(Type.String({ description: "New paragraph text; one paragraph per line" })),
+					after: Type.Optional(Type.String({ description: "insert / fill: text of the paragraph to go after" })),
+					before: Type.Optional(Type.String({ description: "insert: text of the paragraph to go before" })),
+					style: Type.Optional(Type.String({ description: "insert: paragraph style id (default: the neighbour's)" })),
+					deleteParagraph: Type.Optional(Type.String({ description: "Text in the paragraph to delete" })),
+					through: Type.Optional(Type.String({ description: "deleteParagraph: text in the last paragraph to delete" })),
+					fill: Type.Optional(Type.String({ description: "Text for an empty cell or paragraph" })),
+					label: Type.Optional(Type.String({ description: "fill: text of the cell left of the empty one" })),
+					table: Type.Optional(Type.Number({ description: "fill: table number, from 1" })),
+					row: Type.Optional(Type.Number()), col: Type.Optional(Type.Number()),
+					comment: Type.Optional(Type.String({ description: "Comment text" })),
+					replyTo: Type.Optional(Type.Number({ description: "comment: reply to comment N" })),
+					accept: Type.Optional(Type.String({ description: "\"all\" or an author's name" })),
+					reject: Type.Optional(Type.String({ description: "\"all\" or an author's name" })),
+					track: Type.Optional(Type.Boolean({ description: "This edit tracked or not (default: the call's track)" })),
+				}), { description: "Word: the changes, applied in order" })),
 				track: Type.Optional(Type.Boolean({ description: "Word: tracked changes (default true)" })),
-				author: Type.Optional(Type.String({ description: "Word: name on the tracked changes (default Ferry)" })),
+				author: Type.Optional(Type.String({ description: "Word: name on the changes and comments (default: the Office user name)" })),
+				initials: Type.Optional(Type.String({ description: "Word: initials on comments" })),
+				date: Type.Optional(Type.String({ description: "Word: date on the changes and comments, e.g. 2026-11-06 (default now)" })),
 				cells: Type.Optional(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]),
 					{ description: "Excel: { \"B3\": 42, \"C3\": \"text\", \"D3\": \"=SUM(B1:B3)\" }" })),
 				sheet: Type.Optional(Type.String({ description: "Excel: sheet name (default the first)" })),
@@ -980,9 +937,12 @@ export function createOffice() {
 				const ext = extname(path).toLowerCase();
 				if (ext === ".docx" || ext === ".docm") {
 					if (!p.edits?.length) throw new Error("Word: give edits");
-					const r = editDocx(path, p.edits, { track: p.track !== false, author: p.author || "Ferry" });
-					const lines = r.map((x) => `"${x.find}": ${x.replaced} replaced${x.skipped ? `, ${x.skipped} skipped (a field or picture inside; change it in Word)` : ""}`);
-					return { content: [{ type: "text", text: `${p.track !== false ? "Tracked changes" : "Changes"} saved in ${path}\n${lines.join("\n")}` }], details: undefined };
+					const me = p.author || cfg.officeAuthor ? null : officeUser();
+					const r = editDocx(path, p.edits, { track: p.track !== false, author: p.author || cfg.officeAuthor || me.author,
+						initials: p.initials || me?.initials, date: p.date });
+					const lines = r.map((x) => x.note ?? `"${x.find}": ${x.replaced} replaced${x.skipped ? `, ${x.skipped} skipped (a field or picture inside; change it in Word)` : ""}`);
+					const tracked = p.track !== false && p.edits.some((e) => e.accept === undefined && e.reject === undefined);
+					return { content: [{ type: "text", text: `${tracked ? "Tracked changes" : "Changes"} saved in ${path} (checked)\n${lines.join("\n")}` }], details: undefined };
 				}
 				if (ext === ".xlsx" || ext === ".xlsm") {
 					if (!p.cells || !Object.keys(p.cells).length) throw new Error("Excel: give cells");

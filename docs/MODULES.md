@@ -53,7 +53,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 搜索和读网页 | `web_search` 经服务端搜（模型自带的搜索，或 Tavily、Brave、博查），`web_fetch` 带问题时由服务端的模型读 | `server/ferry_server/search.py`；客户端在 `web.mjs` | 管理页 → 设置 → 网页搜索；不设就读 Bing 的结果页 | F66、F67 |
 | 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
-| Office | 读写 Word、Excel、PowerPoint、PDF；读旧版 .doc/.xls/.ppt；整个文件夹转成文本 | `client/lib/office.mjs`、`client/skills/office/` | — | F50、F75–F77 |
+| Office | 读写 Word、Excel、PowerPoint、PDF；读旧版 .doc/.xls/.ppt；整个文件夹转成文本；Word 按修订方式改文字、插入删除段落、填空单元格、加批注、接受拒绝修订，保存前检查 | `client/lib/office.mjs`、`wordedit.mjs`、`client/skills/office/`、`client/skills/review/`（review 子 agent 的检查清单） | `officeAuthor` | F50、F75–F77、F101–F104 |
 | 分块上传和重试 | 每个请求体不超过块大小；被网关或 Cloudflare 挡下时重发、减半；子 agent 不因一次失败而停 | `client/lib/upload.mjs` | `chunkBytes` | F80 |
 | 隐藏模型名 | 右下角不显示模型名 | `client/lib/footer.mjs` | `showModel` | 单元测试 |
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
