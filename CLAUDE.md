@@ -48,23 +48,27 @@ Keep each change small and cheap: tokens go into reading big files and waiting f
 the change needs.
 
 1. One issue or one module per change; a PR may also cover several related issues or small fixes. Start a fresh
-   branch from the current main (`claude/<short-name>`); never keep adding to an old branch. One branch, one PR, one
-   small version; squash-merge it and delete the branch.
+   branch from the current main (`claude/<short-name>`); never keep adding to an old branch. One branch, one PR; a
+   feature PR does not bump the version. Squash-merge it once CI is green and delete the branch.
 2. Read only what the module needs: its own files, the one line that plugs it in, docs/MODULES.md. Do not read the
    big shared files whole (selftest/run.py, server/ferry_server/admin.html, app.py, client/bin/ferry.mjs,
    package-lock.json): grep for the spot you change and read that range.
 3. Test locally only what changed: the module's unit tests (`pytest server/tests/test_<name>.py`,
    `node --test client/test/<name>.test.mjs`) and its end-to-end checks, `python selftest/run.py --only F66,F67`
    (`--list` shows which step holds which F; one step takes seconds). The full run (all unit tests and the whole
-   self-test on Linux and Windows, several minutes) is CI's job on the pull request: wait for it and read the result,
-   do not repeat it locally.
+   self-test on Linux and Windows, about 7 minutes) is CI's job on the pull request; do not repeat it locally. Do not
+   sit waiting for it either: open the PR, go on with other work or end the turn, and read the result when it is done
+   (fix it if it is red).
 4. A user-visible behaviour gets an end-to-end check in selftest/run.py with the next free F number, listed in GOAL.md.
-5. Release = `python scripts/bump.py x.y.z` (package.json, package-lock.json, server/pyproject.toml,
-   server/ferry_server/__init__.py). Merging the PR to main publishes it: CI skips tests that already passed on
-   the PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes
-   release v<version>; `ferry update` picks it up.
-6. PR and commit title `Ferry x.y.z: what changed for the user`. The PR description holds the version's record:
-   a table 问题 / 改了什么 / 自测 (versions up to 0.30 are in docs/history/). Update GOAL.md's "最近一次结果" line.
+5. Releases are batched: features collect on main, and when the owner wants the work PC updated, one small release
+   PR runs `python scripts/bump.py x.y.z` (package.json, package-lock.json, server/pyproject.toml,
+   server/ferry_server/__init__.py) and nothing else. Merging it publishes: CI skips tests that already passed on the
+   PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes release
+   v<version>; `ferry update` picks it up. Only a version with no release yet is published, so merging feature PRs
+   publishes nothing.
+6. Feature PR title: what changed for the user; its description is a table 问题 / 改了什么 / 自测. Release PR title
+   `Ferry x.y.z: the features in it`; its description is the version's record: the feature PRs with links and one
+   line each (versions up to 0.30 are in docs/history/). The release PR updates GOAL.md's "最近一次结果" line.
 7. User docs: README.md is the short entry page; details go in docs/USAGE.md (users) and
    docs/SERVER.md (server). Do not let README grow back into a manual.
 8. Before a release that changes how the agent works, the owner runs `python evals/run.py` on their Windows PC

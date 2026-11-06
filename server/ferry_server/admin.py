@@ -152,7 +152,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                               if web_search.search_model(cfg, f"model:{m.id}")],
             "locked": {"session_store": bool(env.get("FERRY_SESSION_STORE")),
                        "max_upstream_bytes": bool(env.get("FERRY_MAX_UPSTREAM_BYTES"))},
-            "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "expose": cfg.expose_models},
+            "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "advisor": cfg.advisor_model, "expose": cfg.expose_models},
             "models": [{"id": m.id, "model": m.model, "base_url": m.base_url, "key_env": m.api_key_env,
                         "provider": m.provider, "ready": m.ready} for m in cfg.models.values()],
             "models_file": str(cfg.models_file or ""), "platform": sys.platform,
@@ -508,7 +508,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         from .pool import groups
         return {"providers": provider_views(), "editable": bool(cfg.models_file), "groups": groups(cfg),
                 "pool": live.pool.state(),
-                "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "expose": cfg.expose_models}}
+                "routing": {"default": cfg.default_model, "summary": cfg.summary_model, "image": cfg.image_model, "advisor": cfg.advisor_model, "expose": cfg.expose_models}}
 
     @app.post("/admin/api/providers/models")
     async def list_remote_models(request: Request):
@@ -603,6 +603,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         routing = {"default": r.get("default") if r.get("default") in ids else ids[0],
                    "summary": r.get("summary") if r.get("summary") in ids else "",
                    "image": r.get("image") if r.get("image") in ids else "",
+                   "advisor": r.get("advisor") if r.get("advisor") in ids else "",
                    "expose": bool(r.get("expose", True))}
         for gone in set(keys) - {p["id"] for p in providers}:
             keys.pop(gone)

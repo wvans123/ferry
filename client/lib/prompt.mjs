@@ -40,6 +40,29 @@ const RESEARCH = [
 		"files you made (half downloads, pages saved only to look at) when you are done.",
 ];
 
+// Finished work that people read: documents, decks, reports. Quality comes from the material and from checking.
+const DELIVERABLES = [
+	"# Documents, decks and reports",
+	"- Gather the material first (research, data, the source files), then open the Word, PowerPoint or PDF skill. " +
+		"Opening the skill first gives a polished file with thin content.",
+	"- Build a long document in stages: the outline first, then one section at a time, saving as you go.",
+	"- When the work ends in a file, the last to-do item is checking it: open the file and read it back (office_read), " +
+		"check the facts against their sources, recompute the numbers, and compare it with the request point by point. " +
+		"If you can turn slides into pictures with a tool you have, look at the pictures.",
+	"- For an important deliverable, have a fresh reviewer check it against the original request: task with agent " +
+		"review, naming the request and the file. Fix what it finds. It did not make the work, so it sees what you stopped seeing.",
+];
+
+// Only when the advisor tool exists (the Ferry server has a stronger model to ask).
+const ADVISOR = [
+	"# The advisor",
+	"- advisor asks a stronger model to review this conversation so far. On a task of more than a few steps, call it " +
+		"once before you commit to an approach and once before you say you are done. Before that last call, make the " +
+		"result durable (save the file) so the advice is about work that exists.",
+	"- Give the advice serious weight. If what you found with your own tools contradicts it, do not just pick one: " +
+		"say what you found and what the advice said, and call advisor once more with that conflict.",
+];
+
 function style(webTools) {
 	return [
 		"# How to work",
@@ -202,7 +225,7 @@ export function createPrompt(cfg = {}) {
 			const declared = o.selectedTools.filter((t) => !o.hiddenTools.includes(t));
 			const tools = declared.filter((t) => o.toolSnippets[t]).map((t) => `- ${t}: ${o.toolSnippets[t]}`).join("\n");
 			const webTools = declared.includes("web_fetch");
-			o.customPrompt = `${IDENTITY}\n\n${style(webTools)}`;
+			o.customPrompt = `${IDENTITY}\n\n${style(webTools)}\n\n${DELIVERABLES.join("\n")}${declared.includes("advisor") ? `\n\n${ADVISOR.join("\n")}` : ""}`;
 			o.sections.tools = tools || "(none)";
 			const rules = toolRules(o);
 			if (rules) o.sections.tool_rules = rules;
