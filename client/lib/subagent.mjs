@@ -154,9 +154,15 @@ export function createSubagents(cfg, deps) {
 			name: "task",
 			label: "Subagent",
 			description: "Hand a self-contained job to a subagent with its own fresh context; you get back only its final " +
-				"report. Use it for wide searches (agent explore) or side tasks with many steps (agent general), so the " +
-				"main conversation stays small. Several task calls in one reply run at the same time. Do not use it for a " +
-				"single file read or a quick search you can do yourself.\nAgents:\n" +
+				"report. Use it for independent pieces of work that can run side by side, wide searches across many files or " +
+				"pages (agent explore or research), or side tasks with many steps (agent general), so this conversation keeps " +
+				"the conclusion and not the material. Several task calls in one reply run at the same time.\n" +
+				"A subagent costs more than it looks: it knows only what you write in prompt, details get lost on the way there " +
+				"and back, and several at once spend many tokens. A few reads, or a search whose target you know, do yourself.\n" +
+				"Write prompt as for a capable colleague who has seen nothing: the goal, what you already know or have ruled " +
+				"out, which files, pages or folders to look at, how far to go, and what to report.\n" +
+				"Once you hand something off, do not also do it yourself. The user does not see the report: tell them what " +
+				"matters in it. Never guess a result that has not come back; if the user asks, say it is still running.\nAgents:\n" +
 				agents.map((a) => `- ${a.name}: ${a.description}`).join("\n"),
 			promptSnippet: "Delegate searches and side tasks to subagents with fresh context",
 			parameters: Params,
@@ -277,7 +283,7 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 		noThemes: true,
 		extensionFactories: [
 			{ name: "ferry-sync", factory: deps.makeSync() },
-			{ name: "ferry-prompt", factory: createPrompt(cfg) },
+			{ name: "ferry-prompt", factory: createPrompt(cfg, { subagent: true }) },
 			{ name: "ferry-guard", factory: createGuard(cfg, { ui: ctx?.hasUI ? ctx.ui : undefined, label }) },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg) },
 			{ name: "ferry-web", factory: createWeb(cfg) },
