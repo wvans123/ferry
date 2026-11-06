@@ -59,7 +59,8 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
 | 团队 | Paperclip 看板上的成员 | `client/lib/team.mjs`、`teamcli.mjs` | 由 Paperclip 启动时才生效 | F54 |
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |
-| 手机上答 | 确认框和 `ask_user` 的问题放进服务端的收件箱，Bark 通知带一个只管这一项的链接，手机页面上批准、拒绝或回答；谁先答算谁的。以后从手机插话、暂停目标、派新活，和飞书机器人，都接在同一个收件箱上 | `client/lib/remote.mjs`、`server/ferry_server/remote.py`；接入在 `guard.mjs`、`ask.mjs` | `phoneRemote`；服务端要有 Bark 和外网地址 | F113、F114 |
+| 手机上答 | 确认框和 `ask_user` 的问题放进服务端的收件箱，Bark 通知带一个只管这一项的链接，手机页面上批准、拒绝或回答；谁先答算谁的。以后的飞书机器人也接在同一个收件箱上 | `client/lib/remote.mjs`、`server/ferry_server/remote.py`；接入在 `guard.mjs`、`ask.mjs` | `phoneRemote`；服务端要有 Bark 和外网地址 | F113、F114 |
+| 手机控制台 | 开着终端的 ferry 在同一个收件箱里是一个会话：传小份状态（目标、待办、最近几步），长连接取手机的命令（插话、暂停或继续目标、空闲时派新活）；`/phone` 推链接，`/phone off` 作废；这个会话的通知都带控制台链接 | `client/lib/console.mjs`、`server/ferry_server/remote.py`；`goal.mjs` 的 `cfg.goalNow`，`phone.mjs`、`heartbeat.mjs`、`watchdog.py` 带会话编号 | `phoneRemote`、`remoteTasks` | F116–F119 |
 | 看门狗 | 干活时每 5 分钟告诉服务端还在跑；跑到一半 15 分钟没消息（网关要确认、睡眠、断网、ferry 退出），服务端自己推手机，又连上时再推一条 | `client/lib/heartbeat.mjs`、`server/ferry_server/watchdog.py` | 客户端 `phoneNotify`；服务端 `stall_minutes`（0 关），要设了 Bark | F112 |
 | 旁问、顾问、回顾 | `advisor` 工具、`/btw`、长请求做完的一句话回顾，共用服务端一个接口；`review` 子 agent 和交付质量提示在 `subagent.mjs`、`prompt.mjs` | `client/lib/side.mjs`、`server/ferry_server/side.py`；`sync.mjs` 里 `cfg.side` 记着对话的服务端副本 | `advisor`、`recap`；服务端管理页的顾问模型 | F83–F85 |
 | 问题报告 | `/report` 经服务端发 GitHub issue | `client/lib/report.mjs`、`server/ferry_server/report.py` | 服务端设了令牌才发到 GitHub | 单元测试 |

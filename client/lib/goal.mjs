@@ -17,6 +17,7 @@
 // every criterion; it is sent back at most twice.
 import { unwrap } from "./text.mjs";
 import { steerState } from "./steer.mjs";
+import { PHONE_MARK } from "./remote.mjs";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -104,6 +105,8 @@ export function createGoal(cfg) {
 		let goal = null; // { objective, status, startedAt, budget, turns, note, reported, criteria, criteriaAssumed, changes, rejections }
 		let nextBudget = null; // /goal budget before a goal is set
 		let ui = null;
+		// the goal line for the phone console (console.mjs)
+		cfg.goalNow = () => (goal ? { objective: cut(goal.objective, 400), status: goal.status, turns: goal.turns } : null);
 		const save = () => {
 			if (goal) goal.endedAt = goal.status === "pursuing" ? undefined : goal.endedAt ?? Date.now();
 			pi.appendEntry(ENTRY, goal);
@@ -249,8 +252,8 @@ export function createGoal(cfg) {
 				goal.quiet = true;
 				status(ctx);
 			}
-			// a message sent by interrupting was noted when it was typed (steer.mjs sends it again)
-			if (goal?.status === "pursuing" && event.source !== "extension" && !steerState.redirecting && text.trim() && !text.startsWith("/")) {
+			// a message sent by interrupting was noted when it was typed (steer.mjs sends it again); one from the phone counts
+			if (goal?.status === "pursuing" && (event.source !== "extension" || text.startsWith(PHONE_MARK)) && !steerState.redirecting && text.trim() && !text.startsWith("/")) {
 				goal.changes = [...(goal.changes ?? []), { at: Date.now(), text: cut(text, 300) }].slice(-MAX_CHANGES);
 				save();
 			}
@@ -274,7 +277,8 @@ export function createGoal(cfg) {
 					goal.status = word === "pause" ? "paused" : "pursuing";
 					save();
 					status(ctx);
-					if (word === "resume") {
+					// still working (paused, then resumed before the run ended): it simply goes on
+					if (word === "resume" && ctx.isIdle?.() !== false) {
 						pi.sendUserMessage(`Resume work on the goal: ${goal.objective}`);
 						if (!ctx.hasUI) {
 							await new Promise((r) => setTimeout(r, 50));

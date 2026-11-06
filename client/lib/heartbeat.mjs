@@ -1,7 +1,8 @@
 // While the agent works, tell the Ferry server every few minutes that this run is alive, and once more when it ends.
 // The server's watchdog (server/ferry_server/watchdog.py) tells the phone when a run goes quiet: the company gateway
 // wants a confirmation, the computer sleeps or lost the network, ferry quit. Only the project folder's name goes up,
-// nothing of the conversation. phoneNotify = false turns it off with the other phone notices.
+// nothing of the conversation (and the phone console's id, so the push opens it). phoneNotify = false turns it off with
+// the other phone notices.
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { serverHeaders } from "./config.mjs";
@@ -19,7 +20,7 @@ export function createHeartbeat(cfg, { every = Number(process.env.FERRY_TEST_HEA
 		if (cfg.phoneNotify === false || !cfg.server) return;
 		let timer = null;
 		let id = "";
-		const beat = () => send({ id, project: basename(process.cwd()) }, 15000);
+		const beat = () => send({ id, project: basename(process.cwd()), console: cfg.consoleId ?? "" }, 15000);
 		const end = async () => {
 			if (!timer) return;
 			clearInterval(timer);

@@ -2417,6 +2417,168 @@ def check_phone_remote(root: Path, work: Path) -> None:
         old.unlink(missing_ok=True)
 
 
+def check_phone_console(root: Path, work: Path) -> None:
+    """The phone console: the page /phone pushes shows a running session (goal, to-do, steps) and steers it, pauses its
+    goal and gives it a new task when idle; with remoteTasks off a task is refused."""
+    if WINDOWS:
+        print("  SKIP  F116–F119 手机控制台（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    s = Stack(root, work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark",
+                                               "FERRY_PUBLIC_URL": "http://127.0.0.1:8787"})
+    runs: list[dict] = []
+    plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                             b.decode("utf-8", "replace"))
+
+    def start(config: dict) -> dict:
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        t = {"pid": pid, "fd": fd, "seen": b""}
+        runs.append(t)
+        return t
+
+    def wait_for(t: dict, text: str, secs: float, since: int = 0) -> bool:
+        end = time.time() + secs
+        while time.time() < end:
+            r, _, _ = select.select([t["fd"]], [], [], 0.2)
+            if r:
+                try:
+                    t["seen"] += os.read(t["fd"], 65536)
+                except OSError:
+                    return False
+            if text in plain(t["seen"][since:]):
+                return True
+        return False
+
+    def typed(t: dict, text: bytes) -> None:
+        os.write(t["fd"], text)
+        time.sleep(0.4)
+        os.write(t["fd"], b"\r")
+
+    def stop(t: dict) -> None:
+        if not t["pid"]:
+            return
+        for _ in range(2):  # keep reading while ferry quits: on macOS a full terminal buffer blocks its writes
+            os.write(t["fd"], b"\x03")
+            wait_for(t, "\0", 0.3)
+        try:
+            os.kill(t["pid"], signal.SIGTERM)
+            for _ in range(50):
+                if os.waitpid(t["pid"], os.WNOHANG)[0]:
+                    break
+                wait_for(t, "\0", 0.1)
+            else:
+                os.kill(t["pid"], signal.SIGKILL)
+                os.waitpid(t["pid"], 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        t["pid"] = 0
+
+    def console_push(t: dict, n: int) -> str:
+        """The address in the n-th Bark push that opens a console."""
+        end = time.time() + 20
+        while time.time() < end:
+            try:
+                urls = [u["url"] for u in jsonl(s.upstream) if u.get("group") == "Ferry" and "/m/c_" in u.get("url", "")]
+            except ValueError:  # a line being written
+                urls = []
+            if len(urls) >= n:
+                return urls[n - 1]
+            wait_for(t, "\0", 0.3)
+        return ""
+
+    def page(url: str, form: dict | None = None) -> tuple[int, str]:
+        data = urllib.parse.urlencode(form).encode() if form is not None else None
+        try:
+            with DIRECT.open(urllib.request.Request(url, data=data, method="POST" if data else "GET"), timeout=30) as r:
+                return r.status, r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8")
+
+    def until(t: dict, url: str, words: list[str], secs: float) -> str:
+        """The console page once it shows every word (opened every 3 s: the page allows 30 a minute)."""
+        text, end = "", time.time() + secs
+        while url and time.time() < end:
+            text = page(url)[1]
+            if all(w in text for w in words):
+                return text
+            wait_for(t, "\0", 3)
+        return text
+
+    def model_saw(text: str) -> bool:
+        for _ in range(3):
+            try:
+                return any(m.get("role") == "user" and text in json.dumps(m.get("content"), ensure_ascii=False)
+                           for b in jsonl(s.upstream) for m in (b.get("messages") or []) if isinstance(m, dict))
+            except ValueError:  # a line being written
+                time.sleep(0.3)
+        return False
+
+    try:
+        t = start({})
+        started = wait_for(t, "shift+tab", 60)
+        typed(t, b"/phone")
+        url = console_push(t, 1)
+        printed = wait_for(t, "Sent to your phone", 10)
+        idle = until(t, url, ["空闲", "开始干"], 20)
+        _, sent = page(url, {"cmd": "task", "text": "PHONETASK write the summary"}) if url else (0, "")
+        ran = wait_for(t, "PHONETASKDONE PHONETASK write the summary", 30)
+        task_ok = (started and url.startswith("http://127.0.0.1:8787/m/c_") and printed and "开始干" in idle
+                   and "已发出新活" in sent and ran and model_saw("(from your phone) PHONETASK write the summary"))
+        task_why = f"started={started} url={url!r} printed={printed} idle={'开始干' in idle} sent={'已发出新活' in sent} ran={ran}"
+
+        wait_for(t, "\0", 1)
+        typed(t, b"/goal PHONECONSOLE keep the console busy")
+        busy = until(t, url, ["在干活", "PHONECONSOLE keep the console busy", "进行中", "▶ console step one", "○ console step two",
+                              "bash (sleep 2; echo CONSOLEWORK)", "发送插话", "暂停目标"], 40)
+        ok = "bash (sleep 2; echo CONSOLEWORK)" in busy and "value=task" not in busy and "value=resume" not in busy
+        check("F116 手机控制台看到正在干的活", ok, "/goal 跑着时，/phone 推的控制台页面写着在干活、目标和轮数、待办（▶ 正在做的）、"
+              "最近几步的命令，给插话和暂停目标两个操作，没有派新活" if ok else f"page={busy[-1500:]!r} {plain(t['seen'])[-400:]!r}")
+
+        mark = len(t["seen"])
+        _, sent = page(url, {"cmd": "steer", "text": "PHONESTEER use the short names"}) if url else (0, "")
+        seen = wait_for(t, "PHONESTEERSEEN PHONESTEER use the short names", 30, mark)
+        told = until(t, url, ["插话已送到"], 20)
+        ok = "已发出插话" in sent and seen and model_saw("(from your phone) PHONESTEER use the short names") and "插话已送到" in told
+        check("F117 手机上插话", ok, "控制台发的插话在下一步作为用户消息到了模型，开头写着 (from your phone)，"
+              "页面随后显示插话已送到" if ok else f"sent={'已发出插话' in sent} seen={seen} told={'插话已送到' in told} "
+                                             f"{plain(t['seen'][mark:])[-500:]!r}")
+
+        _, sent = page(url, {"cmd": "pause"}) if url else (0, "")
+        paused = wait_for(t, "goal paused", 20, mark)  # the status line
+        after = until(t, url, ["空闲", "已暂停", "继续目标"], 40)
+        ok = "已发出暂停目标" in sent and paused and "value=resume" in after and "value=pause" not in after
+        check("F118 手机上暂停目标", ok, "控制台点暂停目标：电脑上 /goal 暂停（状态栏 goal paused），当前这一步做完就停；"
+              "页面变成空闲、目标已暂停，给继续目标" if ok else f"sent={'已发出暂停目标' in sent} paused={paused} "
+                                                     f"page={after[-1200:]!r} {plain(t['seen'][mark:])[-400:]!r}")
+        stop(t)
+
+        t = start({"remoteTasks": False})
+        started = wait_for(t, "shift+tab", 60)
+        typed(t, b"/phone")
+        url = console_push(t, 2)
+        view = until(t, url, ["空闲", "remoteTasks"], 20)
+        _, refused = page(url, {"cmd": "task", "text": "PHONETASK not this one"}) if url else (0, "")
+        wait_for(t, "\0", 3)
+        off_ok = (started and "remoteTasks" in view and "value=task" not in view and "现在不能这样做" in refused
+                  and not model_saw("PHONETASK not this one"))
+        ok = task_ok and off_ok
+        check("F119 手机上派新活", ok, "空闲时控制台派的新活开始执行，模型收到的用户消息开头写着 (from your phone)；"
+              "remoteTasks 关掉时页面不给派活，硬发也被拒，模型什么都没收到" if ok
+              else f"{task_why} off: started={started} view={view[-600:]!r} refused={'现在不能这样做' in refused}")
+    finally:
+        for t in runs:
+            stop(t)
+        s.close()
+
+
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
 # its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
 STEPS = [
@@ -2431,7 +2593,7 @@ STEPS = [
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"), (check_word_tracked, "wordtracked"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
-    (check_watchdog, "watchdog"), (check_phone_remote, "remote"),
+    (check_watchdog, "watchdog"), (check_phone_remote, "remote"), (check_phone_console, "console"),
 ]
 
 

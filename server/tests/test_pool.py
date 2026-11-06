@@ -287,6 +287,9 @@ def test_report_becomes_a_scrubbed_issue_and_notify(tmp_path, monkeypatch):
             n0 = (await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "goal done"})).json()
             cfg.bark_url = "https://api.day.app/KEY"
             n1 = (await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "goal done"})).json()
+            cfg.public_url = "https://ferry.example.com"  # a push for a session opens its phone console
+            await c.put("/v1/ferry/console/0123456789abcdef", headers=hdr, json={"state": "working"})
+            await c.post("/v1/ferry/notify", headers=hdr, json={"title": "Ferry", "body": "done", "session": "0123456789abcdef"})
             return r0, r1, n0, n1
 
     import ferry_server.notify as nt
@@ -300,7 +303,8 @@ def test_report_becomes_a_scrubbed_issue_and_notify(tmp_path, monkeypatch):
     assert issue["title"] == "[report] web_fetch fails behind [hidden]"
     text = issue["title"] + issue["body"]
     assert "zhang" not in text and "10.1.2.3" not in text and "C:\\Users\\<user>\\proj" in text and "0.25.0" in text
-    assert n0["ok"] is False and n1["ok"] is True and sent[0]["body"] == "goal done"
+    assert n0["ok"] is False and n1["ok"] is True and sent[0]["body"] == "goal done" and "url" not in sent[0]
+    assert sent[1]["url"].startswith("https://ferry.example.com/m/c_0123456789abcdef.")
 
 
 def test_a_busy_only_provider_is_asked_again_and_limited_to_its_slots(tmp_path, monkeypatch):
