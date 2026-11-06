@@ -62,7 +62,9 @@ pi 每轮请求都带完整的 `messages`。Ferry 的模型接入点在请求发
 3. 客户端记得服务端已确认的 `(count, hash)`。如果当前消息的前 `count` 条哈希仍等于 `hash`，只上传 `m_count …` 之后的部分，否则从 0 开始。
 4. 上传内容 `{"append": [...], "tools": 工具定义或 null}`：
    - 不超过 `chunkBytes`（默认 512KB）直接 `POST /v1/ferry/commit`；
-   - 超过就按字节切块，逐块 `POST /v1/ferry/upload/{id}/{seq}`，最后 `commit?upload=id&parts=n`。
+   - 超过就按字节切块，逐块 `POST /v1/ferry/upload/{id}/{seq}`，最后 `commit?upload=id&parts=n`。每个请求体都不超过当前的块大小，图片的 base64 和文字一样算；
+   - 请求被半路挡下（网关 403、Cloudflare 5xx、连接断开）时等一下再发，最多三次；403 时把块大小减半，本次运行后面的块都用小的。服务端按序号存块，后发的小块直接顶替序号，所以服务端不用改（`client/lib/upload.mjs`）。
+   - `blocked.log` 每条记的是实际发出的那个请求的大小（`sent`），`part` 是第几块，`total` 是整次上传的大小，`images` 是这次上传里图片的张数和字节数。
 5. 服务端校验 `base` 和 `base_hash` 与自己记录的一致，追加并返回新的 `(count, hash)`。不一致返回 409，客户端立即改为全量上传。
 6. 真正的模型请求只带 `{"ferry": {conv, count, hash, tools_hash}}`。服务端取出缓存，拼回完整请求。
 

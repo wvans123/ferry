@@ -18,6 +18,7 @@ import { createWeb } from "./web.mjs";
 import { startSubagentJob, trackSubagent } from "./jobs.mjs";
 import { createBigOutputs } from "./tools.mjs";
 import { createOffice } from "./office.mjs";
+import { promptWithRecovery, transientMessage } from "./upload.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
 // no nesting; the task list, goal and background jobs belong to the main agent
@@ -323,11 +324,18 @@ async function runSubagent({ cfg, deps, agent, params, signal, onUpdate, ctx, cw
 	signal?.addEventListener("abort", stop, { once: true });
 	progress();
 	try {
-		await session.prompt(params.prompt);
+		// a request stopped on the network (gateway, Cloudflare, dropped connection) is sent again, and the agent told to
+		// carry on; only when that fails too does the subagent end
+		const left = await promptWithRecovery(session, params.prompt, { aborted: () => signal?.aborted });
 		if (signal?.aborted) throw new Error("Subagent stopped");
 		let report = session.getLastAssistantText() ?? "";
-		const last = [...session.messages].reverse().find((m) => m.role === "assistant");
-		if (last?.stopReason === "error") throw new Error(`Subagent failed: ${last.errorMessage ?? "model error"}`);
+		if (left) {
+			const done = steps.slice(-5).map((s) => `  ${s}`).join("\n") || "  (nothing yet)";
+			throw new Error(`Subagent failed: ${left}` + (transientMessage(left)
+				? `\nThe network stopped its requests, also after trying again. Its last steps:\n${done}\n` +
+					"Files it already wrote are kept. To continue, run the task again and say what is done and what is left."
+				: ""));
+		}
 		if (!report.trim()) report = "(the subagent finished without a report)";
 		if (Buffer.byteLength(report) > MAX_REPORT_BYTES) report = `${report.slice(0, MAX_REPORT_BYTES)}\n...(report cut at 30 KB)`;
 		return {

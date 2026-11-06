@@ -272,11 +272,12 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `proxy` | 空 | 连服务端用的代理，空表示用 `HTTPS_PROXY` 环境变量 |
 | `compactAt` | `90%` | 上下文用到多少时自动压缩：`50%`～`90%`，或 `off`（只在快超限时压缩）。越低每次请求越便宜，也越早丢细节 |
 | `compactKeep` | `20k` | 压缩时最近多少内容原样保留 |
+| `showModel` | `true` | 屏幕右下角是否显示模型名。设成 `false` 就不显示，也不会换成别的名字；`/model` 和 `/status` 仍然会写出真实的模型 |
 | `keepImages` | `4` | 对话里保留最近几张图片，更早的换成一句说明 |
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理用自己的证书检查 HTTPS 时，靠它让 ferry 和命令都能连上 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（默认 300 秒）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（默认 300 秒）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
 
 服务端的设置见 [SERVER.md](SERVER.md#服务端设置)。
 
@@ -289,7 +290,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry` 或 `ferry check`，它会在浏览器里打开确认页，你点"继续"后自己接着跑。确认过一阵会过期，干活中途碰到也会自动打开确认页、等确认后重发。长期办法是请 IT 把服务端地址加进白名单 |
 | `cannot reach the server` | 浏览器能打开但 ferry 连不上，通常是浏览器走了公司代理。执行 `setx HTTPS_PROXY http://代理:端口`，然后重开 cmd |
 | `unable to get local issuer certificate` | 公司代理会解开 HTTPS 再加密。`systemCerts` 默认已打开；还不行，把公司根证书导出成 .pem，`ferry config set caFile C:\路径\证书.pem` |
-| `The Ferry server did not get this request: ...` | 请求在半路被挡了，服务端的调用记录里看不到。后面那句会说是谁挡的：Cloudflare 的机器人防护（在 Cloudflare 后台关掉 Bot Fight Mode，或给 Ferry 的域名加一条跳过规则）、公司网关（Ferry 会打开确认页，确认后重发），或公司代理。详情记在 `%USERPROFILE%\.ferry\logs\blocked.log`。`ferry doctor --upload` 测多大的上传能通过，小的能过、大的不行，就按它的提示把 `chunkBytes` 调小 |
+| `The Ferry server did not get this request: ...` | 请求在半路被挡了，服务端的调用记录里看不到。后面那句会说是谁挡的：Cloudflare 的机器人防护（在 Cloudflare 后台关掉 Bot Fight Mode，或给 Ferry 的域名加一条跳过规则）、公司网关（Ferry 会打开确认页，确认后重发），或公司代理。详情记在 `%USERPROFILE%\.ferry\logs\blocked.log`。`ferry doctor --upload` 测多大的上传能通过：先试几个大小，再在能过和不能过之间折半查找，精确到 8 KB，并建议一个略小的 `chunkBytes`。Ferry 每个请求都不超过 `chunkBytes`，被网关挡下（403）或被 Cloudflare 挡下（502、530 等）、连接断开时，会等一下再发，最多三次，403 时还把单个请求减半并提示一次。子 agent 遇到同样的情况也会先重试，仍然不行才停，报错里写明原因和已做的步骤 |
 | `a Cloudflare Access login page answered` | 服务端地址前挡着 Cloudflare 的登录页，见 [DEPLOY-MAC.md](DEPLOY-MAC.md#关于那个-cloudflare-登录页) |
 | `token rejected` | 令牌不对或换过了，到管理页复制新的登录命令 |
 | `HTTP 502 / 530` | 服务端那台电脑睡眠了，或者服务端、cloudflared 没在运行 |

@@ -119,7 +119,8 @@ def decide_agent(msgs):
     system += " ".join(text_of(m) for m in msgs if m.get("role") in ("system", "developer"))
     # Ferry's own reminders (the to-do check) are not the user's request
     last_user = max([i for i, m in enumerate(msgs) if m.get("role") == "user"
-                     and not text_of(m).startswith("Before you stop: the to-do list")], default=0)
+                     and not text_of(m).startswith("Before you stop: the to-do list")
+                     and not text_of(m).startswith("Attached image(s) from tool result")], default=0)  # OpenAI style: a tool's picture rides in a user message
     tools = [m for m in msgs[last_user:] if m.get("role") == "tool"]  # this request's tool results
     first = text_of(msgs[last_user]) if msgs else ""  # the latest user message picks the scenario
     wakes = [i for i, m in enumerate(msgs) if m.get("role") == "user"
@@ -290,6 +291,12 @@ def decide_agent(msgs):
         if not tools:
             return ("tool", "bash", {"command": "touch auto-made.txt" if "make" in first else "rm -rf auto-build"})
         return ("text", "AUTO: " + text_of(tools[-1])[:200])
+    if "GATESIZE" in first:  # a long tool result and then a picture, through a gateway that stops big request bodies
+        if not tools:
+            return ("tool", "read", {"path": "big-notes.txt"})
+        if len(tools) == 1:
+            return ("tool", "read", {"path": "pic.png"})
+        return ("text", f"GATESIZE: notes={len(text_of(tools[0]))} " + ("picture received" if any("image_url" in json.dumps(m) for m in msgs) else "no picture"))
     if "READBIG" in first:  # a long tool result in the history
         if not tools:
             return ("tool", "read", {"path": "big-notes.txt"})

@@ -147,10 +147,12 @@ export function createCommands(cfg, deps) {
 			if (!ctx.hasUI) return;
 			// a request that meets the company gateway mid-work: say so while ferry waits for the confirmation
 			cfg.onGateway = (text) => ctx.ui.setStatus("ferry-gateway", text);
+			cfg.onNote = (text) => ctx.ui.notify(text, "warning"); // e.g. the upload part size got smaller
 			cfg.onRoute = (notes) => {
 				const n = notes?.[0];
-				ctx.ui.setStatus("ferry-route", n ? `${n.model} is rate-limited: ${n.seconds}s to go, ` +
-					(n.fallback ? `${n.fallback} answers meanwhile` : "requests wait on the server") : undefined);
+				const named = cfg.showModel !== false; // showModel = false: no model names on the screen
+				ctx.ui.setStatus("ferry-route", n ? `${named ? n.model : "the model"} is rate-limited: ${n.seconds}s to go, ` +
+					(n.fallback ? `${named ? n.fallback : "another model"} answers meanwhile` : "requests wait on the server") : undefined);
 			};
 		});
 

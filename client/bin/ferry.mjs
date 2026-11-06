@@ -165,28 +165,52 @@ function logout() {
 /** `ferry doctor --upload`: send plain filler text of growing sizes, to see what the network in between lets through. */
 async function uploadTest(cfg, ok, bad, info) {
 	info("upload test: plain filler text, thrown away by the server");
-	let biggest = 0;
-	for (const kb of [16, 64, 256, 512, 900]) {
+	const { findLimit, suggestChunk } = await import("../lib/upload.mjs");
+	// true: gets through; false: stopped or failed; "old": the server has no probe
+	const send = async (kb, report) => {
 		const body = "ferry upload test ".repeat(Math.ceil((kb * 1024) / 18)).slice(0, kb * 1024);
 		try {
 			const res = await fetch(`${cfg.server}/v1/ferry/probe`, { method: "POST", body, redirect: "manual",
 				headers: serverHeaders(cfg, { "Content-Type": "application/octet-stream" }), signal: AbortSignal.timeout(60000) });
-			if (res.status === 404) return info("this server is too old for the upload test (update it)");
+			if (res.status === 404) return "old";
 			const json = res.headers.get("content-type")?.includes("json");
 			if (res.ok && json) {
-				ok(`${kb} KB gets through`);
-				biggest = kb;
-				continue;
+				if (report) ok(`${kb} KB gets through`);
+				return true;
 			}
-			bad(`${kb} KB: ${json ? `HTTP ${res.status} from the Ferry server` : whoAnswered({ status: res.status, headers: res.headers, body: await res.text() })}`);
+			if (report) bad(`${kb} KB: ${json ? `HTTP ${res.status} from the Ferry server` : whoAnswered({ status: res.status, headers: res.headers, body: await res.text() })}`);
 		} catch (e) {
-			bad(`${kb} KB: ${e.cause?.code ?? e.message}`);
+			if (report) bad(`${kb} KB: ${e.cause?.code ?? e.message}`);
 		}
+		return false;
+	};
+	let biggest = 0;
+	let failed = 0;
+	for (const kb of [16, 64, 256, 512, 900]) {
+		const r = await send(kb, true);
+		if (r === "old") return info("this server is too old for the upload test (update it)");
+		if (r === true) {
+			biggest = kb;
+			continue;
+		}
+		failed = kb;
 		break;
 	}
-	if (biggest && biggest < 900) {
-		info(`bigger requests are stopped on the way. Ferry splits uploads into ${cfg.chunkBytes / 1024} KB parts; make them smaller: ` +
-			`ferry config set chunkBytes ${Math.max(8, biggest / 2) * 1024}`);
+	if (failed) {
+		// between the last size that passed and the first that failed: halve the gap until it is 8 KB
+		info(`looking for the limit between ${biggest} KB and ${failed} KB ...`);
+		biggest = await findLimit(async (kb) => {
+			const r = await send(kb, false);
+			info(`  ${kb} KB: ${r === true ? "gets through" : "stopped"}`);
+			return r === true;
+		}, biggest, failed, 8);
+		const now = Math.round(cfg.chunkBytes / 1024);
+		if (biggest) ok(`the limit is about ${biggest} KB (between ${biggest} and ${biggest + 8} KB)`);
+		else bad("even 8 KB does not get through: this is not about size, ask IT");
+		if (biggest && now > biggest * 0.8) {
+			info(`Ferry splits uploads into ${now} KB parts, which is too big. Make them smaller: ` +
+				`ferry config set chunkBytes ${suggestChunk(biggest)}`);
+		} else if (biggest) info(`Ferry splits uploads into ${now} KB parts, which fits.`);
 	} else if (biggest === 900) {
 		info("sizes are not the problem. If requests are still stopped, something in the way objects to what they contain " +
 			"(a company content filter): ask IT. Ferry does not disguise what it sends.");
@@ -373,6 +397,7 @@ async function run(args) {
 	await installSteerKeys(); // Enter on an empty line while the agent works: interrupt now
 	const { createTitle, installTitle } = await import("../lib/title.mjs");
 	await installTitle(); // the tab title: conversation · project · Ferry
+	await (await import("../lib/footer.mjs")).installFooter(() => cfg.showModel !== false); // showModel = false: no model name in the footer
 	const { createSyncProvider } = await import("../lib/sync.mjs");
 	const { createGuard, createModes, _state: permState } = await import("../lib/guard.mjs");
 	const { createTeam } = await import("../lib/team.mjs");

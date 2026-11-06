@@ -35,6 +35,7 @@ export const DEFAULTS = {
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
+	showModel: true, // the model's name in the footer at the bottom right; false = hidden (/model and /status still show it)
 	blockedSites: [], // sites never opened by web_fetch (and their subdomains), e.g. ["mail.corp.com"]
 	localSites: [], // sites read only on this computer, never by the Ferry server (the company's intranet), e.g. ["wiki.corp.com"]
 	browser: true, // let the agent drive the browser on this computer (Edge on Windows) with agent-browser
@@ -72,6 +73,7 @@ export const SETTINGS = {
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
+	showModel: ["boolean", "show the model's name in the footer at the bottom right (false: hidden; /model and /status still show it)"],
 	phoneNotify: ["boolean", "phone notifications through the Ferry server (set Bark on its admin page): goal done, long work done, approval waiting"],
 	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
 	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
@@ -85,7 +87,7 @@ export const ADVANCED_SETTINGS = {
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window (default); false: always show it, so you see what the agent does"],
-	chunkBytes: ["number", "largest single upload to the server, in bytes (the 1 MB rule)"],
+	chunkBytes: ["number", "largest single request body sent to the server, in bytes (a bigger commit goes up in parts; gets smaller by itself when the network stops a request)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs are left out to save tokens; 0 = never"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
 	phoneAfterSeconds: ["number", "a request that took at least this long, or an approval waiting this long, notifies the phone"],
