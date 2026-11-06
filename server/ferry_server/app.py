@@ -34,6 +34,7 @@ from .devices import Devices
 from . import globalmem
 from . import report as reports
 from . import search as web_search
+from . import side
 from .presets import anthropic_url, chat_url
 from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
@@ -41,7 +42,7 @@ from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
 from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
-                     restore_cache_marks, wants_cache_marks)
+                     restore_cache_marks, summary_rules, wants_cache_marks)
 from .store import BaseMismatch, MissingBlobs, Store
 
 
@@ -374,7 +375,7 @@ def create_app(cfg: Config) -> FastAPI:
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
         return {"models": listed, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
-                + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
+                + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
 
     @app.post("/v1/ferry/image")
     async def image(request: Request):
@@ -603,9 +604,8 @@ def create_app(cfg: Config) -> FastAPI:
         project = unquote(request.headers.get("x-ferry-project", ""))  # sent URL-encoded: folder names can be Chinese
         rules = load_rules(cfg.rules_dir, project)
         rules = without_placeholder_note(rules)
-        if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
-            extra = (cfg.rules_dir / "_summary.md").read_text(encoding="utf-8").strip()
-            rules = f"{rules}\n\n{extra}".strip() if extra else rules
+        if purpose == "summary":
+            rules = f"{rules}\n\n{summary_rules(cfg.rules_dir)}".strip()
         apply_rules(payload, rules)
         user = request.state.user
         trimmed, size = cap_upstream(payload, cfg.max_upstream_bytes)
@@ -820,8 +820,8 @@ def create_app(cfg: Config) -> FastAPI:
                                  f"the Ferry server has no API key for model {model.id}: add it on the admin page"}}, status_code=503)
         project = unquote(request.headers.get("x-ferry-project", ""))
         rules = without_placeholder_note(load_rules(cfg.rules_dir, project))
-        if purpose == "summary" and cfg.rules_dir and (cfg.rules_dir / "_summary.md").is_file():
-            rules = f"{rules}\n\n{(cfg.rules_dir / '_summary.md').read_text(encoding='utf-8').strip()}".strip()
+        if purpose == "summary":
+            rules = f"{rules}\n\n{summary_rules(cfg.rules_dir)}".strip()
         if rules:  # after the client's own (cached) system prompt
             system = payload.get("system") or []
             if isinstance(system, str):
@@ -950,4 +950,5 @@ def create_app(cfg: Config) -> FastAPI:
     mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
     reports.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
+    side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
     return app

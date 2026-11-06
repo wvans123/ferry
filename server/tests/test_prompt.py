@@ -1,4 +1,4 @@
-from ferry_server.prompt import TRIM_NOTE, apply_rules, body_size, cap_upstream
+from ferry_server.prompt import SUMMARY_NOTES, TRIM_NOTE, apply_rules, body_size, cap_upstream, summary_rules
 
 
 def convo(n_tools: int, tool_bytes: int) -> dict:
@@ -36,3 +36,12 @@ def test_rules_appended_to_system_prompt():
     p = {"messages": [{"role": "system", "content": "base"}, {"role": "user", "content": "hi"}]}
     apply_rules(p, "- be brief")
     assert p["messages"][0]["content"].startswith("base") and "<server-rules>" in p["messages"][0]["content"]
+
+
+def test_every_summary_keeps_the_same_things_and_the_owners_file_comes_after(tmp_path):
+    assert summary_rules(None) == SUMMARY_NOTES and summary_rules(tmp_path) == SUMMARY_NOTES
+    (tmp_path / "_summary.md").write_text("Keep the 3GPP TS numbers.\n", encoding="utf-8")
+    text = summary_rules(tmp_path)
+    assert text.startswith(SUMMARY_NOTES) and text.endswith("Keep the 3GPP TS numbers.")
+    for word in ("user's own messages", "confidentiality", "next step"):
+        assert word in SUMMARY_NOTES

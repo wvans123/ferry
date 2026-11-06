@@ -31,6 +31,7 @@ import {
 	SETTINGS,
 	ADVANCED_SETTINGS,
 	saveConfig,
+	writeCompactReserves,
 	writeModelsCache,
 } from "../lib/config.mjs";
 import { APP_ROOT, findPython, install, startLocalServer, update } from "../lib/setup.mjs";
@@ -383,7 +384,7 @@ async function run(args) {
 	if (models[0].ready === false) {
 		console.error(`Ferry: no API key for model ${models[0].routesTo ?? models[0].id}. Set ${KEY_HINT} ${where(cfg)}. "ferry doctor" checks the setup.`);
 	}
-	ensureAgentDir(models[0].id, models, cfg.thinking, cfg.compactKeep);
+	ensureAgentDir(models[0].id, models, cfg.thinking, cfg.compactKeep, cfg);
 	installBundled(APP_ROOT); // fd and rg from the release zip, after an update
 	process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 	process.env.FERRY_TOKEN = cfg.token;
@@ -451,7 +452,7 @@ async function run(args) {
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },
 			{ name: "ferry-goal", factory: createGoal(cfg), hidden: true },
-			{ name: "ferry-jobs", factory: createJobs({ todoText }), hidden: true },
+			{ name: "ferry-jobs", factory: createJobs(cfg, { todoText }), hidden: true },
 			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
 			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents,
 				doctor: () => new Promise((done) => {
@@ -459,9 +460,11 @@ async function run(args) {
 						(_e, out, err) => done(`${out}${err}`.trim()));
 				}),
 				reregister: (pi, c) => sync.register(pi, c),
+				compactReserves: (c) => writeCompactReserves(models, c),
 				serverWindow: (id) => models.find((m) => m.id === id)?.contextWindow }), hidden: true },
 			{ name: "ferry-memory", factory: createMemory(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
+			{ name: "ferry-compact", factory: (await import("../lib/compact.mjs")).createCompact(cfg, { todoText }), hidden: true },
 			{ name: "ferry-ask", factory: (await import("../lib/ask.mjs")).createAsk(), hidden: true },
 			{ name: "ferry-report", factory: (await import("../lib/report.mjs")).createReport(cfg, VERSION, PI_VERSION), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
@@ -478,6 +481,7 @@ async function run(args) {
 			{ name: "ferry-brand", factory: createBrand(cfg, VERSION, newerRelease(cfg)), hidden: true },
 			{ name: "ferry-title", factory: createTitle(permState), hidden: true },
 			{ name: "ferry-team", factory: createTeam(), hidden: true },
+			{ name: "ferry-side", factory: (await import("../lib/side.mjs")).createSide(cfg), hidden: true },
 		],
 	});
 }
