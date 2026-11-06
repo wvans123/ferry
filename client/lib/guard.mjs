@@ -43,9 +43,9 @@ async function ask(ui, verdict, event, cwd, who) {
 	// a subagent (who is set) asks through the main window, maybe while you look elsewhere: leave one line in the
 	// conversation view with who asked, what, and why, and another with the answer (shown only, never sent to the model)
 	const line = who ? short(detail.replace(/\s+/g, " "), 100) : "";
-	if (who) ui.notify(`Subagent${who} asks to run ${tool}: ${line}${verdict.danger ? ` (it ${verdict.danger})` : verdict.outside ? " (outside the project)" : ""}`, "warning");
-	const answered = (text) => who && ui.notify(`Subagent${who}: ${tool} ${line}: ${text}`, "info");
-	const choice = await ui.select(`${head}Allow ${tool}${who}?\n\n  ${detail}`, options);
+	if (who) ui.notify(`Subagent ${who} asks to run ${tool}: ${line}${verdict.danger ? ` (it ${verdict.danger})` : verdict.outside ? " (outside the project)" : ""}`, "warning");
+	const answered = (text) => who && ui.notify(`Subagent ${who}: ${tool} ${line}: ${text}`, "info");
+	const choice = await ui.select(`${who ? `Subagent ${who} wants to run:\n\n` : ""}${head}Allow ${tool}?\n\n  ${detail}`, options);
 	if (choice === "Allow once") return answered("allowed once"), undefined;
 	if (choice?.startsWith("Allow all file changes")) {
 		state.mode = "acceptEdits";
@@ -68,7 +68,7 @@ async function ask(ui, verdict, event, cwd, who) {
 
 /**
  * opts.ui / opts.label: for a subagent, which has no terminal of its own: ask in the main window
- * and say which subagent is asking.
+ * and say which subagent is asking (label, e.g. "#3 research (check new contributions)").
  */
 export function createGuard(cfg, opts = {}) {
 	return (pi) => {
@@ -121,7 +121,7 @@ export function createGuard(cfg, opts = {}) {
 					: "This needs the user's approval and no terminal is available. Run ferry interactively, or allow it with a rule (ferry config) or mode." };
 				state.onAsk?.(tool);
 				try {
-					return made(await ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ? ` (${opts.label})` : ""));
+					return made(await ask(ui, verdict, { ...event, toolName: tool }, cwd, opts.label ?? ""));
 				} finally {
 					state.onAnswered?.();
 				}

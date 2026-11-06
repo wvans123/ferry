@@ -3,25 +3,29 @@
 // so exploring a big codebase does not fill up the main conversation.
 //
 // A subagent runs inside this ferry process, talks to the same Ferry server (as its own conversation) and
-// asks for approval in the main window, exactly like the main agent.
+// asks for approval in the main window, exactly like the main agent. Its whole process is written to
+// <FERRY_HOME>/subagents/<day>/ (/tasks shows the latest part); files there go after 7 days.
 //
 // Built in: explore (read-only search), research (the web) and general (same tools as the main agent).
 // Your own: Markdown files with a name/description/tools header in
 //   <project>/.ferry/agents/, <project>/.claude/agents/ (Claude Code's format) or <FERRY_HOME>/agents/.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
-import { AGENT_DIR, FERRY_HOME, findFerryModel } from "./config.mjs";
+import { AGENT_DIR, cleanOldFiles, FERRY_HOME, findFerryModel } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
 import { createPrompt } from "./prompt.mjs";
 import { createWeb } from "./web.mjs";
-import { listJobs, startSubagentJob, trackSubagent } from "./jobs.mjs";
+import { listJobs, redrawJobs, startSubagentJob, trackSubagent } from "./jobs.mjs";
 import { createBigOutputs } from "./tools.mjs";
 import { createOffice } from "./office.mjs";
 import { promptWithRecovery, transientMessage } from "./upload.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
 const KEEP = 5; // finished subagents kept for a follow-up (task with resume)
+export const SUBAGENTS_DIR = join(FERRY_HOME, "subagents");
+const TRANSCRIPT_RESULT_BYTES = 4 * 1024;
+const TRANSCRIPT_MAX_BYTES = 2 * 1024 * 1024;
 // no nesting; the task list, goal and background jobs belong to the main agent
 const NOT_FOR_SUBAGENTS = new Set(["task", "task_batch", "todo", "ask_user", "goal_update", "job_start", "job_output", "job_stop"]);
 
@@ -42,13 +46,69 @@ export async function withSlot(limit, fn, onWait) {
 	}
 }
 
+/** <FERRY_HOME>/subagents/<day>/<id>-<agent>-<slug>.md */
+export function transcriptPath(id, agent, description) {
+	const slug = String(description ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "task";
+	return join(SUBAGENTS_DIR, new Date().toISOString().slice(0, 10), `${id}-${agent}-${slug}.md`);
+}
+
+const textOf = (content) => typeof content === "string" ? content
+	: (Array.isArray(content) ? content : []).map((c) => c.type === "text" ? c.text : c.type === "image" ? "[an image]" : "").filter(Boolean).join("\n");
+
+function cutBytes(s, max) {
+	const n = Buffer.byteLength(s);
+	return n <= max ? s : `${Buffer.from(s).subarray(0, max).toString("utf8")}\n...(cut here: ${n} bytes in all)`;
+}
+
+/**
+ * A subagent's whole process as Markdown, so the user can see what it read and did. Past maxBytes only tasks and
+ * reports are added. A follow-up (resume) appends to the same file.
+ */
+export function createTranscript(file, title, { maxBytes = TRANSCRIPT_MAX_BYTES, resultBytes = TRANSCRIPT_RESULT_BYTES } = {}) {
+	let size = 0;
+	try {
+		size = statSync(file).size;
+	} catch {
+		// a new file
+	}
+	let full = size >= maxBytes;
+	const put = (text) => {
+		try {
+			mkdirSync(dirname(file), { recursive: true });
+			appendFileSync(file, text, "utf8");
+			size += Buffer.byteLength(text);
+		} catch {
+			// the transcript is a convenience
+		}
+	};
+	const detail = (text) => {
+		if (full) return;
+		if (size + Buffer.byteLength(text) > maxBytes) {
+			full = true;
+			return put(`\n...(transcript reached ${Math.round(maxBytes / 1024)} KB: from here on only tasks and reports are written)\n`);
+		}
+		put(text);
+	};
+	const time = () => new Date().toTimeString().slice(0, 8);
+	if (!size) put(`# ${title}\n`);
+	return {
+		file,
+		task: (prompt) => put(`\n## Task (${time()})\n\n${prompt}\n`),
+		assistant: (text) => text.trim() && detail(`\n### Assistant\n\n${text.trim()}\n`),
+		toolCall: (name, args) => detail(`\n### Tool call: ${name}\n\n\`\`\`json\n${JSON.stringify(args ?? {})}\n\`\`\`\n`),
+		toolResult: (name, text, isError) => detail(`\n${isError ? "Error" : "Result"} (${name}):\n\n\`\`\`\`\n${cutBytes(text, resultBytes)}\n\`\`\`\`\n`),
+		report: (text) => put(`\n## Report (${time()})\n\n${text}\n`),
+		error: (text) => put(`\n## Failed (${time()})\n\n${text}\n`),
+	};
+}
+
 /**
  * Finished subagents (session and its Ferry provider), so the main agent can send one a follow-up (task with resume)
  * and it goes on with its whole context, uploading only what is new. Only in this ferry window, the latest `max`;
  * a stopped one is not kept.
  */
 export function createKeeper(max = KEEP) {
-	const kept = new Map(); // id -> { session, agent }, oldest first
+	const kept = new Map(); // id -> { session, agent, transcript }, oldest first
 	const busy = new Set(); // ids working on a follow-up now
 	return {
 		/** The kept subagent `id`, taken out while its follow-up runs; done() puts it back. */
@@ -196,6 +256,8 @@ function toolLine(name, args) {
  */
 export function createSubagents(cfg, deps) {
 	return (pi) => {
+		cleanOldFiles(SUBAGENTS_DIR);
+		cleanOldFiles(join(FERRY_HOME, "batches"));
 		if (cfg.subagents === false) return;
 		const agents = discoverAgents(process.cwd());
 		const keeper = createKeeper();
@@ -220,17 +282,19 @@ export function createSubagents(cfg, deps) {
 				const limit = Math.max(1, Number(cfg.maxParallel) || 3);
 				const name = `${agent.name}: ${params.description}${prev ? ` (follow-up to subagent ${rid})` : ""}`;
 				// a subagent's id is the job id of its first run; a follow-up continues the kept session
-				const go = async (id, sig, update) => {
+				const go = async (id, sig, update, job) => {
 					let entry = prev;
 					try {
-						entry ??= { agent, session: await openSession({ cfg, deps, agent, label: `${agent.name}: ${params.description}`, ctx, cwd, pi }) };
-						return await runSubagent({ session: entry.session, agent, id, params, signal: sig, onUpdate: update });
+						entry ??= { agent, session: await openSession({ cfg, deps, agent, label: `#${id} ${agent.name} (${params.description})`, ctx, cwd, pi }),
+							transcript: createTranscript(transcriptPath(id, agent.name, params.description), `Subagent ${id}: ${agent.name}: ${params.description}`) };
+						Object.assign(job, { agent: agent.name, transcript: entry.transcript.file });
+						return await runSubagent({ session: entry.session, agent, id, params, signal: sig, onUpdate: update, job, transcript: entry.transcript });
 					} finally {
 						keeper.done(id, entry, sig.aborted);
 					}
 				};
 				if (params.background) {
-					const job = startSubagentJob(name, (sig, j) => withSlot(limit, () => go(rid ?? j.id, sig)).then((r) => r.content[0].text));
+					const job = startSubagentJob(name, (sig, j) => withSlot(limit, () => go(rid ?? j.id, sig, undefined, j)).then((r) => r.content[0].text));
 					return { content: [{ type: "text", text: (prev ? `Sent the follow-up to subagent ${rid}; it works in the background as job ${job.id}.`
 						: `Started background subagent ${job.id} (${job.name}).`) + " You will be told when it is done; job_output shows its report." }],
 					details: { id: job.id } };
@@ -239,7 +303,7 @@ export function createSubagents(cfg, deps) {
 				const stop = () => t.job.controller.abort();
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
-					const r = await withSlot(limit, () => go(rid ?? t.job.id, t.job.controller.signal, onUpdate),
+					const r = await withSlot(limit, () => go(rid ?? t.job.id, t.job.controller.signal, onUpdate, t.job),
 						(n) => onUpdate?.({ content: [{ type: "text", text: `${agent.name}: ${params.description}\n  (waiting: ${limit} subagents already running, ${n} in line)` }], details: {} }));
 					t.end(r.content[0].text);
 					return r;
@@ -294,9 +358,13 @@ export function createSubagents(cfg, deps) {
 						return;
 					}
 					const one = { ...params, description: `${params.description} #${i + 1}`, prompt: params.prompt.replaceAll("{item}", item) };
+					const sub = `${t.job.id}.${i + 1}`;
 					try {
-						const session = await openSession({ cfg, deps, agent, label: `${agent.name}: ${one.description}`, ctx, cwd, pi });
-						const r = await runSubagent({ session, agent, params: one, signal, onUpdate: undefined }).finally(() => session.dispose());
+						const session = await openSession({ cfg, deps, agent, label: `#${sub} ${agent.name} (${one.description})`, ctx, cwd, pi });
+						const transcript = createTranscript(transcriptPath(sub, agent.name, params.description), `Subagent ${sub}: ${agent.name}: ${one.description}`);
+						Object.assign(t.job, { agent: agent.name, transcript: transcript.file });
+						const r = await runSubagent({ session, agent, params: one, signal, onUpdate: undefined, job: t.job, transcript })
+							.finally(() => session.dispose());
 						results[i] = { item, report: r.content[0].text.replace(/\n\n\[[^\]]*subagent:[^\]]*\]$/, "") };
 					} catch (e) {
 						results[i] = { item, error: String(e?.message ?? e) };
@@ -369,8 +437,9 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi }) {
 }
 
 /** One prompt in the subagent's session; the caller disposes of the session or keeps it (id: for a follow-up). */
-async function runSubagent({ session, agent, id, params, signal, onUpdate }) {
+async function runSubagent({ session, agent, id, params, signal, onUpdate, job, transcript }) {
 	const label = `${agent.name}: ${params.description}`;
+	transcript?.task(params.prompt);
 	const steps = [];
 	let turns = 0;
 	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
@@ -381,10 +450,18 @@ async function runSubagent({ session, agent, id, params, signal, onUpdate }) {
 	});
 	const unsubscribe = session.subscribe((ev) => {
 		if (ev.type === "tool_execution_start") {
-			steps.push(toolLine(ev.toolName, ev.args));
+			const line = toolLine(ev.toolName, ev.args);
+			steps.push(line);
+			transcript?.toolCall(ev.toolName, ev.args);
+			if (job) {
+				(job.steps ??= []).push(line);
+				redrawJobs();
+			}
 			progress();
 		}
+		if (ev.type === "tool_execution_end") transcript?.toolResult(ev.toolName, textOf(ev.result?.content), ev.isError);
 		if (ev.type === "message_end" && ev.message?.role === "assistant") {
+			transcript?.assistant(textOf(ev.message.content));
 			turns++;
 			const u = ev.message.usage ?? {};
 			for (const k of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]) usage[k] += u[k] ?? 0;
@@ -410,12 +487,17 @@ async function runSubagent({ session, agent, id, params, signal, onUpdate }) {
 		if (!report.trim()) report = "(the subagent finished without a report)";
 		if (Buffer.byteLength(report) > MAX_REPORT_BYTES) report = `${report.slice(0, MAX_REPORT_BYTES)}\n...(report cut at 30 KB)`;
 		const tag = id === undefined ? `${agent.name} subagent` : `${agent.name} subagent ${id}`;
-		const more = id === undefined ? "" : `; task with resume: ${id} sends it a follow-up`;
+		const more = (id === undefined ? "" : `; task with resume: ${id} sends it a follow-up`) +
+			(transcript ? `; transcript: ${transcript.file}` : "");
+		transcript?.report(report);
 		return {
 			content: [{ type: "text", text: `${report}\n\n[${tag}: ${turns} model calls, ${steps.length} tool calls${more}]` }],
 			details: { agent: agent.name, description: params.description, steps: steps.length, turns, toolCalls: steps.slice(-50), id },
 			usage,
 		};
+	} catch (e) {
+		transcript?.error(String(e?.message ?? e));
+		throw e;
 	} finally {
 		signal?.removeEventListener("abort", stop);
 		unsubscribe();

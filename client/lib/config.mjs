@@ -1,6 +1,6 @@
 // Ferry client configuration: <FERRY_HOME>/config.json (default ~/.ferry, or %USERPROFILE%\.ferry on Windows)
 import tls from "node:tls";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,26 @@ import { join } from "node:path";
 export const PROTOCOL = "1";
 export const FERRY_HOME = process.env.FERRY_HOME ?? join(homedir(), ".ferry");
 export const AGENT_DIR = join(FERRY_HOME, "agent");
+
+/** Ferry's own working files (outputs, batches, jobs, subagents): what in `dir` was not changed for 7 days goes. */
+export function cleanOldFiles(dir, keep = []) {
+	const cutoff = Date.now() - 7 * 86400_000;
+	let names = [];
+	try {
+		names = readdirSync(dir);
+	} catch {
+		return; // nothing there yet
+	}
+	for (const name of names) {
+		if (keep.includes(name)) continue;
+		try {
+			const p = join(dir, name);
+			if (statSync(p).mtimeMs < cutoff) rmSync(p, { recursive: true, force: true });
+		} catch {
+			// in use (Windows) or already gone: next time
+		}
+	}
+}
 const CONFIG = join(FERRY_HOME, "config.json");
 const MODELS_CACHE = join(FERRY_HOME, "models-cache.json");
 

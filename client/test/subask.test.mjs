@@ -17,12 +17,15 @@ function guard(opts, answer) {
 test("a subagent's question leaves a line before and a line after the answer in the main window", async () => {
 	_state.mode = "default";
 	const notes = [];
-	const ui = { select: async () => "Allow once", notify: (t, kind) => notes.push([kind, t]), input: async () => "" };
-	const call = guard({ ui, label: "research: find papers" });
+	const titles = [];
+	const ui = { select: async (title) => (titles.push(title), "Allow once"), notify: (t, kind) => notes.push([kind, t]), input: async () => "" };
+	const call = guard({ ui, label: "#3 research (find papers)" });
 	assert.equal(await call("bash", { command: "npm install left-pad" }), undefined);
 	assert.equal(notes.length, 2);
-	assert.match(notes[0][1], /Subagent \(research: find papers\) asks to run bash: npm install left-pad/);
-	assert.match(notes[1][1], /Subagent \(research: find papers\): bash npm install left-pad: allowed once/);
+	assert.match(notes[0][1], /Subagent #3 research \(find papers\) asks to run bash: npm install left-pad/);
+	assert.match(notes[1][1], /Subagent #3 research \(find papers\): bash npm install left-pad: allowed once/);
+	// the dialog says first who is asking, then the question as for the main agent
+	assert.match(titles[0], /^Subagent #3 research \(find papers\) wants to run:\n\nAllow bash\?\n\n {2}npm install left-pad$/);
 	// a denial, and a long command is shortened
 	notes.length = 0;
 	const deny = guard({ ui: { ...ui, select: async () => "Deny" }, label: "x" });
@@ -34,10 +37,12 @@ test("a subagent's question leaves a line before and a line after the answer in 
 
 test("the main agent's own questions get no extra lines", async () => {
 	const notes = [];
-	const ui = { select: async () => "Allow once", notify: (t) => notes.push(t), input: async () => "" };
+	const titles = [];
+	const ui = { select: async (title) => (titles.push(title), "Allow once"), notify: (t) => notes.push(t), input: async () => "" };
 	let handler;
 	createGuard({ blockedPaths: [] })({ on: (_n, fn) => { handler = fn; }, getAllTools: () => [] });
 	const proj = mkdtempSync(join(tmpdir(), "ferry-subask-main-"));
 	assert.equal(await handler({ toolName: "bash", input: { command: "npm install x" } }, { cwd: proj, hasUI: true, ui }), undefined);
 	assert.deepEqual(notes, []);
+	assert.match(titles[0], /^Allow bash\?/);
 });
