@@ -89,7 +89,7 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
   private addresses, `localSites`, files, and pages the server cannot reach are read on the PC; logins and site
   operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
 - Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses
-  automated sign-in, no debugging port), waits until the user has signed in and closed it; agent-browser then starts on the same profile; private-data commands always ask.
+  automated sign-in), waits for the sign-in, then connects agent-browser; `--headed` on a sign-in page is blocked (#30); private-data commands always ask.
 - Models (0.32): each server provider is its own pi provider, so /model shows `kiro/claude-opus-5.5`; "ferry" holds
   `auto` and pooled models. Same-named models are pooled only between providers with `share = true` (0.29's
   `separate` is gone). Client lookups go through `findFerryModel` / `FERRY_PROVIDERS` in config.mjs.

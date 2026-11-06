@@ -690,6 +690,7 @@ def check_steer(root: Path, work: Path) -> None:
         # 3. Esc while the interruption waits: the agent stops and the message is back in the input box, not sent
         typed(b"/new")
         time.sleep(1.5)
+        mark = len(seen)
         typed(b"STEERTEST: run the slow command again")
         wait_for("sleep 3", 20, mark)
         typed(b"TURN UP")

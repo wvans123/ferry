@@ -72,43 +72,98 @@ test("blocked sites hold for commands too: the browser and curl", () => {
 	assert.equal(fn({ toolName: "read", input: { path: "mail.corp.com" } }), undefined);
 });
 
-test("ferry browser login: an ordinary window, done when the user has closed it", async () => {
-	const { browserLogin, profileInUse } = await import("../lib/browser.mjs");
+test("ferry browser login: an ordinary window, the agent connects once the user has signed in", async () => {
+	const { browserLogin, browserHide } = await import("../lib/browser.mjs");
 	const { EventEmitter } = await import("node:events");
-	const mk = () => { const c = new EventEmitter(); c.kill = () => { c.killed = true; }; return c; };
+	const http = await import("node:http");
+	// a stand-in browser: its debugging port lists the pages the user goes through
+	const fakeBrowser = (pagesSeen) => (exe, args) => {
+		const port = Number(args.find((a) => a.startsWith("--remote-debugging-port=")).split("=")[1]);
+		let n = 0;
+		const s = http.createServer((req, res) => {
+			const url = pagesSeen[Math.min(n++, pagesSeen.length - 1)];
+			if (url === "closed") { s.close(); s.closeAllConnections(); return res.destroy(); }
+			res.end(JSON.stringify([{ type: "page", url }, { type: "service_worker", url: "https://x/sw.js" }]));
+		});
+		s.listen(port, "127.0.0.1");
+		const child = new EventEmitter();
+		child.pid = 0;
+		child.ran = { exe, args, server: s };
+		fakeBrowser.last = child;
+		return child;
+	};
 	const runs = [];
 	const run = (a) => runs.push(a.join(" "));
-	// the user closes the window after a while: the process exits and the profile is free
-	let child, lock = true;
-	let r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 10,
-		spawn: () => { child = mk(); setTimeout(() => { child.emit("exit"); }, 50); setTimeout(() => { lock = false; }, 120); return child; },
-		inUse: () => lock });
+	let r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 20,
+		spawn: fakeBrowser(["https://accounts.google.com/signin", "https://accounts.google.com/challenge/pwd",
+			"https://myaccount.google.com/", "https://myaccount.google.com/"]) });
+	fakeBrowser.last.ran.server.close();
 	assert.equal(r.state, "signed-in");
-	assert.equal(lock, false, "waited for the profile lock to go, not only for the process");
-	assert.deepEqual(runs, ["close --all"], "only the agent's own browser is closed first; nothing connects to the window");
-	assert.ok(r.args[0].startsWith("--user-data-dir="));
-	assert.ok(r.args.includes("--no-first-run") && r.args.includes("https://accounts.google.com"));
-	assert.ok(!r.args.some((a) => /remote-debugging-port|enable-automation|headless/.test(a)), "a completely ordinary window");
-	// still open at the limit: the window is closed for the user
-	r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 10, waitMs: 80,
-		spawn: () => (child = mk()), inUse: () => true });
-	assert.equal(r.state, "timeout");
-	assert.ok(child.killed);
+	assert.deepEqual(runs, ["close --all", `connect ${r.port}`], "the agent's browser closed first, connected only after the sign-in");
+	assert.ok(r.args[0].startsWith("--user-data-dir=") && r.args.includes(`--remote-debugging-port=${r.port}`));
+	assert.ok(!r.args.some((a) => /enable-automation|headless/.test(a)), "an ordinary window");
+	// a site that was signed in already
+	runs.length = 0;
+	r = await browserLogin({ browserPath: process.execPath }, "https://app.example.com", { run, every: 20,
+		spawn: fakeBrowser(["https://app.example.com/home"]) });
+	fakeBrowser.last.ran.server.close();
+	assert.equal(r.state, "already");
+	// the user closes the window: nothing to connect to, the sign-in stays in the profile
+	runs.length = 0;
+	r = await browserLogin({ browserPath: process.execPath }, "https://accounts.google.com", { run, every: 20,
+		spawn: fakeBrowser(["https://accounts.google.com/signin", "closed"]) });
+	assert.equal(r.state, "closed");
+	assert.ok(!runs.some((x) => x.startsWith("connect")));
+	assert.equal(browserHide({ run }), false, "nothing left open");
 });
 
-test("profileInUse: the browser's lock file", async () => {
-	const { profileInUse } = await import("../lib/browser.mjs");
-	const { mkdtempSync, symlinkSync, rmSync: rm, writeFileSync: wf } = await import("node:fs");
-	const { tmpdir } = await import("node:os");
-	const d = mkdtempSync(join(tmpdir(), "ferry-prof-"));
-	assert.equal(profileInUse(d), false);
-	if (process.platform === "win32") {
-		wf(join(d, "lockfile"), "");
-		assert.equal(profileInUse(d), false, "a stale lockfile nobody holds is removed");
-	} else {
-		symlinkSync("host-1234", join(d, "SingletonLock")); // chromium: a dangling symlink while the browser runs
-		assert.equal(profileInUse(d), true);
-		rm(join(d, "SingletonLock"));
-		assert.equal(profileInUse(d), false);
+test("a headed agent-browser on a sign-in page is blocked and pointed to ferry browser login (#30)", async () => {
+	const { headedSignInGuard } = await import("../lib/browser.mjs");
+	const bash = (command, toolName = "bash") => ({ toolName, input: { command } });
+	for (const c of [
+		'agent-browser --headed open "https://accounts.google.com/ServiceLogin?continue=https://youtube.com"',
+		"agent-browser --headed open https://login.microsoftonline.com/",
+		"AGENT_BROWSER_HEADED=1 agent-browser open https://github.com/login",
+		"agent-browser open https://appleid.apple.com --headed",
+		"agent-browser --headed open https://example.com/user/sign-in",
+		"agent-browser close && agent-browser --headed open https://www.youtube.com/signin",
+	]) {
+		const r = headedSignInGuard(bash(c));
+		assert.ok(r?.block, c);
+		assert.match(r.reason, /ferry browser login <url>/);
+		assert.match(r.reason, /refuse a browser under automation/);
 	}
+	assert.ok(headedSignInGuard(bash("agent-browser --headed open https://accounts.google.com", "powershell"))?.block);
+	// everything else passes
+	for (const c of [
+		"agent-browser open https://accounts.google.com",                 // not headed: left to the user's choice
+		"agent-browser --headed open https://www.3gpp.org/ftp",          // headed but not a sign-in page
+		"curl --headed https://accounts.google.com",                      // not agent-browser
+		"ferry browser login https://accounts.google.com",
+	]) assert.equal(headedSignInGuard(bash(c)), undefined, c);
+	assert.equal(headedSignInGuard({ toolName: "read", input: { path: "agent-browser --headed https://accounts.google.com" } }), undefined);
+});
+
+test("a sign-in refusal in agent-browser output gets a note to use ferry browser login (#30)", async () => {
+	const { refusalNote } = await import("../lib/browser.mjs");
+	const ev = (command, text, toolName = "bash") => ({ toolName, input: { command }, isError: false, content: [{ type: "text", text }] });
+	let r = refusalNote(ev("agent-browser --headed open https://accounts.google.com/ServiceLogin", "Couldn't sign in\nThis browser or app may not be secure. Try using a different browser."));
+	assert.equal(r.content.length, 2);
+	assert.match(r.content[1].text, /ferry browser login https:\/\/accounts\.google\.com\/ServiceLogin/);
+	assert.match(r.content[0].text, /may not be secure/, "the output stays");
+	r = refusalNote(ev("agent-browser snapshot -i", "此浏览器或应用可能不安全。请尝试使用其他浏览器。"));
+	assert.match(r.content[1].text, /ferry browser login <that page>/);
+	r = refusalNote(ev("agent-browser get text body", "You can't get there from here"));
+	assert.ok(r, "Microsoft's wording");
+	// other output, other commands, other tools: nothing added
+	assert.equal(refusalNote(ev("agent-browser snapshot -i", "Welcome back")), undefined);
+	assert.equal(refusalNote(ev("cat notes.txt", "This browser or app may not be secure")), undefined);
+	assert.equal(refusalNote(ev("x", "This browser or app may not be secure", "read")), undefined);
+});
+
+test("the browser extension wires both guards", async () => {
+	const h = {};
+	createBrowser({ on: true })({ on: (n, f) => { (h[n] ??= []).push(f); } });
+	assert.ok(h.tool_call.some((f) => f({ toolName: "bash", input: { command: "agent-browser --headed open https://accounts.google.com" } })?.block));
+	assert.ok(h.tool_result.some((f) => f({ toolName: "bash", input: { command: "agent-browser open x" }, content: [{ type: "text", text: "This browser or app may not be secure" }] })));
 });

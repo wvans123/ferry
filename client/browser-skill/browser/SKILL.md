@@ -44,15 +44,18 @@ Full reference, matched to the installed version: `agent-browser skills get core
 ## Logins and the user's help
 
 - A login page (a sign-in form, a redirect to a single sign-on page, 401 or 403): the user signs in, you never type
-  a password. Tell the user in one line: a browser window will open, sign in to <site> there, then CLOSE the window.
-  Then run `ferry browser login <login page or the page you need>` (give the command a long timeout, up to 10
-  minutes). It opens the same browser and profile as an ordinary window (sites such as Google and Microsoft refuse
-  to sign in to a browser a program drives) and returns when the user has closed it. Then carry on with the usual
-  agent-browser commands: they start their own browser on the same profile, still signed in. If it says the window
-  was not closed in time, tell the user and stop that part.
-- A site asks for a permission (camera, location, notifications): never grant it yourself. If the task needs it,
-  open the window the same way (`ferry browser login <page>`) and let the user answer the browser's question,
-  then close the window.
+  a password. Say in one line what the user should do (sign in to <site> in the window that opens), then run
+  `ferry browser login <login page or the page you need>` (give the command a long timeout, up to 10 minutes). It
+  opens the same browser and profile as an ordinary window (sites such as Google and Microsoft refuse to sign in
+  to a browser a program drives), waits until the user has signed in, and connects agent-browser to that window:
+  carry on there with the usual commands. When the window is no longer needed, `ferry browser hide`; the next
+  command runs in the background again, still signed in. If it says the window was closed or nobody signed in,
+  tell the user and stop that part.
+- A bot wall such as YouTube's "Sign in to confirm you're not a bot" is a login case too: run
+  `ferry browser login https://accounts.google.com/ServiceLogin?continue=<the page>`, never `agent-browser --headed`
+  (a headed window is still under automation and Google refuses the sign-in).
+- A site asks for a permission (camera, location, notifications): never grant it yourself. If the task needs it, open
+  the window the same way (`ferry browser login <page>`) and let the user answer the browser's question.
 - A company gateway's confirmation page ("are you sure you want to visit…"): tell the user; do not click through it.
 
 ## What always needs the user
