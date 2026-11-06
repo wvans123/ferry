@@ -24,7 +24,7 @@ python evals\run.py
 |---|---|
 | `--only fix_bug,explore` | 只跑这几个 |
 | `--repeat 3` | 每个跑 3 次（模型每次不一样，看通过率更准） |
-| `--skip-network` | 跳过要上网的任务（下载 3GPP 规范） |
+| `--skip-network` | 跳过要上网的任务（下载 3GPP 规范、上网查资料） |
 | `--model deepseek-v4-pro` | 换一个 DeepSeek 模型（默认用 Ferry 给 DeepSeek 设的默认模型） |
 | `--provider claude` | 改用 Claude（要有 `ANTHROPIC_API_KEY`），`openai` 同理 |
 | `--ferry D:\ferry\app\client\bin\ferry.mjs` | 测装好的那一份 Ferry，而不是这个文件夹里的 |
@@ -42,6 +42,15 @@ python evals\run.py
 | `excel_summary` | 按地区汇总 Excel，写 summary.md，说出最高的地区 |
 | `browser_page` | 用浏览器打开脚本生成内容的页面，填表、点按钮，读出结果（agent-browser 加电脑上的 Edge） |
 | `gpp_download` | 从 3GPP 网站找到并下载 TS 23.501，解压，读出 5.15 节标题（要上网） |
+| `goal_multi` | 用 `/goal` 交一个三件事的目标：实现三个函数让测试通过、写 CHANGELOG、改 README 用法行，三件都要做完 |
+| `noisy_tests` | 测试输出满屏颜色、进度条和 1200 行 ok，中间藏着一个失败；找到并修好，不改测试。看 k tok 能知道大输出有没有被压住 |
+| `big_log` | 5 MB 多的日志，按服务数 ERROR 写 errors.csv，说出最多的小时和条数；该写脚本算，不该整个读进来 |
+| `review_batch` | 审 8 份短文件（Markdown 和 Word），6 份各有一个问题（合计、日期、缺小节、人数、星期、百分比），2 份没问题，结果写进 review.md |
+| `word_cr` | 3GPP CR：直接填封面表格，正文里用修订改一个数，在那句话上加批注说明原因 |
+| `word_accept` | Word 里有 Alice 和 Bob 的修订：接受 Alice 的，拒绝 Bob 的，不留修订痕迹 |
+| `pdf_answer` | 三页 PDF，答案在第 2 页的表里（第 3 页有个旧值干扰），说出值和页码 |
+| `memory_rule` | 开始前放一条项目记忆：报告用中文、放 reports/、文件名带日期，不许改 vendor/。任务是英文的，修 bug 时最顺手的地方正好在 vendor/ 里 |
+| `web_research` | 上网查 Python 3.12.0 的发布日期，回答里要有 python.org 的出处（要上网） |
 
 ## 加一个任务
 
@@ -51,6 +60,9 @@ python evals\run.py
 - `setup(work)`：在空文件夹 `work` 里放好任务要用的文件；
 - `check(work, answer)`：判分，返回 `(是否通过, 一句说明)`；`answer` 是 agent 最后的回答；
 - `solve(work)`：标准答案，给 `--verify` 用，证明判分本身没写错。
+- 可选 `setup_home(home, work)`：开始前往这个任务自己的 `FERRY_HOME` 里放东西（比如 `memory_rule` 放一条项目记忆）。`PROMPT` 也可以是斜杠命令，比如 `goal_multi` 用的 `/goal ...`。
+
+Word、Excel、PDF 文件用 `evals/office_files.py` 里的函数生成，只用 Python 自带的库。
 
 最好的任务来自真实的失败：工作中 Ferry 哪里没做好，就把那件事（换成编的内容）做成一个任务。修好之后，它就一直守着这个问题。
 
