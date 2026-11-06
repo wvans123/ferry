@@ -71,6 +71,7 @@ export const DEFAULTS = {
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification
 	phoneApprovalSeconds: 60, // an approval left unanswered this long notifies the phone (once per question)
+	gatewayWaitMinutes: 720, // mid-work, the company gateway wants a confirmation: wait this long for it, then stop (0 = stop at once)
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 	compactAt: "90%", // summarise the conversation once the context is this full (before each request to the model, also in the middle of work); "off" = only when it must
@@ -125,6 +126,7 @@ export const ADVANCED_SETTINGS = {
 	wakeOnJobEnd: ["boolean", "when a background subagent or command ends, the agent takes the result up at once, even if it had finished (false: it hears with your next message)"],
 	phoneAfterSeconds: ["number", "a request that took at least this long notifies the phone"],
 	phoneApprovalSeconds: ["number", "an approval left unanswered this long notifies the phone, once per question"],
+	gatewayWaitMinutes: ["number", "when the company gateway wants a confirmation in the middle of the work, Ferry pauses and waits this long for someone to confirm in the browser, then stops (720 = a night; 0 = stop at once)"],
 	rulesFromParents: ["boolean", "also put AGENTS.md / CLAUDE.md from folders above the project into the system prompt (off: only Ferry's own and the project's)"],
 	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],

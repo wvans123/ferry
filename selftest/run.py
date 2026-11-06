@@ -1483,6 +1483,32 @@ def check_gateway(root: Path, work: Path) -> None:
               and c4 == 0 and "EXPIRY: went on after the confirmation" in o4 and gate.exists())
         check("F62 网关确认过期", ok, "ferry check 发现要确认就打开确认页并等到通过，不需要时说一声；agent 干活中途确认过期，"
               "自动打开确认页，确认后接着发，不报错" if ok else f"check={c2},{c3} run={c4} {o2[-200:]!r} {o3[-150:]!r} {o4[-300:]!r}")
+        # the confirmation runs out mid-work and nobody confirms for a long while (the night, here scaled to seconds):
+        # ferry keeps waiting, tells the phone once, and goes on after the confirmation; nobody at all: it stops at the cap
+        import threading
+        blocked = Path(f"{gate}.blocked")
+        blocked.unlink(missing_ok=True)
+        quick = {"FERRY_NO_BROWSER": "1", "FERRY_TEST_GATEWAY_NOTIFY_MS": "3000", "FERRY_TEST_GATEWAY_POLL_MS": "1000",
+                 "FERRY_PERMISSION_MODE": "bypass"}
+
+        def confirm_later():
+            end = time.time() + 120
+            while gate.exists() and time.time() < end:  # the bash step takes the confirmation away
+                time.sleep(0.2)
+            time.sleep(12)
+            gate.write_text("confirmed", encoding="utf-8")
+        threading.Thread(target=confirm_later, daemon=True).start()
+        c5, o5 = s.ferry("-p", f"EXPIRYTEST: {gate.name}", cwd=root, env_extra=quick)
+        rows = blocked.read_text(encoding="utf-8").splitlines() if blocked.exists() else []
+        probes, tells = rows.count("GET /health"), rows.count("POST /v1/ferry/notify")
+        (s.home / "config.json").write_text(json.dumps({"gatewayWaitMinutes": 0.1}), encoding="utf-8")
+        c6, o6 = s.ferry("-p", f"EXPIRYTEST: {gate.name}", cwd=root, env_extra=quick)
+        gate.write_text("confirmed", encoding="utf-8")
+        ok = (c5 == 0 and "EXPIRY: went on after the confirmation" in o5 and probes >= 5 and tells == 1
+              and c6 != 0 and "ferry -c" in o6 and "gatewayWaitMinutes" in o6)
+        check("F111 网关夜里要确认", ok, f"agent 干活中途网关要确认、很久没人确认：一直等着（问了服务端 {probes} 次），手机通知只发一次"
+              "（网关挡着服务端时这条通知也过不去），确认后同一个请求接着发、做完；一直没人确认就在 gatewayWaitMinutes 停下，"
+              "说明发生了什么、用 ferry -c 接着" if ok else f"run={c5} probes={probes} tells={tells} cap={c6} {o5[-300:]!r} {o6[-400:]!r}")
     finally:
         s.close()
 

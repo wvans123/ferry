@@ -3,6 +3,7 @@
 // and carries on as soon as the server answers.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 
 /** A company gateway's warning or block page, recognised by its address or its text. */
 export function gatewayPage(url, text = "") {
@@ -52,17 +53,55 @@ export async function probeGateway(cfg, timeoutMs = 8000) {
 	}
 }
 
-/** Wait (up to waitMs) until the server answers again. True when it does. */
-export async function waitForServer(cfg, waitMs = 180000, signal) {
-	const end = Date.now() + waitMs;
-	while (Date.now() < end && !signal?.aborted) {
-		await new Promise((r) => setTimeout(r, 2500));
-		if ((await probeGateway(cfg, 5000)) === "") return true;
-	}
-	return false;
-}
+const clock = (t) => new Date(t).toTimeString().slice(0, 5);
+const span = (ms) => (ms >= 3600000 ? `${+(ms / 3600000).toFixed(1)} hours` : `${+(ms / 60000).toFixed(1)} minutes`);
 
-export const GATEWAY_NOTE = "The company gateway wants a confirmation: it is open in your browser. Confirm there; Ferry goes on by itself.";
+let pause = null; // shared by every request waiting at the gateway (main agent, subagents): one status line, one phone notice
+
+/**
+ * Ferry's own request met the gateway in the middle of the work: open the page and wait until the server answers,
+ * up to gatewayWaitMinutes (a night by default). Every 2.5 s at first, for someone at the computer; after tellAfter,
+ * one phone notice and once a minute. Returns "" when through or stopped (signal), the reason to stop at the cap.
+ */
+export async function waitAtGateway(cfg, page, signal, {
+	check = async () => (await probeGateway(cfg, 5000)) === "",
+	nap = (ms) => sleep(ms, undefined, { signal }).catch(() => {}),
+	now = Date.now,
+	tellAfter = Number(process.env.FERRY_TEST_GATEWAY_NOTIFY_MS || 180000),
+	slow = Number(process.env.FERRY_TEST_GATEWAY_POLL_MS || 60000),
+} = {}) {
+	openGatewayPage(page);
+	if (!pause) {
+		pause = { since: now(), told: false, waiting: 0 };
+		cfg.onGateway?.(`Paused since ${clock(pause.since)}: the company gateway wants a confirmation in the browser; carries on by itself`);
+	}
+	const p = pause;
+	p.waiting++;
+	const cap = Math.max(0, Number(cfg.gatewayWaitMinutes ?? 720)) * 60000;
+	try {
+		while (!signal?.aborted) {
+			const waited = now() - p.since;
+			if (waited >= cap) {
+				return `The company network gateway has wanted a confirmation since ${clock(p.since)} and nobody confirmed it within ` +
+					`${span(cap)} (gatewayWaitMinutes), so Ferry stopped waiting. The conversation is kept: confirm on the gateway's page ` +
+					'in the browser on this computer, then send your message again, or run "ferry -c" to continue this conversation.';
+			}
+			if (waited >= tellAfter && !p.told) {
+				p.told = true;
+				cfg.phone?.("Waiting for the gateway", `Ferry has been paused since ${clock(p.since)}: the company gateway wants ` +
+					"a confirmation in the browser on the work PC. It carries on by itself once someone confirms there");
+			}
+			await nap(Math.min(waited < tellAfter ? 2500 : slow, cap - waited));
+			if (!signal?.aborted && (await check())) return "";
+		}
+		return "";
+	} finally {
+		if (--p.waiting === 0 && pause === p) {
+			pause = null;
+			cfg.onGateway?.(undefined);
+		}
+	}
+}
 
 /** The gateway page a response points at, or "". r: { status, location, body } as from getJson. */
 export function gatewayOf(r) {

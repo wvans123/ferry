@@ -292,6 +292,7 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 | 花费 | 底栏显示这次对话花了多少钱，`/cost` 看明细，服务端管理页"用量和费用"按天、项目、模型汇总 |
 | 提醒 | 一个请求超过 30 秒才做完，响一声并弹出 Windows 通知 |
 | 手机通知 | 用 Bark 推到手机（管理页 → 设置 → 手机通知，贴上 Bark 地址）。这几种情况会推：做了 5 分钟以上的活做完了，或者因为出错停下（带一句原因）；目标完成或卡住；确认框等你超过 5 分钟。你自己按 Esc 停下的不推。做完的那条里是一句话回顾（见[旁问、顾问和回顾](#旁问顾问和回顾)），内容来自这次对话；不想让对话内容出现在手机通知里，把 `recap` 设成 `false`，通知就只写“做完了，用了几分钟” |
+| 公司网关 | 网关对服务端地址的放行会定时过期，之后要有人在工作电脑的浏览器里确认一次。Ferry 不会替你点。干活中途碰到时，它在浏览器里打开确认页，原地暂停，状态栏写 `Paused since 01:20: the company gateway wants a confirmation...`。有人确认后，同一个请求接着发，对话和待办都不变。主 agent、子 agent 和 `ferry -p` 都这样。头 3 分钟每 2.5 秒看一次通了没有，之后每分钟看一次。3 分钟还没人确认，推一条手机通知，每次暂停只推一次。手机通知也要经过服务端，网关把整个服务端地址都挡住时，这条通知也发不出去。最多等 `gatewayWaitMinutes` 分钟，默认 720，也就是 12 小时，够一个晚上。到时间就停下，报错写明从几点起在等；确认后发一句“继续”，ferry 已经关了就用 `ferry -c` 接着这段对话。设成 3 和以前一样只等 3 分钟，设成 0 不等。按 Esc 随时停。启动时（`ferry`、`ferry check`）碰到还是只等 3 分钟，那时你就在电脑前 |
 
 ## Agent 团队
 
@@ -354,7 +355,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理用自己的证书检查 HTTPS 时，靠它让 ferry 和命令都能连上 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（长任务做完多久算久，默认 300 秒）、`phoneApprovalSeconds`（确认框多久没人点就推到手机，默认 60 秒，每个确认框只推一次）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（长任务做完多久算久，默认 300 秒）、`phoneApprovalSeconds`（确认框多久没人点就推到手机，默认 60 秒，每个确认框只推一次）、`gatewayWaitMinutes`（干活中途网关要确认时最多等多久，默认 720 分钟）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
 
 服务端的设置见 [SERVER.md](SERVER.md#服务端设置)。
 
@@ -364,7 +365,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 
 | 看到 | 原因和办法 |
 |---|---|
-| `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry` 或 `ferry check`，它会在浏览器里打开确认页，你点"继续"后自己接着跑。确认过一阵会过期，干活中途碰到也会自动打开确认页、等确认后重发。长期办法是请 IT 把服务端地址加进白名单 |
+| `the company network gateway wants a confirmation` | 公司网关要你先确认。运行 `ferry` 或 `ferry check`，它会在浏览器里打开确认页，你点"继续"后自己接着跑。确认过一阵会过期，干活中途碰到也会自动打开确认页、暂停等确认后重发，最多等 `gatewayWaitMinutes`（默认 12 小时，见[其他](#其他)里的“公司网关”）。长期办法是请 IT 把服务端地址加进白名单 |
 | `cannot reach the server` | 浏览器能打开但 ferry 连不上，通常是浏览器走了公司代理。执行 `setx HTTPS_PROXY http://代理:端口`，然后重开 cmd |
 | `Cannot load the current Ferry server model list` | 能用哪些模型只听服务端的。拿不到服务端的模型列表，ferry 就停下，不拿上次存下的列表或 pi 自带的模型凑合。先按后面那句原因处理（连不上、令牌不对、网关要确认），再运行 `ferry doctor` 看一遍 |
 | `No models configured on the Ferry server` | 服务端一个模型都没启用（没设任何 API Key，或在管理页里全关了）。到服务端管理页加上服务商和模型 |
