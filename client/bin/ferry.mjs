@@ -434,8 +434,9 @@ async function run(args) {
 	cfg.phone = (await import("../lib/phone.mjs")).phoneNotifier(cfg);
 	// an approval left waiting: tell the phone after a while
 	let waitTimer = null;
-	permState.onAsk = (tool) => {
+	permState.onAsk = (tool, remote) => {
 		clearTimeout(waitTimer);
+		if (remote) return; // the item in the server's inbox pushes the phone itself, with a link to answer it (remote.mjs)
 		waitTimer = setTimeout(() => cfg.phone("Waiting for your approval", tool, "approval"), (cfg.phoneApprovalSeconds ?? 60) * 1000);
 		waitTimer.unref?.();
 	};
@@ -468,7 +469,7 @@ async function run(args) {
 			{ name: "ferry-distill", factory: (await import("../lib/distill.mjs")).createDistill(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },
 			{ name: "ferry-compact", factory: (await import("../lib/compact.mjs")).createCompact(cfg, { todoText }), hidden: true },
-			{ name: "ferry-ask", factory: (await import("../lib/ask.mjs")).createAsk(), hidden: true },
+			{ name: "ferry-ask", factory: (await import("../lib/ask.mjs")).createAsk(cfg), hidden: true },
 			{ name: "ferry-report", factory: (await import("../lib/report.mjs")).createReport(cfg, VERSION, PI_VERSION), hidden: true },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg), hidden: true },
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },

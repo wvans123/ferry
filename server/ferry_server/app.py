@@ -33,6 +33,7 @@ from .config import Config, provider_labels, refresh_models
 from .devices import Devices
 from . import globalmem
 from . import memreview
+from . import remote
 from . import report as reports
 from . import search as web_search
 from . import side
@@ -296,6 +297,8 @@ def create_app(cfg: Config) -> FastAPI:
             return Response(status_code=302, headers={"location": "http://127.0.0.1:9100/proxycontrolwarn?url=ferry"})
         if request.url.path == "/health" or request.url.path.startswith("/admin"):
             return await call_next(request)  # the admin page has its own, local-only sign-in
+        if request.url.path.startswith("/m/"):
+            return await call_next(request)  # the phone page: a signed one-item link instead of a token (remote.py)
         if request.method == "GET" and request.url.path in ("/", "/favicon.ico", "/robots.txt"):
             # a browser lands here, e.g. after the company gateway's confirmation page: not an error, not logged
             if request.url.path != "/":
@@ -382,7 +385,8 @@ def create_app(cfg: Config) -> FastAPI:
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
         return {"models": listed, "defaultModel": cfg.default_model, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
-                + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])}
+                + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])
+                + (["remote"] if remote.ready(cfg) else [])}
 
     @app.post("/v1/ferry/image")
     async def image(request: Request):
@@ -964,4 +968,5 @@ def create_app(cfg: Config) -> FastAPI:
     side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
     memreview.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     watchdog.mount(app, cfg, lambda **row: write(audit_log, **row))
+    remote.mount(app, cfg, lambda **row: write(audit_log, **row))
     return app

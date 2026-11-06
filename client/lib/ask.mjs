@@ -1,8 +1,11 @@
 // ask_user: the agent asks you one to four questions, each with options to pick from (one, or several), a
 // recommended answer marked, and "Other" to type your own. Like Claude Code's AskUserQuestion.
 // Without a terminal (ferry -p, a team member run by Paperclip) nobody can answer: the agent is told to go on with
-// its recommended choices and to say which it took.
+// its recommended choices and to say which it took. With remote answers on, the questions can also be answered on the
+// phone (remote.mjs).
+import { basename } from "node:path";
 import { Type } from "typebox";
+import { openRemote, race } from "./remote.mjs";
 
 const OTHER = "Other (type your own)";
 const DONE = "Done";
@@ -23,15 +26,15 @@ const Params = Type.Object({
 
 const labelOf = (o, rec) => `${o.label}${rec.has(o.label) ? " (recommended)" : ""}${o.description ? ` - ${o.description}` : ""}`;
 
-/** One question in the terminal. Returns the answer as text, or undefined when the user pressed Esc. */
-export async function askOne(ui, q) {
+/** One question in the terminal. Returns the answer as text, or undefined when the user pressed Esc (or signal closed it). */
+export async function askOne(ui, q, signal) {
 	const rec = new Set(q.recommended ?? []);
 	// the recommended options first, so Enter on the first line takes the recommendation
 	const opts = [...q.options.filter((o) => rec.has(o.label)), ...q.options.filter((o) => !rec.has(o.label))];
 	if (!q.multiSelect) {
-		const pick = await ui.select(q.question, [...opts.map((o) => labelOf(o, rec)), OTHER]);
-		if (pick === undefined) return undefined;
-		if (pick === OTHER) return (await ui.input(q.question, "your answer"))?.trim() || undefined;
+		const pick = await ui.select(q.question, [...opts.map((o) => labelOf(o, rec)), OTHER], { signal });
+		if (pick === undefined || signal?.aborted) return undefined;
+		if (pick === OTHER) return (await ui.input(q.question, "your answer", { signal }))?.trim() || undefined;
 		return opts.find((o) => labelOf(o, rec) === pick)?.label;
 	}
 	const chosen = new Set(q.options.filter((o) => rec.has(o.label)).map((o) => o.label));
@@ -40,11 +43,12 @@ export async function askOne(ui, q) {
 		const lines = opts.map((o) => `${chosen.has(o.label) ? "[x]" : "[ ]"} ${labelOf(o, rec)}`);
 		const otherLine = `${other ? "[x]" : "[ ]"} ${other ? `Other: ${other}` : OTHER}`;
 		const pick = await ui.select(`${q.question}\n(several can be picked: Enter ticks or unticks one; "${DONE}" when finished)`,
-			[`${DONE} (${chosen.size + (other ? 1 : 0)} picked)`, ...lines, otherLine]);
-		if (pick === undefined) return undefined;
+			[`${DONE} (${chosen.size + (other ? 1 : 0)} picked)`, ...lines, otherLine], { signal });
+		if (pick === undefined || signal?.aborted) return undefined;
 		if (pick.startsWith(DONE)) break;
 		if (pick === otherLine) {
-			other = other ? "" : ((await ui.input(q.question, "your answer"))?.trim() ?? "");
+			other = other ? "" : ((await ui.input(q.question, "your answer", { signal }))?.trim() ?? "");
+			if (signal?.aborted) return undefined;
 			continue;
 		}
 		const o = opts[lines.indexOf(pick)];
@@ -54,7 +58,24 @@ export async function askOne(ui, q) {
 	return all.length ? all.join("; ") : "(nothing picked)";
 }
 
-export function createAsk() {
+/** Every question in the terminal, or on the phone, whichever answers first. */
+export async function askAll(cfg, ui, qs, cwd) {
+	const remote = openRemote(cfg, { kind: "ask", who: "", project: basename(cwd), questions: qs });
+	const { value, phone } = await race(remote, async (signal) => {
+		const answers = [];
+		for (const q of qs) {
+			const a = await askOne(ui, q, signal);
+			if (a === undefined) return { answers, closed: true };
+			answers.push(`${q.question} -> ${a}`);
+		}
+		return { answers };
+	});
+	if (!phone) return value;
+	ui.notify("Answered on the phone", "info");
+	return { answers: qs.map((q, i) => `${q.question} -> ${phone.answers[i]}`) };
+}
+
+export function createAsk(cfg = {}) {
 	return (pi) => {
 		pi.registerTool({
 			name: "ask_user",
@@ -73,15 +94,11 @@ export function createAsk() {
 					return { content: [{ type: "text", text: "Nobody can answer here (no terminal). Go on with your recommended " +
 						`choices and say in your result which you took:\n${recs}` }], details: { answered: false } };
 				}
-				const answers = [];
-				for (const q of qs) {
-					const a = await askOne(ctx.ui, q);
-					if (a === undefined) {
-						return { content: [{ type: "text", text: `The user closed the question without answering${answers.length
-							? ` (answers so far:\n${answers.join("\n")})` : ""}. Do not guess: say what you need and stop.` }],
-						details: { answered: false } };
-					}
-					answers.push(`${q.question} -> ${a}`);
+				const { answers, closed } = await askAll(cfg, ctx.ui, qs, ctx.cwd ?? process.cwd());
+				if (closed) {
+					return { content: [{ type: "text", text: `The user closed the question without answering${answers.length
+						? ` (answers so far:\n${answers.join("\n")})` : ""}. Do not guess: say what you need and stop.` }],
+					details: { answered: false } };
 				}
 				return { content: [{ type: "text", text: `The user answered:\n${answers.join("\n")}` }], details: { answered: true } };
 			},

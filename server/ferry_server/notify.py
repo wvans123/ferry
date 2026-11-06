@@ -7,12 +7,12 @@ import httpx
 from .config import Config
 
 
-async def send(cfg: Config, title: str, body: str, kind: str = "") -> tuple[bool, str]:
-    """POST to the Bark address set on the admin page. Returns (sent, error)."""
+async def send(cfg: Config, title: str, body: str, kind: str = "", link: str = "") -> tuple[bool, str]:
+    """POST to the Bark address set on the admin page; link opens when the notification is tapped. Returns (sent, error)."""
     if not cfg.bark_url:
         return False, "no Bark address set (admin page > 设置 > 手机通知)"
     url = cfg.bark_url.rstrip("/")
-    payload = {"title": title[:80], "body": body[:500], "group": "Ferry"}
+    payload = {"title": title[:80], "body": body[:500], "group": "Ferry", **({"url": link} if link else {})}
     if kind == "approval":
         payload["level"] = "timeSensitive"  # shows even in a focus mode
     try:

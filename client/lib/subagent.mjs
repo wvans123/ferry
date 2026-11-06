@@ -11,7 +11,7 @@
 // Your own: Markdown files with a name/description/tools header in
 //   <project>/.ferry/agents/, <project>/.claude/agents/ (Claude Code's format) or <FERRY_HOME>/agents/.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { AGENT_DIR, cleanOldFiles, FERRY_HOME, findFerryModel } from "./config.mjs";
@@ -49,6 +49,27 @@ export async function withSlot(limit, fn, onWait) {
 }
 
 /** <FERRY_HOME>/subagents/<day>/<id>-<agent>-<slug>.md */
+// In one task_batch the subagents run side by side: the first to change a file owns it until the batch ends, and the
+// others are refused instead of overwriting each other's work. Commands are not checked, only the file tools.
+const FILE_WRITERS = new Set(["write", "edit", "office_edit", "office_create", "image_create"]);
+export function batchClaims() {
+	const owners = new Map();
+	return { claim: (file, who) => (owners.get(file) ?? (owners.set(file, who), who)), clear: () => owners.clear() };
+}
+
+/** The extension that refuses a file another subagent of the batch is changing. */
+export function claimGuard(claims, who) {
+	return (pi) => pi.on("tool_call", (event, ctx) => {
+		const path = event.input?.path;
+		if (!FILE_WRITERS.has(event.toolName) || !path) return undefined;
+		const file = resolve(ctx?.cwd ?? process.cwd(), String(path));
+		const owner = claims.claim(process.platform === "win32" ? file.toLowerCase() : file, who);
+		if (owner === who) return undefined;
+		return { block: true, reason: `${path} is being changed by subagent ${owner} in this batch. Do not change it; ` +
+			"say in your report what you would change instead." };
+	});
+}
+
 export function transcriptPath(id, agent, description) {
 	const slug = String(description ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "task";
 	return join(SUBAGENTS_DIR, new Date().toISOString().slice(0, 10), `${id}-${agent}-${slug}.md`);
@@ -384,6 +405,7 @@ export function createSubagents(cfg, deps) {
 					`(${Math.min(limit, items.length - done)} at a time)` }], details: { done, total: items.length } });
 				show();
 				const t = trackSubagent(`batch: ${params.description} (${items.length} items)`);
+				const claims = batchClaims();
 				await Promise.all(items.map((item, i) => withSlot(limit, async () => {
 					if (signal?.aborted) {
 						results[i] = { item, error: "stopped" };
@@ -392,7 +414,7 @@ export function createSubagents(cfg, deps) {
 					const one = { ...params, description: `${params.description} #${i + 1}`, prompt: params.prompt.replaceAll("{item}", item) };
 					const sub = `${t.job.id}.${i + 1}`;
 					try {
-						const session = await openSession({ cfg, deps, agent, label: `#${sub} ${agent.name} (${one.description})`, ctx, cwd, pi });
+						const session = await openSession({ cfg, deps, agent, label: `#${sub} ${agent.name} (${one.description})`, ctx, cwd, pi, claims });
 						const transcript = createTranscript(transcriptPath(sub, agent.name, params.description), `Subagent ${sub}: ${agent.name}: ${one.description}`);
 						Object.assign(t.job, { agent: agent.name, transcript: transcript.file });
 						const r = await runSubagent({ session, agent, params: one, signal, onUpdate: undefined, job: t.job, transcript })
@@ -403,7 +425,7 @@ export function createSubagents(cfg, deps) {
 					}
 					done++;
 					show();
-				})));
+				}))).finally(() => claims.clear());
 				const failed = results.filter((r) => r.error).length;
 				mkdirSync(join(FERRY_HOME, "batches"), { recursive: true });
 				const file = join(FERRY_HOME, "batches", `${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.md`);
@@ -428,7 +450,7 @@ function pickModel(agent, ctx) {
 }
 
 /** A fresh session for the subagent, with its own Ferry provider (its own server conversation). */
-async function openSession({ cfg, deps, agent, label, ctx, cwd, pi }) {
+async function openSession({ cfg, deps, agent, label, ctx, cwd, pi, claims }) {
 	const { createAgentSession, DefaultResourceLoader, SessionManager } = await import("@earendil-works/pi-coding-agent");
 	const parentTools = pi.getActiveTools().filter((t) => !NOT_FOR_SUBAGENTS.has(t));
 	const tools = (agent.tools ?? parentTools).filter((t) => !NOT_FOR_SUBAGENTS.has(t));
@@ -442,6 +464,8 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi }) {
 		extensionFactories: [
 			{ name: "ferry-sync", factory: deps.makeSync() },
 			{ name: "ferry-prompt", factory: createPrompt(cfg, { subagent: true }) },
+			// before the guard: a refused file is not asked about
+			...(claims ? [{ name: "ferry-batch-claims", factory: claimGuard(claims, label) }] : []),
 			{ name: "ferry-guard", factory: createGuard(cfg, { ui: ctx?.hasUI ? ctx.ui : undefined, label }) },
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg) },
 			{ name: "ferry-web", factory: createWeb(cfg) },

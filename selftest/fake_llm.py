@@ -232,6 +232,10 @@ def decide_agent(msgs):
     if "<ferry_subagent>" in system:  # a subagent's own conversation
         if "SUBBATCH" in first:  # one item of a task_batch
             return ("text", "ITEM " + first.split()[2] + " ok")
+        if "SUBWRITE" in first:  # items of one batch that all write the same file
+            if not tools:
+                return ("tool", "write", {"path": "batch-shared.txt", "content": first.split()[1] + "\n"})
+            return ("text", "ITEM " + first.split()[1] + ": " + text_of(tools[-1])[:200].replace("\n", " "))
         if "SUBRUN" in first:  # a general subagent that runs a command (needs the user's approval)
             if not tools:
                 return ("tool", "bash", {"command": "echo sub-approved-$((6*7))"})
@@ -249,6 +253,20 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "read", {"path": "data/f03.txt", "limit": 2})
         return ("text", "EXPLORE REPORT: data has files; f03 starts with " + text_of(tools[-1])[:24])
+    if "PARWRITE" in first:  # two subagents of one batch write the same file
+        if not tools:
+            return ("tool", "task_batch", {"description": "write the shared file", "items": ["one", "two"],
+                                           "prompt": "SUBWRITE {item} into the shared file", "agent": "general"})
+        return ("text", "PARWRITTEN: " + text_of(tools[-1])[:600].replace("\n", " | "))
+    if "PHONEAPPROVAL" in first:  # a delete that asks every time, answered on the phone page
+        if not tools:
+            return ("tool", "bash", {"command": "rm phone-old.txt && echo removed-by-phone"})
+        return ("text", "PHONEAPPROVED: " + text_of(tools[-1])[:160].replace("\n", " "))
+    if "PHONEQUESTION" in first:  # ask_user, answered on the phone page
+        if not tools:
+            return ("tool", "ask_user", {"questions": [{"question": "Which format for the phone?", "options": [
+                {"label": "Word"}, {"label": "PPT"}], "recommended": ["PPT"]}]})
+        return ("text", "PHONEANSWER: " + text_of(tools[-1])[:160].replace("\n", " | "))
     if "GMEMTEST-SAVE" in first:  # global memory: kept on the Ferry server, for all of the user's computers
         if not tools:
             return ("tool", "memory", {"action": "save", "scope": "global", "name": "prefers-tea",

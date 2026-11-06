@@ -71,6 +71,7 @@ export const DEFAULTS = {
 	phoneNotify: true, // ask the Ferry server to notify your phone (it needs a Bark address on its admin page)
 	phoneAfterSeconds: 300, // a request that took this long ends with a phone notification
 	phoneApprovalSeconds: 60, // an approval left unanswered this long notifies the phone (once per question)
+	phoneRemote: true, // approvals and ask_user questions can also be answered on the phone (the server needs Bark and its public address)
 	gatewayWaitMinutes: 720, // mid-work, the company gateway wants a confirmation: wait this long for it, then stop (0 = stop at once)
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
@@ -106,6 +107,7 @@ export const SETTINGS = {
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
 	showModel: ["boolean", "show the model's name in the footer at the bottom right (false: hidden; /model and /status still show it)"],
 	phoneNotify: ["boolean", "phone notifications through the Ferry server (set Bark on its admin page): goal done, long work done, approval waiting"],
+	phoneRemote: ["boolean", "answer a waiting approval or question on the phone: the notification opens a page with the whole question (the server needs Bark and its public address)"],
 	blockedPaths: ["list", "paths the agent may never read, change or use in commands (part of the path is enough)"],
 	proxy: ["string", "company proxy for reaching the server, e.g. http://proxy.corp:8080 (empty = HTTPS_PROXY)"],
 };

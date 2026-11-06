@@ -99,7 +99,7 @@ class Config:
     models_file: Path | None = None  # zero-config: models.toml, re-read whenever it changes
     models_mtime: float = 0.0
     settings_file: Path | None = None  # zero-config: server.toml, written by the admin page
-    public_url: str = ""               # how clients reach this server, e.g. https://ferry.example.com (display only)
+    public_url: str = ""               # how clients and the phone reach this server, e.g. https://ferry.example.com
     users: dict[str, str] = field(default_factory=dict)  # token -> user name
     models: dict[str, ModelConfig] = field(default_factory=dict)
     providers: dict[str, Provider] = field(default_factory=dict)
@@ -131,6 +131,7 @@ def load(path: str | os.PathLike) -> Config:
         github_repo=os.environ.get("FERRY_GITHUB_REPO") or s.get("github_repo", "wvans123/ferry"),
         shared_memory=bool(s.get("shared_memory", False)),
         search_engine=s.get("search_engine", ""),
+        public_url=(os.environ.get("FERRY_PUBLIC_URL") or s.get("public_url", "")).rstrip("/"),
     )
     if len(cfg.secret) < 16:
         raise SystemExit(f"environment variable {s.get('secret_env', 'FERRY_SECRET')} must be set to at least 16 characters")
@@ -516,7 +517,7 @@ def load_default() -> Config:
         session_store=env("FERRY_SESSION_STORE") or saved.get("session_store", "memory"),
         models_file=models_file,
         settings_file=settings_file,
-        public_url=saved.get("public_url", ""),
+        public_url=(env("FERRY_PUBLIC_URL") or saved.get("public_url", "")).rstrip("/"),
         record_details=bool(saved.get("record_details", False)),
     )
     apply_models_file(cfg, models_file)

@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -2282,6 +2283,140 @@ def check_watchdog(root: Path, work: Path) -> None:
         s.close()
 
 
+def check_phone_remote(root: Path, work: Path) -> None:
+    """Answering from the phone: the page a Bark push opens answers an approval and a question while the terminal
+    waits. And subagents of one task_batch do not write the same file."""
+    s = Stack(root / "batch", work, "agent")
+    shared = work / "batch-shared.txt"
+    shared.unlink(missing_ok=True)
+    try:
+        c, out = s.ferry("-p", "PARWRITE: both items write one file")
+        wrote = re.findall(r"ITEM (one|two): Successfully wrote", out)
+        refused = re.findall(r"ITEM (one|two): [^|]*?batch-shared\.txt is being changed by subagent #[\d.]+ general", out)
+        ok = (c == 0 and len(wrote) == 1 and len(refused) == 1 and wrote != refused and shared.exists()
+              and shared.read_text(encoding="utf-8").strip() == wrote[0])
+        check("F115 批量子 agent 不抢同一个文件", ok, "task_batch 里两个子 agent 都要写同一个文件：先写的那个写成，另一个被拒，"
+              "理由里写着文件正被哪个子 agent 改、让它在报告里说" if ok else f"code={c} wrote={wrote} refused={refused} {out[-500:]!r}")
+    finally:
+        s.close()
+        shared.unlink(missing_ok=True)
+    if WINDOWS:
+        print("  SKIP  F113 手机上批准、F114 手机上回答（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    s = Stack(root / "phone", work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark",
+                                                         "FERRY_PUBLIC_URL": "http://127.0.0.1:8787"})
+    old = work / "phone-old.txt"
+    old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks, even in full access
+    seen = b""
+    pid = 0
+    try:
+        s.home.mkdir(parents=True, exist_ok=True)
+        (s.home / "config.json").write_text(json.dumps({"phoneApprovalSeconds": 1}), encoding="utf-8")
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float, since: int = 0) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[since:]):
+                    return True
+            return False
+
+        def typed(text: bytes) -> None:
+            os.write(fd, text)
+            time.sleep(0.4)
+            os.write(fd, b"\r")
+
+        def push(n: int) -> dict:
+            """The n-th Bark push that carries a link (the terminal is read meanwhile)."""
+            end = time.time() + 20
+            while time.time() < end:
+                try:
+                    links = [u for u in jsonl(s.upstream) if u.get("group") == "Ferry" and u.get("url")]
+                except ValueError:  # a line being written
+                    links = []
+                if len(links) >= n:
+                    return links[n - 1]
+                wait_for("\0", 0.3)
+            return {}
+
+        def page(url: str, form: dict | None = None) -> tuple[int, str]:
+            data = urllib.parse.urlencode(form).encode() if form is not None else None
+            try:
+                with DIRECT.open(urllib.request.Request(url, data=data, method="POST" if data else "GET"), timeout=30) as r:
+                    return r.status, r.read().decode("utf-8")
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode("utf-8")
+
+        started = wait_for("shift+tab", 60)
+        typed(b"PHONEAPPROVAL: remove the old file")
+        asked = wait_for("Allow bash?", 30)
+        p = push(1)
+        url = p.get("url", "")
+        code, first = page(url) if url else (0, "")
+        shown = (code == 200 and url.startswith("http://127.0.0.1:8787/m/") and "rm phone-old.txt" in first
+                 and "小心" in first and "等你批准 bash" in p.get("body", ""))
+        _, again = page(url, {"action": "once"}) if url else (0, "")
+        second = "再点一次确认" in again and old.exists()
+        _, confirmed = page(url, {"action": "once", "confirm": "1"}) if url else (0, "")
+        noticed = wait_for("Answered on the phone: Allow once", 20)
+        done = wait_for("PHONEAPPROVED: removed-by-phone", 30) and not old.exists()
+        used = "已处理" in confirmed and "已处理" in (page(url)[1] if url else "")
+        ok = started and asked and shown and second and noticed and done and used
+        check("F113 手机上批准", ok, "终端里等批准时，服务端推的 Bark 带着链接；手机页面写着命令和风险，有风险的要再点一次确认；"
+              "点了以后终端的确认框关掉、写一行“在手机上答了”，命令照常执行；链接用过一次就显示已处理" if ok
+              else f"started={started} asked={asked} shown={shown} second={second} noticed={noticed} done={done} used={used} "
+                   f"push={p} {plain(seen)[-500:]!r}")
+
+        wait_for("\0", 1)  # the first request settles, so the next message is not taken as a remark while it works
+        mark = len(seen)
+        typed(b"PHONEQUESTION: pick a format")
+        asked = wait_for("Which format for the phone?", 30, mark)
+        url = push(2).get("url", "")
+        code, form = page(url) if url else (0, "")
+        shown = code == 200 and "Which format for the phone?" in form and "PPT（推荐）" in form
+        _, sent = page(url, {"a0": "Word"}) if url else (0, "")
+        noticed = wait_for("Answered on the phone", 20, mark)
+        done = wait_for("PHONEANSWER:", 30, mark) and "-> Word" in plain(seen[mark:])
+        ok = asked and shown and "已处理" in sent and noticed and done
+        check("F114 手机上回答提问", ok, "agent 用 ask_user 提问时，手机页面列出选项（推荐的在前）；点一个选项，"
+              "终端里的问题关掉，agent 收到这个回答" if ok
+              else f"asked={asked} shown={shown} sent={'已处理' in sent} noticed={noticed} done={done} {plain(seen[mark:])[-500:]!r}")
+    finally:
+        if pid:  # keep reading while ferry quits: on macOS a full terminal buffer blocks its writes
+            for _ in range(2):
+                os.write(fd, b"\x03")
+                wait_for("\0", 0.3)
+            try:
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(50):
+                    if os.waitpid(pid, os.WNOHANG)[0]:
+                        break
+                    wait_for("\0", 0.1)
+                else:
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+            except (ProcessLookupError, ChildProcessError):
+                pass
+        s.close()
+        old.unlink(missing_ok=True)
+
+
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
 # its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
 STEPS = [
@@ -2296,7 +2431,7 @@ STEPS = [
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"), (check_word_tracked, "wordtracked"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
-    (check_watchdog, "watchdog"),
+    (check_watchdog, "watchdog"), (check_phone_remote, "remote"),
 ]
 
 
