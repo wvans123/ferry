@@ -1037,6 +1037,90 @@ def check_steer(root: Path, work: Path) -> None:
         (work / "steer-wrong.txt").unlink(missing_ok=True)
 
 
+def check_watch_loop(root: Path, work: Path) -> None:
+    """A watched background job: each line it prints reaches the agent while it runs. /loop: a prompt every so often."""
+    if WINDOWS:
+        print("  SKIP  F123 F124 监听和 /loop（Windows 上没有伪终端，Linux 上检查）")
+        return
+    import pty
+    import select
+
+    s = Stack(root, work, "agent")
+    seen = b""
+    try:
+        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40",
+               "FERRY_AUTO_APPROVE": "1", "FERRY_LOOP_MIN_MS": "4000"}
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(work)
+            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
+        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
+                                 b.decode("utf-8", "replace"))
+
+        def wait_for(text: str, secs: float, since: int = 0) -> bool:
+            nonlocal seen
+            end = time.time() + secs
+            while time.time() < end:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        seen += os.read(fd, 65536)
+                    except OSError:
+                        return False
+                if text in plain(seen[since:]):
+                    return True
+            return False
+
+        def typed(text: bytes) -> None:
+            os.write(fd, text)
+            time.sleep(0.4)
+            os.write(fd, b"\r")
+
+        started = wait_for("shift+tab", 60)
+        # the script prints "first" at once (the tool result shows it), "second" after 3 s and "third" after 6 s: each
+        # reaches the agent as a message of its own while the script still runs; the end message does not repeat them
+        typed(b"WATCHTEST: watch the ticker")
+        waiting = wait_for("WATCH: waiting for the watcher, saw_first=True", 60)
+        second = wait_for("SEEN: second", 20)
+        third = wait_for("SEEN: third", 20)
+        ended = wait_for("WATCHEND repeated=False", 20)
+        text = plain(seen)
+        once = text.count("SEEN: second") == 1 and text.count("SEEN: third") == 1 and "SEEN: first" not in text
+        ok = started and waiting and second and third and ended and once
+        check("F123 监听后台命令", ok, "job_start 带 watch 时，脚本每打印一行（2 秒内的合在一起）agent 就收到一条消息并立刻反应，脚本还在跑；"
+              "启动时已经看到的行不重复送；结束时只说结束，不重复输出" if ok
+              else f"started={started} waiting={waiting} second={second} third={third} ended={ended} once={once}: {text[-500:]!r}")
+        mark = len(seen)
+        typed(b"/loop 4s LOOPTEST say tick")
+        armed = wait_for("Loop #1: every 4s", 10, mark)
+        run1 = wait_for("LOOPED run 1", 15, mark)
+        run2 = wait_for("LOOPED run 2", 15, mark)
+        typed(b"/loop")
+        listed = wait_for("#1 every 4s, 2 runs: LOOPTEST say tick", 10, mark) or wait_for("#1 every 4s, 3 runs: LOOPTEST say tick", 10, mark)
+        typed(b"/loop stop 1")
+        stopped = wait_for("Stopped #1", 10, mark)
+        time.sleep(2)  # a tick that fired just before the stop finishes its reply
+        wait_for("\0", 0.5)
+        before = plain(seen).count("LOOPED run")
+        time.sleep(9)
+        wait_for("\0", 0.5)
+        quiet = plain(seen).count("LOOPED run") == before
+        ok = armed and run1 and run2 and listed and stopped and quiet
+        check("F124 /loop 定时重复", ok, "/loop 4s <提示> 每 4 秒把提示作为 Ferry 的消息送给 agent 并开一轮（忙时等它做完）；/loop 列出在跑的；"
+              "/loop stop 1 停掉后不再触发" if ok
+              else f"armed={armed} run1={run1} run2={run2} listed={listed} stopped={stopped} quiet={quiet}: {plain(seen)[mark:][-500:]!r}")
+        for _ in range(2):
+            os.write(fd, b"\x03")
+            time.sleep(0.3)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+    finally:
+        s.close()
+
+
 def check_server_models_only(root: Path, work: Path) -> None:
     """With the server unreachable, ferry stops and says so instead of offering a stale saved model list."""
     s = Stack(root, work, "agent", start_server=False)
@@ -2770,6 +2854,7 @@ STEPS = [
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
     (check_watchdog, "watchdog"), (check_phone_remote, "remote"), (check_phone_console, "console"), (check_feishu, "feishu"),
+    (check_watch_loop, "watchloop"),
 ]
 
 

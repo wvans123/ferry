@@ -413,6 +413,7 @@ async function run(args) {
 	const { createHooks } = await import("../lib/hooks.mjs");
 	const { createGoal } = await import("../lib/goal.mjs");
 	const { createJobs } = await import("../lib/jobs.mjs");
+	const { createLoop } = await import("../lib/loop.mjs");
 	const { createProjectMcp } = await import("../lib/mcp.mjs");
 	const { webOn } = await import("../lib/web.mjs");
 	const { createBrowser, prepareBrowser } = await import("../lib/browser.mjs");
@@ -455,6 +456,7 @@ async function run(args) {
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },
 			{ name: "ferry-goal", factory: createGoal(cfg), hidden: true },
 			{ name: "ferry-jobs", factory: createJobs(cfg, { todoText }), hidden: true },
+			{ name: "ferry-loop", factory: createLoop(cfg), hidden: true },
 			{ name: "ferry-hooks", factory: createHooks(), hidden: true },
 			{ name: "ferry-commands", factory: createCommands(cfg, { status, mode: () => permState.mode, agents: discoverAgents,
 				doctor: () => new Promise((done) => {
