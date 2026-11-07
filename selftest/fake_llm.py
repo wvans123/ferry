@@ -377,6 +377,18 @@ def decide_agent(msgs):
         return ("text", "EDIT: " + text_of(tools[-1])[:400].replace("\n", " | "))
     if first.startswith("Background job") and "napper" in first:  # Ferry woke the agent: the WAKETEST command ended
         return ("text", f"WOKEN: ended={'exited with code 0' in first} out={'napped' in first}")
+    if first.startswith("Watched job") and "watcher" in first:  # a watched job printed something: the agent reacts to each batch
+        lines = [ln for ln in first.split("\n")[1:] if ln and not ln.startswith("(")]
+        return ("text", "SEEN: " + " ".join(lines))
+    if first.startswith("Background job") and "watcher" in first:  # the watched job ended: its lines are not repeated
+        return ("text", f"WATCHEND repeated={'third' in first}")
+    if "WATCHTEST" in first:  # a watcher script: each line it prints reaches the agent while it runs
+        if not tools:
+            return ("tool", "job_start", {"command": "echo first; sleep 3; echo second; sleep 3; echo third", "name": "watcher", "watch": True})
+        return ("text", "WATCH: waiting for the watcher, saw_first=" + str("first" in text_of(tools[-1])))
+    if first.startswith("(From Ferry, not the user: /loop") and "LOOPTEST" in first:  # a /loop tick
+        run = re.search(r"run (\d+)", first)
+        return ("text", f"LOOPED run {run.group(1) if run else '?'}")
     if "WAKETEST" in first:  # a background command that ends after the agent has finished its turn
         if not tools:
             return ("tool", "job_start", {"command": "sleep 4; echo napped", "name": "napper"})
