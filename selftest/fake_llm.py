@@ -747,6 +747,11 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(200, {"object": "list", "data": [{"id": "fake-small"}, {"id": "fake-large"}]})
         self.send_json(404, {"error": {"message": "not found"}})
 
+    def do_PATCH(self):  # the Feishu bot updates a card it sent
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        log({"feishu_patch": self.path.rsplit("/", 1)[-1], **body})
+        self.send_json(200, {"code": 0, "data": {}})
+
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
         body = json.loads(raw)
@@ -781,6 +786,11 @@ class H(BaseHTTPRequestHandler):
             return
         if self.path.endswith("/bark"):  # a phone notification (Bark)
             return self.send_json(200, {"code": 200, "message": "success"})
+        if self.path.endswith("/feishu/open-apis/auth/v3/tenant_access_token/internal"):  # Feishu's open API
+            return self.send_json(200, {"code": 0, "msg": "ok", "tenant_access_token": "t-fake", "expire": 7200})
+        if self.path.startswith("/feishu/open-apis/im/v1/messages?"):  # a message from the Feishu bot
+            state["feishu"] = state.get("feishu", 0) + 1
+            return self.send_json(200, {"code": 0, "data": {"message_id": f"om_fake{state['feishu']}"}})
         if self.path.endswith("/v1/messages"):
             return self.anthropic(body, raw)
         bad = [k for k in REJECT if k in body]

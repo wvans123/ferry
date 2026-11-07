@@ -3,7 +3,7 @@
 While the agent works, the client says so every few minutes (POST /v1/ferry/alive) and once more when the run ends.
 A run that has said nothing for stall_minutes most likely cannot reach this server any more: the company gateway wants
 a confirmation, the computer went to sleep or lost the network, or ferry quit. The client's own phone notice would go
-through that same blocked path, so the server sends one (Bark), and one more when the run is heard from again.
+through that same blocked path, so the server sends one (Bark, Feishu), and one more when the run is heard from again.
 State lives in memory: a restart forgets it, and the next beat starts watching again.
 """
 from __future__ import annotations
@@ -23,13 +23,14 @@ CAUSES = "可能是公司网关要确认、电脑睡眠或断网、ferry 退出�
 
 
 class Watchdog:
-    def __init__(self, cfg: Config, clock=time.time):
+    def __init__(self, cfg: Config, clock=time.time, ready=None):
         self.cfg, self.clock = cfg, clock
+        self.ready = ready or (lambda: bool(cfg.bark_url))  # some channel (Bark, Feishu) can carry the notice
         self.runs: dict[tuple[str, str, str], dict] = {}  # (user, device id, run id) -> what we know about the run
 
     def after(self) -> float:
-        """Seconds of silence that make a stall; 0 = off (also while no Bark address is set)."""
-        if not self.cfg.bark_url:
+        """Seconds of silence that make a stall; 0 = off (also while no notification channel is set up)."""
+        if not self.ready():
             return 0
         test = os.environ.get("FERRY_TEST_STALL_SECONDS")
         return float(test) if test else max(0, self.cfg.stall_minutes) * 60
@@ -81,13 +82,14 @@ def where(*runs: dict) -> str:
 
 def mount(app: FastAPI, cfg: Config, audit, console_link=lambda user, sid: "") -> None:
     """POST /v1/ferry/alive {id, project, end, console}; the check loop starts with the first beat."""
-    dog = Watchdog(cfg)
+    dog = Watchdog(cfg, ready=lambda: notify.ready(app, cfg))
     loop: dict[str, asyncio.Task] = {}
 
     def send(notices: list[tuple[str, str, tuple[str, str]]], **row) -> None:
         for title, body, (user, sid) in notices:
             audit(event="watchdog", notice=title, **row)
-            asyncio.create_task(notify.send(cfg, title, body, "stall", link=console_link(user, sid)))
+            asyncio.create_task(notify.everywhere(app, cfg, title, body, "stall", link=console_link(user, sid),
+                                                  user=user, session=sid))
 
     async def check():
         every = float(os.environ.get("FERRY_TEST_WATCHDOG_TICK") or 60)
