@@ -1189,7 +1189,7 @@ def check_plan_switch(root: Path, work: Path) -> None:
         mark = len(seen)
         os.write(fd, b"\r")  # Yes
         done = wait_for("PLANMODE entered=True refused=True left=True wrote=True", 30, mark) and made.exists()
-        restored = "full access: nothing asks (shift+tab)" in plain(seen[mark:])
+        restored = "full access: only uploads and deleting protected places ask (shift+tab)" in plain(seen[mark:])
         # keep reading while ferry quits: on macOS a full terminal buffer blocks its writes, and then it never exits
         for _ in range(2):
             os.write(fd, b"\x03")
