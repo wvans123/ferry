@@ -481,6 +481,17 @@ function protectedHit(abs, places) {
 		return null;
 	};
 	if (!hasGlob(abs)) return test(abs);
+	// a wildcard right under a protected place (not a project folder) can empty it: ask whatever it matches
+	const head = abs.split(/[\\/]+/);
+	const at = head.findIndex(hasGlob);
+	let prefix = head.slice(0, at).join(sep) || sep;
+	if (/^[a-z]:$/i.test(prefix)) prefix += sep;
+	const same = (a, b) => keyOf(a) === keyOf(b);
+	if (!places.some((pl) => pl.project && same(prefix, pl.path))) {
+		if (isRoot(prefix)) return { path: resolve(prefix), label: "a drive or filesystem root", self: true };
+		const pl = places.find((x) => !x.project && same(prefix, x.path));
+		if (pl) return { ...pl, self: true };
+	}
 	const found = globMatches(abs);
 	if (found) {
 		for (const m of found) {
@@ -489,11 +500,8 @@ function protectedHit(abs, places) {
 		}
 		return null;
 	}
-	// too many matches to list: look at the folder before the first wildcard; a wildcard under it may reach a protected place
-	const head = abs.split(/[\\/]+/);
-	const at = head.findIndex(hasGlob);
-	const prefix = head.slice(0, at).join(sep) || sep;
-	for (const pl of places) if (keyOf(prefix) !== keyOf(pl.path) && under(prefix, pl.path, true)) return { ...pl, self: false };
+	// too many matches to list: a wildcard under the folder before it may reach a protected place
+	for (const pl of places) if (!same(prefix, pl.path) && under(prefix, pl.path, true)) return { ...pl, self: false };
 	return null;
 }
 
@@ -511,9 +519,9 @@ export function protectedDeleteOf(cmd, cwd, places, env = process.env) {
 				unknown = true;
 				continue;
 			}
-			if (e.why) { // too many files to list: judge it by the folder before the wildcard
-				const v = expandVars(t, env);
-				const h = v === null ? null : protectedHit(resolve(cwd, gitBashPath(v)), places);
+			const v = expandVars(t, env);
+			if (v !== null && hasGlob(v)) { // judged as a pattern: what it matches, and the folder it sits in
+				const h = protectedHit(resolve(cwd, gitBashPath(v)), places);
 				if (h) return protectedWhy(`deletes ${t}`, h);
 				continue;
 			}

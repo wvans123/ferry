@@ -175,7 +175,7 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
   - Windows 的系统文件夹：`C:\Windows`、`Program Files`、`Program Files (x86)`、`ProgramData`，以及 `%APPDATA%`、`%LOCALAPPDATA%` 本身；
   - `.ferry` 文件夹、临时文件夹本身、当前项目文件夹和被当作项目的其他文件夹，只是文件夹本身，里面的东西可以删。
 
-  比较时 Windows 不分大小写，`..`、`~`、`%TEMP%` 这类认识的变量、Git Bash 的 `/c/...` 路径和通配符都会先展开。通配符匹配到上面的地方也算（`rm -rf ~/*` 会问）。提示里会写明碰到的是哪一个，比如"deletes C:\Users\me\Documents, a folder directly in your home folder, which Ferry protects even in full access"。
+  比较时 Windows 不分大小写，`..`、`~`、`%TEMP%` 这类认识的变量、Git Bash 的 `/c/...` 路径和通配符都会先展开。通配符匹配到上面的地方也算（`rm -rf ~/*` 会问）。通配符直接写在受保护的文件夹里面也问，不管匹配到什么（`rm -rf ~/Documents/*`、`cd ~/Documents && rm -rf *`、`Remove-Item -Recurse C:\Windows\*`），因为这会清空它；项目文件夹、被当作项目的文件夹和临时文件夹里直接写通配符不问（`rm -rf *`）。提示里会写明碰到的是哪一个，比如"deletes C:\Users\me\Documents, a folder directly in your home folder, which Ferry protects even in full access"。
 
   列不出要删什么的写法（`find -delete`、管道、`python -c`、`git clean`、没法跟着走的 `cd`）在全部放行下也直接执行，除非：命令里任何地方写出了上面的地方（绝对路径、`~`、认识的变量、Git Bash 路径，引号里的代码也算），或者前面有 `cd`（不带路径的 `cd`、`cd ~`、`cd /`、`cd C:\`，`Set-Location` 也一样）到了上面的地方或者它的上一级。不认识的变量单独出现不再是问的理由。
 - 改项目文件夹以外的文件，总要先确认。

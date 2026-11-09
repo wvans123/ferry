@@ -298,7 +298,17 @@ test("full access: a delete asks only when it hits a protected place", () => {
 		ask("cd ~ && rm -rf *", /protects even in full access/);
 		ask("cd ~; rm -rf *", /protects even in full access/);
 		ask("cd && rm -rf *", /protects even in full access/);
-		assert.equal(act("cd ~/Documents && rm -rf *"), "allow"); // listable: what is in Documents, not Documents itself
+		ask("cd ~/Documents && rm -rf *", /Documents/); // a wildcard right in a protected folder empties it
+		ask("rm -rf ~/Documents/*", /Documents/);
+		ask("rm -rf ~/Documents/*.txt", /Documents/);
+		ask(`rm -rf ${fwd(join(home, "Documents"))}/*`, /Documents/);
+		ask(`rm -rf ${fwd(FERRY_HOME_DIR)}/*`, /Ferry's own folder/);
+		ask("find ~/Documents/* -delete", /Documents/);
+		assert.equal(act("rm -rf ~/Documents/x/*"), "allow"); // one level down is fine
+		assert.equal(act(`rm -rf ${fwd(join(temp, "*"))}`), "allow"); // the temp folder's contents
+		assert.equal(act(`rm -rf ${fwd(proj)}/*`), "allow"); // the project's contents
+		assert.equal(act("rm -rf *"), "allow");
+		assert.equal(act(`cd ${fwd(temp)} && rm -rf *`), "allow");
 		ask("cd ~/Documents && find . -delete", /after changing folder to .*Documents/);
 		ask("cd / && find . -delete", /root/);
 		ask("cd .. && find . -delete", /protects/);
@@ -345,7 +355,7 @@ test("full access on Windows: system folders and case-insensitive paths ask", { 
 	const proj = mkdtempSync(join(tmpdir(), "ferry-winprot-"));
 	const dec = (command) => P.decide({ tool: "bash", input: { command }, mode: "bypass", cwd: proj, rules: none, session: { start: Date.now() + 6e4, made: new Set() } });
 	for (const c of ["rm -rf C:/Windows", "rd /s /q C:\\WINDOWS", "Remove-Item -Recurse 'C:\\Program Files'", "rm -rf /c/ProgramData", "Remove-Item -Recurse $env:APPDATA",
-		"Remove-Item -Recurse $env:LOCALAPPDATA", "rm -rf D:/", "rm -rf //server/share", "rm -rf /c/users/*", "cd C:\\ && Get-ChildItem | Remove-Item",
+		"Remove-Item -Recurse $env:LOCALAPPDATA", "rm -rf D:/", "rm -rf //server/share", "rm -rf /c/users/*", "Remove-Item -Recurse C:\\Windows\\*", "rm -rf C:/Windows/*", "cd C:\\ && Get-ChildItem | Remove-Item",
 		`python -c "import shutil; shutil.rmtree(r'C:\\\\Windows')"`]) {
 		assert.equal(dec(c).action, "ask", c);
 	}
