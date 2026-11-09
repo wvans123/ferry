@@ -188,7 +188,10 @@ def create_app(cfg: Config) -> FastAPI:
             return None
         left = int(live.pool.cooling(m))
         side = "anthropic" if fb.api == "anthropic" else "openai"
-        msg = f"ferry-reroute:{fb.id}@{side} {m.id} is rate-limited ({left} s to go); ask {fb.id} meanwhile"
+        # [model=...]: the fallback's upstream name. A client that does not list the fallback (routing.expose off)
+        # needs it to know whether the model thinks and how to ask it to (thinking.mjs); older clients ignore it
+        msg = (f"ferry-reroute:{fb.id}@{side} {m.id} is rate-limited ({left} s to go); ask {fb.id} meanwhile "
+               f"[model={fb.model}]")
         write(audit_log, event="reroute", user=getattr(request.state, "user", ""), model=m.id, to=fb.id, seconds=left)
         if kind == "anthropic":
             return JSONResponse({"type": "error", "error": {"type": "ferry_reroute", "message": msg}}, status_code=422,
@@ -202,7 +205,8 @@ def create_app(cfg: Config) -> FastAPI:
         again in m's format and to remember it; an older one gets a plain error."""
         side = "anthropic" if m.api == "anthropic" else "openai"
         if request.headers.get("x-ferry-reroute") == "1":
-            msg = f"ferry-reroute:{m.id}@{side} {m.id} now speaks the {'Anthropic' if side == 'anthropic' else 'OpenAI'} API"
+            msg = (f"ferry-reroute:{m.id}@{side} {m.id} now speaks the {'Anthropic' if side == 'anthropic' else 'OpenAI'} API "
+                   f"[model={m.model}]")
             write(audit_log, event="api_changed", user=getattr(request.state, "user", ""), model=m.id, api=side)
             body = ({"type": "error", "error": {"type": "ferry_reroute", "message": msg}} if kind == "anthropic"
                     else {"error": {"message": msg, "type": "ferry_reroute", "code": "ferry_reroute"}})
@@ -237,7 +241,7 @@ def create_app(cfg: Config) -> FastAPI:
             if left > 0 and all(o["model"] != m.id for o in out):
                 fb = live.pool.fallback_for(cfg, m)
                 out.append({"model": m.id, "seconds": int(left), "fallback": fb.id if fb else "",
-                            **({"switch": True, "api": "anthropic" if fb.api == "anthropic" else "openai"}
+                            **({"switch": True, "api": "anthropic" if fb.api == "anthropic" else "openai", "fallbackModel": fb.model}
                                if fb and not same_side(m, fb) else {})})  # the client asks fb itself
         return out[:5]
 

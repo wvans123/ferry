@@ -107,7 +107,7 @@ const oneAtATime = (fn) => {
 // format, until the cool-down is over. model id -> { to, until }. Learned from the server's answers (a "reroute"
 // error, the commit answers' "cooling" list); a cool-down has a fixed length, so an entry simply runs out.
 const switched = new Map();
-const REROUTE = /ferry-reroute:([^\s"'\\,}@]+)@(anthropic|openai)(?:.*?\((\d+) s to go\))?/;
+const REROUTE = /ferry-reroute:([^\s"'\\,}@]+)@(anthropic|openai)(?:.*?\((\d+) s to go\))?(?:.*?\[model=([^\]\s]+)\])?/;
 
 export function createSyncProvider(cfg, models, opts = {}) {
 	const known = new Map(); // conv -> { count, hash } the server has acknowledged
@@ -270,7 +270,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		cfg.onRoute?.(ack.cooling ?? null); // an account cooling down after "too many requests": the status line says so
 		const cooling = new Map((ack.cooling ?? []).map((c) => [c.model, c]));
 		for (const c of cooling.values()) {
-			if (c.switch && c.fallback) switchTo(c.model, c.fallback, c.api, c.seconds);
+			if (c.switch && c.fallback) switchTo(c.model, c.fallback, c.api, c.seconds, c.fallbackModel);
 		}
 		if (ack.count !== msgs.length || ack.hash !== chain[msgs.length]) {
 			known.delete(conv);
@@ -309,13 +309,14 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	const SESSION_LOST = /\b409\b|session not found|tools not found/i;
 
 	/** Ask `to` instead of `from` for the next `seconds`. A fallback the server does not list (routing.expose off)
-	 * is known from here on by its API, with the size of the model it stands in for. */
-	function switchTo(from, to, api, seconds) {
+	 * is known from here on by its API and upstream name (`upstream`: without it pi cannot tell the model thinks, and
+	 * the fallback would answer without thinking), with the size of the model it stands in for. */
+	function switchTo(from, to, api, seconds, upstream) {
 		const side = api === "anthropic" ? "anthropic" : "openai";
 		if (!byId.has(to)) {
 			const was = byId.get(from) ?? {};
-			byId.set(to, { id: to, api: side, contextWindow: was.contextWindow, maxTokens: was.maxTokens, vision: was.vision });
-		} else byId.set(to, { ...byId.get(to), api: side }); // the server knows best which API a model speaks now
+			byId.set(to, { id: to, api: side, model: upstream, contextWindow: was.contextWindow, maxTokens: was.maxTokens, vision: was.vision });
+		} else byId.set(to, { ...byId.get(to), api: side, ...(upstream && !byId.get(to).model ? { model: upstream } : {}) }); // the server knows best which API a model speaks now
 		if (from !== to) switched.set(from, { to, until: Date.now() + Number(seconds || 0) * 1000 });
 	}
 
@@ -360,8 +361,8 @@ export function createSyncProvider(cfg, models, opts = {}) {
 						}
 						const re = ev.type === "error" && hop === 0 ? REROUTE.exec(ev.error?.errorMessage ?? "") : null;
 						if (re) { // rate-limited, and the fallback speaks the other API: ask it ourselves, in its format
-							const [, to, toApi, secs] = re;
-							switchTo(model.id, to, toApi, secs ?? 30);
+							const [, to, toApi, secs, upstream] = re;
+							switchTo(model.id, to, toApi, secs ?? 30, upstream);
 							for await (const e of streamFerry(asModel(model, to), context, options, 1)) out.push(e);
 							out.end();
 							return;

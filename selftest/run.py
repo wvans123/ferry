@@ -1340,6 +1340,25 @@ def check_v022(root: Path, work: Path) -> None:
               if ok3 else f"{listed[-400:]!r}")
     finally:
         s.close()
+    # the fallback is a GPT model pi knows to think, not offered to the client (expose off): it still gets the level
+    toml2 = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
+             'fallback = "gptfb"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
+             'context_window = 200000\nmax_tokens = 8000\n\n[models.gptfb]\nbase_url = "http://127.0.0.1:9100/v1"\n'
+             'api_key_env = "DEEPSEEK_API_KEY"\ndrop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\nmodel = "gpt-6.1-sol"\ncontext_window = 200000\nmax_tokens = 8000\n'
+             '\n[routing]\ndefault = "claude"\n')
+    s = Stack(root / "fb", work, "agent", extra_toml=toml2)
+    try:
+        c1, o1 = s.ferry("--thinking", "high", "-p", "LIMITTEST: think about it")
+        c2, o2 = s.ferry("--thinking", "high", "-p", "LIMITTEST: once more")
+        gpt_calls = [u for u in jsonl(s.upstream) if u.get("model") == "gpt-6.1-sol"]
+        claude_calls = [u for u in jsonl(s.upstream) if u.get("model") == "claude-opus-5-5"]
+        ok = (c1 == 0 and c2 == 0 and "LIMIT: answered" in o1 and "LIMIT: answered" in o2 and len(claude_calls) == 1
+              and len(gpt_calls) >= 3 and all(u.get("reasoning_effort") == "high" for u in gpt_calls))
+        check("F126 限流后的回退模型也带思考", ok, "Claude 账号 429，回退模型是 OpenAI 接口的 GPT（模型列表里不给客户端看）："
+              "回退模型收到的请求带着用户设的思考档位（reasoning_effort=high），不会没有思考"
+              if ok else f"c={c1},{c2} claude={len(claude_calls)} gpt={[u.get('reasoning_effort') for u in gpt_calls]} o1={o1[-300:]!r}")
+    finally:
+        s.close()
 
 
 def check_prompt_rules(root: Path, work: Path) -> None:
