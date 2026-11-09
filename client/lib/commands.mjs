@@ -1,8 +1,8 @@
 // Slash commands and do-it-yourself resources.
 //
 // Ferry keeps the "/" list short. From pi: /new /resume /name /session /compact /model /quit and /mcp.
-// Ferry's own: /help /goal /tasks /rewind /memory /skills /context /cost /status /config /report (goal, tasks, rewind,
-// memory and report in their own files).
+// Ferry's own: /help /goal /tasks /loop /rewind /memory /skills /context /cost /status /config /report (goal, tasks, loop,
+// rewind, memory and report in their own files).
 // Your own commands, as Markdown files (the file name is the command; $ARGUMENTS, $1, ${1:-default} take what
 // you type after it):
 //   <FERRY_HOME>/commands/*.md          everywhere
@@ -28,6 +28,7 @@ Conversation   /new  start a new one          /resume  go back to an earlier one
                /btw <question>  ask a side question, also while the agent works; not added to the conversation
 Work           /goal <objective>  keep working until it is done (/goal pause | resume | clear | budget)
                /tasks  background commands and subagents: output, stop
+               /loop [5m] <what>  do this every so often while the window is open (/loop stop [n])
                /phone  push this session's console to the phone: watch, steer, pause the goal, new tasks (/phone off)
 Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
                /memory user <text> for all projects)      /skills  what the agent knows how to do
