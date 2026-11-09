@@ -208,7 +208,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             totals["tokens_out"] += usage.get("completion_tokens", 0) or 0
             totals["trimmed"] += a.get("trimmed", 0) or 0
             recent.append({k: a.get(k) for k in ("ts", "user", "project", "model", "purpose", "messages",
-                                                 "upstream_bytes", "trimmed", "status", "ms", "usage")})
+                                                 "upstream_bytes", "trimmed", "status", "ms", "usage", "error")})
         series = [{"t": start + i * width, **buckets.get(i, {"in": 0, "up": 0, "requests": 0, "chats": 0})}
                   for i in range(int(minutes * 60 // width) + 1)]
         return {"width": width, "series": series, "totals": totals, "recent": recent[-40:][::-1]}
@@ -492,7 +492,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         for p in cfg.providers.values():
             key = p.api_key
             views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url, "api": p.api,
-                           "max_concurrent": p.max_concurrent, "rpm": p.rpm, "cooldown": p.cooldown, "fallback": p.fallback,
+                           "max_concurrent": p.max_concurrent, "rpm": p.rpm, "cooldown": p.cooldown, "stall_seconds": p.stall_seconds, "fallback": p.fallback,
                            "share": p.share,
                            "api_key_env": p.api_key_env, "no_key": p.no_key,
                            "key_tail": key[-4:] if key else "", "key_source": (
@@ -590,6 +590,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                             (pre.get("api", "openai") == "openai" and p.get("api") in ("openai", "openai-responses")) else pre.get("api", "openai"),
                      "max_concurrent": max(0, int(p.get("max_concurrent") or 0)),
                      "rpm": max(0, int(p.get("rpm") or 0)), "cooldown": max(1, int(p.get("cooldown") or 60)),
+                     "stall_seconds": max(0, int(p["stall_seconds"])) if p.get("stall_seconds") is not None else 120,
                      "fallback": str(p.get("fallback") or ""), "share": bool(p.get("share")),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:
@@ -689,7 +690,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         rows = [a for a in _tail_jsonl(audit_log) if a.get("event") == "chat"][-max(1, min(limit, 1000)):][::-1]
         have = {d["id"] for d in live.details}
         out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
-                                      "trimmed", "status", "ms", "usage")} for a in rows]
+                                      "trimmed", "status", "ms", "usage", "error")} for a in rows]
         for o in out:
             o["has_details"] = o.get("id") in have
         return {"calls": out, "record_details": cfg.record_details}
