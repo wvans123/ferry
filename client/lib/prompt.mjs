@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { AGENT_DIR, FERRY_HOME, findBash } from "./config.mjs";
+import { AGENT_DIR, FERRY_HOME, findBash, tempDirOf } from "./config.mjs";
 
 // One line per paragraph or bullet: the model (and anyone reading the prompt) sees whole sentences, not lines cut at
 // 120 characters.
@@ -34,11 +34,9 @@ const RESEARCH = [
 	"- A question with several independent parts, or one that needs many pages, goes to research subagents (task " +
 		"or task_batch with agent research), one per part, so the pages they read stay out of this conversation.",
 	"- To download a file (a document, a PDF, a zip), use a command: curl -L --retry 3 -C - -o <file> <url> (it " +
-		"resumes a broken download; give a big one more time, or run it with job_start). Save it where the user said; " +
-		"else where it fits the task (next to the files it belongs with, or the current folder); when no place fits, a " +
-		"downloads folder in the project. Check that what arrived is the file and not an HTML page (a " +
-		"gateway confirmation, a login); unpack a .zip with unzip, or in PowerShell with Expand-Archive. Delete temporary " +
-		"files you made (half downloads, pages saved only to look at) when you are done.",
+		"resumes a broken download; give a big one more time, or run it with job_start). Check that what arrived is the " +
+		"file and not an HTML page (a gateway confirmation, a login); unpack a .zip with unzip, or in PowerShell with " +
+		"Expand-Archive.",
 ];
 
 // Only for the main agent: a subagent's text between tool calls never reaches the user.
@@ -65,6 +63,16 @@ const DELIVERABLES = [
 		"If you can turn slides into pictures with a tool you have, look at the pictures.",
 	"- For an important deliverable, have a fresh reviewer check it against the original request: task with agent " +
 		"review, naming the request and the file. Fix what it finds. It did not make the work, so it sees what you stopped seeing.",
+];
+
+// Where files go. The path is fixed for a session (the prompt is a cache prefix).
+const tempRules = (dir) => [
+	"# Where files go",
+	"- Deliverables go where the user said, else in the project. Downloads, temporary scripts and the files they read " +
+		`and write, and reference files you fetch only to read go in a subfolder of the temp folder named for the task: ${dir}${process.platform === "win32" ? "\\" : "/"}<task>. ` +
+		"In full access, deleting inside the temp folder does not ask. To clean up there, name the folder " +
+		`(Remove-Item -Recurse ${dir}${process.platform === "win32" ? "\\" : "/"}<task>) or cd into it first (a delete the shell cannot list, like a pipe or python -c, only goes ahead after that cd). ` +
+		"Delete what you no longer need when you are done.",
 ];
 
 // Only when the advisor tool exists (the Ferry server has a stronger model to ask).
@@ -252,7 +260,7 @@ export function createPrompt(cfg = {}, opts = {}) {
 			const declared = o.selectedTools.filter((t) => !o.hiddenTools.includes(t));
 			const tools = declared.filter((t) => o.toolSnippets[t]).map((t) => `- ${t}: ${o.toolSnippets[t]}`).join("\n");
 			const webTools = declared.includes("web_fetch");
-			o.customPrompt = `${IDENTITY}\n\n${style(webTools, opts.subagent)}\n\n${DELIVERABLES.join("\n")}${declared.includes("advisor") ? `\n\n${ADVISOR.join("\n")}` : ""}`;
+			o.customPrompt = `${IDENTITY}\n\n${style(webTools, opts.subagent)}\n\n${DELIVERABLES.join("\n")}\n\n${tempRules(tempDirOf(cfg, cwd)).join("\n")}${declared.includes("advisor") ? `\n\n${ADVISOR.join("\n")}` : ""}`;
 			o.sections.tools = tools || "(none)";
 			const rules = toolRules(o);
 			if (rules) o.sections.tool_rules = rules;

@@ -1040,7 +1040,7 @@ def check_steer(root: Path, work: Path) -> None:
 def check_watch_loop(root: Path, work: Path) -> None:
     """A watched background job: each line it prints reaches the agent while it runs. /loop: a prompt every so often."""
     if WINDOWS:
-        print("  SKIP  F123 F124 监听和 /loop（Windows 上没有伪终端，Linux 上检查）")
+        print("  SKIP  F124 F125 监听和 /loop（Windows 上没有伪终端，Linux 上检查）")
         return
     import pty
     import select
@@ -1077,17 +1077,21 @@ def check_watch_loop(root: Path, work: Path) -> None:
             os.write(fd, b"\r")
 
         started = wait_for("shift+tab", 60)
-        # the script prints "first" at once (the tool result shows it), "second" after 3 s and "third" after 6 s: each
-        # reaches the agent as a message of its own while the script still runs; the end message does not repeat them
+        # the script prints "first" at once (the tool result shows it), "second" after 3 s and "third" after 6 s and ends at
+        # 10 s (so "third" is delivered, after the 2 s window, well before the end message: two messages that arrive in
+        # the same turn would get one reply from the fake model); the end message does not repeat the lines
         typed(b"WATCHTEST: watch the ticker")
         waiting = wait_for("WATCH: waiting for the watcher, saw_first=True", 60)
         second = wait_for("SEEN: second", 20)
         third = wait_for("SEEN: third", 20)
         ended = wait_for("WATCHEND repeated=False", 20)
         text = plain(seen)
-        once = text.count("SEEN: second") == 1 and text.count("SEEN: third") == 1 and "SEEN: first" not in text
+        # the screen redraws, so count what the session file holds: one watch message per line, none for "first"
+        sessions = "".join(f.read_text(encoding="utf-8", errors="replace") for f in (s.home / "agent" / "sessions").rglob("*.jsonl"))
+        once = (sessions.count("printed:\\nsecond") == 1 and sessions.count("printed:\\nthird") == 1
+                and "printed:\\nfirst" not in sessions and "SEEN: first" not in text)
         ok = started and waiting and second and third and ended and once
-        check("F123 监听后台命令", ok, "job_start 带 watch 时，脚本每打印一行（2 秒内的合在一起）agent 就收到一条消息并立刻反应，脚本还在跑；"
+        check("F124 监听后台命令", ok, "job_start 带 watch 时，脚本每打印一行（2 秒内的合在一起）agent 就收到一条消息并立刻反应，脚本还在跑；"
               "启动时已经看到的行不重复送；结束时只说结束，不重复输出" if ok
               else f"started={started} waiting={waiting} second={second} third={third} ended={ended} once={once}: {text[-500:]!r}")
         mark = len(seen)
@@ -1106,7 +1110,7 @@ def check_watch_loop(root: Path, work: Path) -> None:
         wait_for("\0", 0.5)
         quiet = plain(seen).count("LOOPED run") == before
         ok = armed and run1 and run2 and listed and stopped and quiet
-        check("F124 /loop 定时重复", ok, "/loop 4s <提示> 每 4 秒把提示作为 Ferry 的消息送给 agent 并开一轮（忙时等它做完）；/loop 列出在跑的；"
+        check("F125 /loop 定时重复", ok, "/loop 4s <提示> 每 4 秒把提示作为 Ferry 的消息送给 agent 并开一轮（忙时等它做完）；/loop 列出在跑的；"
               "/loop stop 1 停掉后不再触发" if ok
               else f"armed={armed} run1={run1} run2={run2} listed={listed} stopped={stopped} quiet={quiet}: {plain(seen)[mark:][-500:]!r}")
         for _ in range(2):
@@ -1430,6 +1434,23 @@ def check_upload_delete(root: Path, work: Path) -> None:
               "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样，带通配符的（rm tmp_*.txt）和先 cd 再删的也一样（全部放行、自动接受编辑已验证）；"
               "删除原来就有的文件在每个模式下都要确认，也没有\"以后都允许\""
               if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r} | glob={c5} {o5[-500:]!r}")
+        # full access + a temp folder: a file from before the session inside it goes without asking; the project's old file still asks
+        tdir = root / "ferry-temp-dir"
+        (tdir / "task").mkdir(parents=True, exist_ok=True)
+        pre = tdir / "task" / "before.txt"
+        pre.write_text("was here before\n", encoding="utf-8")
+        cfgf = s.home / "config.json"
+        base = json.loads(cfgf.read_text(encoding="utf-8")) if cfgf.exists() else {}
+        cfgf.write_text(json.dumps({**base, "tempDir": str(tdir)}), encoding="utf-8")
+        try:
+            c6, o6 = s.ferry("-p", f"TEMPDELTEST:{pre.as_posix()} clean up", cwd=proj, env_extra=full)
+        finally:
+            cfgf.write_text(json.dumps(base), encoding="utf-8")
+        ok6 = (c6 == 0 and "removed-temp" in o6 and not pre.exists() and "did not create in this session" in o6
+               and "removed-old" not in o6 and (proj / "old.txt").exists())
+        check("F123 全部放行下临时文件夹里的删除不问", ok6,
+              "全部放行时，删除临时文件夹（tempDir）里会话之前就有的文件直接执行；同样删项目里原来就有的文件仍然要确认"
+              if ok6 else f"bypass={c6} {o6[-500:]!r}")
     finally:
         s.close()
 

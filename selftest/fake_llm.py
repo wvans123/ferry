@@ -384,7 +384,7 @@ def decide_agent(msgs):
         return ("text", f"WATCHEND repeated={'third' in first}")
     if "WATCHTEST" in first:  # a watcher script: each line it prints reaches the agent while it runs
         if not tools:
-            return ("tool", "job_start", {"command": "echo first; sleep 3; echo second; sleep 3; echo third", "name": "watcher", "watch": True})
+            return ("tool", "job_start", {"command": "echo first; sleep 3; echo second; sleep 3; echo third; sleep 4", "name": "watcher", "watch": True})
         return ("text", "WATCH: waiting for the watcher, saw_first=" + str("first" in text_of(tools[-1])))
     if first.startswith("(From Ferry, not the user: /loop") and "LOOPTEST" in first:  # a /loop tick
         run = re.search(r"run (\d+)", first)
@@ -539,6 +539,12 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "bash", {"command": "curl -sSL -o got.zip http://127.0.0.1:9100/ftp/23501-j40.zip && echo downloaded"})
         return ("text", "UPLOAD: " + text_of(tools[0])[:300].replace("\n", " ") + " || " + text_of(tools[1])[:80])
+    if "TEMPDELTEST" in first:  # in full access: delete a file that was there before inside the temp folder (no prompt), then one in the project (asks)
+        tmpf = first.split("TEMPDELTEST:")[1].split()[0]
+        steps = [("bash", {"command": f"rm {tmpf} && echo removed-temp"}), ("bash", {"command": "rm old.txt && echo removed-old"})]
+        if len(tools) < len(steps):
+            return ("tool", steps[len(tools)][0], steps[len(tools)][1])
+        return ("text", "TEMPDEL: " + " || ".join(text_of(t)[:160].replace("\n", " ") for t in tools))
     if "DELETETEST" in first:  # delete a file made in this session (also one in the temp folder with "TMP"), then one that was there before
         tmp = (__import__("tempfile").gettempdir() + "/ferry-f70-scratch.txt").replace("\\", "/")
         steps = [("write", {"path": "made-now.txt", "content": "made by the agent\n"}),

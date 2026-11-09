@@ -404,9 +404,18 @@ export function noteCreated(session, abs) {
 	return added;
 }
 
+/** True when `p` is inside `dir` (not `dir` itself unless same), by path; case-insensitive on Windows. */
+const under = (dir, p, same = false) => {
+	const a = WIN ? resolve(p).toLowerCase() : resolve(p);
+	const d = WIN ? resolve(dir).toLowerCase() : resolve(dir);
+	const r = relative(d, a);
+	return r === "" ? same : !r.startsWith("..") && !isAbsolute(r);
+};
+
 /** True when ferry made this path in this session (born after it started, or created by a file tool) and, for a
- *  folder, everything in it. A path that does not exist yet can only be made by this command. Symlinks: never. */
-export function madeThisSession(p, session, budget = { n: 5000 }) {
+ *  folder, everything in it. A path that does not exist yet can only be made by this command. Symlinks: never.
+ *  temp: the temp folder; in full access what is inside it counts too, whenever it was made (still never a symlink). */
+export function madeThisSession(p, session, budget = { n: 5000 }, temp = "") {
 	if (--budget.n < 0) return false;
 	let st;
 	try {
@@ -416,19 +425,103 @@ export function madeThisSession(p, session, budget = { n: 5000 }) {
 	}
 	if (st.isSymbolicLink()) return false;
 	// no birth time (some Linux file systems): only what the file tools noted counts, since ctime changes on every edit
-	if (!session.made.has(keyOf(p)) && !(st.birthtimeMs > 0 && st.birthtimeMs >= session.start)) return false;
-	return !st.isDirectory() || readdirSync(p).every((e) => madeThisSession(join(p, e), session, budget));
+	const inTemp = temp && under(temp, p);
+	if (!inTemp && !session.made.has(keyOf(p)) && !(st.birthtimeMs > 0 && st.birthtimeMs >= session.start)) return false;
+	return !st.isDirectory() || readdirSync(p).every((e) => madeThisSession(join(p, e), session, budget, temp));
 }
 
-/** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made. */
-export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }, env = process.env) {
+const PS_VARS = /\$(_|psitem|true|false|null)\b/gi;
+const CD_FIRST = /^\s*(?:cd|chdir|pushd|set-location|sl|push-location)\s+(?:(?:\/d|-path|-literalpath)\s+)?("[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;|\r?\n)/i;
+const CMD_SWITCH = /^(del|erase|rd|rmdir|cmd|cd|chdir|pushd)$/;
+
+/**
+ * Full access only: a delete Ferry cannot list (a pipe, python -c, find -delete) may still go ahead without asking when
+ * it can only touch the temp folder. All of these must hold: every absolute path in the command (Windows X:\ or X:/,
+ * Git Bash /d/..., ~ and the variables expandVars knows, also inside quoted strings) is inside the temp folder; no ..
+ * segment; no variable except the known ones and PowerShell's $_ $PSItem $true $false $null; relative paths can only
+ * mean the temp folder: the session folder is inside it, or the command starts with a cd to a folder inside it.
+ */
+export function unlistableDeleteInTemp(cmd, cwd, temp, env = process.env) {
+	if (!temp) return false;
+	const text = String(cmd ?? "");
+	if (/\$\(|`/.test(text)) return false;
+	if (/(^|[\\/'"\s=(,:])\.\.($|[\\/'"\s);,|&])/.test(text)) return false;
+	const inTemp = (p) => under(temp, p, true);
+	const cd = CD_FIRST.exec(text);
+	let relativeOk = inTemp(cwd);
+	if (!relativeOk && cd) {
+		const d = expandVars(cd[1].replace(/^["']|["']$/g, ""), env);
+		relativeOk = d !== null && inTemp(resolve(cwd, gitBashPath(d)));
+	}
+	if (!relativeOk) return false;
+	// every cd names exactly one path that is not "-"; a bare cd (home), cd -, popd and Pop-Location can leave the folder
+	for (const seg of splitCommand(text)) {
+		const w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+		const c = prog(w[0] ?? "");
+		if (c === "popd" || c === "pop-location") return false;
+		if (!CD.test(c)) continue;
+		const dirs = w.slice(1).filter((x) => !/^-(path|literalpath|p|l)$/i.test(x) && !/^\/d$/i.test(x));
+		if (dirs.length !== 1 || dirs[0] === "-") return false;
+	}
+	// cmd's own switches (del /s /q, rd /s, cmd /c) are not paths
+	const switches = new Set();
+	for (const seg of splitCommand(text)) {
+		const w = words(seg);
+		if (CMD_SWITCH.test(prog(w[0] ?? ""))) for (const x of w.slice(1)) if (/^\/[a-z](:\S*)?$/i.test(x)) switches.add(x);
+	}
+	// collapse doubled backslashes (a Python or JSON string) so D:\\ferry\\temp reads as D:\ferry\temp
+	const roots = []; // folders the command can reach: relative paths start in them, absolute ones are named
+	if (inTemp(cwd)) roots.push(cwd);
+	if (cd) {
+		const d = expandVars(cd[1].replace(/^["']|["']$/g, ""), env);
+		if (d !== null) roots.push(resolve(cwd, gitBashPath(d)));
+	}
+	const flat = text.replace(PS_VARS, "").replace(/\\{2,}/g, "\\");
+	for (const tok of flat.split(/[\s"'`=(),;<>|&]+/)) {
+		if (!tok || switches.has(tok)) continue;
+		const v = expandVars(tok, env);
+		if (v === null) return false;
+		const t = gitBashPath(v);
+		const drive = /^[a-z]:([\\/]|$)/i.test(t);
+		if (drive && !WIN) return false;
+		if (!drive && !/^[\\/]/.test(t)) continue; // a relative path or a plain word
+		if (!inTemp(resolve(t))) return false;
+		roots.push(resolve(t));
+	}
+	// the delete cannot be listed, so look at what is there: a link (symlink, junction) could lead out of the folder
+	const budget = { n: 20000 };
+	return roots.every((r) => noLinksBelow(r, budget));
+}
+
+/** True when nothing at or below p is a symlink or junction (links are not followed); false when the walk is too big. */
+function noLinksBelow(p, budget) {
+	if (--budget.n < 0) return false;
+	let st;
+	try {
+		st = lstatSync(p);
+	} catch {
+		return true; // not there
+	}
+	if (st.isSymbolicLink()) return false;
+	if (!st.isDirectory()) return true;
+	try {
+		return readdirSync(p).every((e) => noLinksBelow(join(p, e), budget));
+	} catch {
+		return false;
+	}
+}
+
+/** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made.
+ *  temp: the temp folder, in full access only (what is inside it may go, and so may a delete that can only touch it). */
+export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }, env = process.env, temp = "") {
 	const r = deleteTargetsEx(cmd);
-	if (r.why) return `deletes something Ferry cannot list: ${r.why}`;
+	if (r.why) return unlistableDeleteInTemp(cmd, cwd, temp, env) ? "" : `deletes something Ferry cannot list: ${r.why}`;
 	for (const t of r.targets) {
 		const e = expandTarget(t, cwd, env);
-		if (e.why) return `deletes something Ferry cannot list: ${e.why}`;
+		if (e.why) return unlistableDeleteInTemp(cmd, cwd, temp, env) ? "" : `deletes something Ferry cannot list: ${e.why}`;
 		for (const abs of e.paths) {
-			if (!madeThisSession(abs, session)) return `deletes ${abs === resolve(cwd, t) || t === abs ? t : `${abs} (from ${t})`}, which Ferry did not create in this session`;
+			if (temp && under(temp, abs, true) && !under(temp, abs)) return `deletes ${t}, the temp folder itself (name a folder inside it)`;
+			if (!madeThisSession(abs, session, { n: 5000 }, temp)) return `deletes ${abs === resolve(cwd, t) || t === abs ? t : `${abs} (from ${t})`}, which Ferry did not create in this session`;
 		}
 	}
 	return "";
@@ -628,7 +721,7 @@ export function blockedHit(text, names, isCommand = true) {
 	return "";
 }
 
-export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [], session }) {
+export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], readOnlyTool = () => false, extraDirs = [], session, tempDir = "" }) {
 	const shell = SHELL.has(tool);
 	const target = PATH_TOOLS.has(tool) ? input.path : shell ? input.command : undefined;
 	const hit = typeof target === "string" ? blockedHit(target, blockedPaths, shell) : "";
@@ -655,11 +748,12 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	const always = shell ? browserPrivacyOf(cmd) || uploadOf(cmd) : "";
 	if (always) return { action: "ask", danger: always, segments, always: true };
 	// Deletes, in every mode: what Ferry made in this session goes ahead without asking, wherever it is (project, temp
-	// folder, any drive); anything else, or anything that cannot be listed, asks every time (no "always allow")
+	// folder, any drive); anything else, or anything that cannot be listed, asks every time (no "always allow").
+	// Full access also lets through what is inside tempDir (see unlistableDeleteInTemp for deletes that cannot be listed)
 	if (shell) {
 		const t = deleteTargets(cmd);
 		if (t === null || t.length) {
-			const del = unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session);
+			const del = unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session, process.env, mode === "bypass" ? tempDir : "");
 			if (del) return { action: "ask", danger: del, segments, always: true };
 			if (segments.every((s) => { const x = deleteTargets(s); return (x && x.length) || isReadOnlySegment(s); })) return { action: "allow" };
 		}

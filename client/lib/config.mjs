@@ -2,12 +2,47 @@
 import tls from "node:tls";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, parse, relative, resolve } from "node:path";
 
 // Wire protocol between client and server; the server refuses a different major version with HTTP 426
 export const PROTOCOL = "1";
 export const FERRY_HOME = process.env.FERRY_HOME ?? join(homedir(), ".ferry");
 export const AGENT_DIR = join(FERRY_HOME, "agent");
+
+const sameOrInside = (dir, p) => {
+	const a = process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p);
+	const d = process.platform === "win32" ? resolve(dir).toLowerCase() : resolve(dir);
+	const r = relative(d, a);
+	return r === "" || (!r.startsWith("..") && !isAbsolute(r));
+};
+let warnedTemp = "";
+/**
+ * The temp folder (downloads, temporary scripts and what they read and write), created when missing. cfg.tempDir, or
+ * D:\ferry\temp on Windows when there is a D: drive, else <FERRY_HOME>/temp. A value that is unsafe (a drive or
+ * filesystem root, the home folder, FERRY_HOME, a folder holding either or the project, not a full path) is refused:
+ * the default is used and one warning is printed.
+ */
+export function tempDirOf(cfg = {}, cwd = process.cwd(), os = { win: process.platform === "win32", exists: existsSync }) {
+	const auto = os.win && os.exists("D:\\") ? "D:\\ferry\\temp" : join(FERRY_HOME, "temp");
+	const want = String(cfg.tempDir ?? "").trim();
+	let dir = auto;
+	if (want) {
+		const abs = os.win ? /^[a-z]:[\\/]/i.test(want) || /^\\\\/.test(want) : isAbsolute(want);
+		const unsafe = !abs || parse(resolve(want)).root === resolve(want) || [homedir(), FERRY_HOME, cwd].some((x) => sameOrInside(want, x));
+		if (unsafe) {
+			if (warnedTemp !== want) {
+				warnedTemp = want;
+				process.stderr.write(`ferry: tempDir "${want}" is not safe to use (it must be a full path to a folder of its own, not a drive, the home folder, the Ferry folder or a folder holding your project); using ${auto}\n`);
+			}
+		} else dir = want;
+	}
+	try {
+		mkdirSync(dir, { recursive: true });
+	} catch {
+		// not creatable (read-only drive): callers still get the path; saving a file reports the error
+	}
+	return dir;
+}
 
 /** Ferry's own working files (outputs, batches, jobs, subagents): what in `dir` was not changed for 7 days goes. */
 export function cleanOldFiles(dir, keep = []) {
@@ -82,6 +117,7 @@ export const DEFAULTS = {
 	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
 	caFile: "", // a PEM file with more certificates to trust, e.g. the company proxy's, if the computer's own are not enough
+	tempDir: "", // the temp folder: downloads, temporary scripts and the files they use. Empty = D:\ferry\temp on Windows with a D: drive, else <FERRY_HOME>/temp. In full access, deleting inside it does not ask
 	officeAuthor: "", // the name on Word tracked changes and comments the agent makes; empty = the Office user name (as Word does)
 };
 
@@ -116,6 +152,7 @@ export const SETTINGS = {
 
 /** Rarely needed; /config lists them under "More settings", `ferry config` accepts them too. */
 export const ADVANCED_SETTINGS = {
+	tempDir: ["string", "the temp folder for downloads, temporary scripts and the files they read and write (full path); empty = D:\\ferry\\temp on Windows with a D: drive, else <FERRY_HOME>/temp. In full access, deleting things inside it does not ask"],
 	subagents: ["boolean", "let the agent hand searches and side tasks to subagents with their own context"],
 	bigOutputBytes: ["number", "command/search output longer than this is saved to a file; the model sees start, end and path (0 = off)"],
 	notifyAfterSeconds: ["number", "how long a request must take before the notification"],
