@@ -454,6 +454,15 @@ export function unlistableDeleteInTemp(cmd, cwd, temp, env = process.env) {
 		relativeOk = d !== null && inTemp(resolve(cwd, gitBashPath(d)));
 	}
 	if (!relativeOk) return false;
+	// every cd names exactly one path that is not "-"; a bare cd (home), cd -, popd and Pop-Location can leave the folder
+	for (const seg of splitCommand(text)) {
+		const w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+		const c = prog(w[0] ?? "");
+		if (c === "popd" || c === "pop-location") return false;
+		if (!CD.test(c)) continue;
+		const dirs = w.slice(1).filter((x) => !/^-(path|literalpath|p|l)$/i.test(x) && !/^\/d$/i.test(x));
+		if (dirs.length !== 1 || dirs[0] === "-") return false;
+	}
 	// cmd's own switches (del /s /q, rd /s, cmd /c) are not paths
 	const switches = new Set();
 	for (const seg of splitCommand(text)) {
@@ -461,6 +470,12 @@ export function unlistableDeleteInTemp(cmd, cwd, temp, env = process.env) {
 		if (CMD_SWITCH.test(prog(w[0] ?? ""))) for (const x of w.slice(1)) if (/^\/[a-z](:\S*)?$/i.test(x)) switches.add(x);
 	}
 	// collapse doubled backslashes (a Python or JSON string) so D:\\ferry\\temp reads as D:\ferry\temp
+	const roots = []; // folders the command can reach: relative paths start in them, absolute ones are named
+	if (inTemp(cwd)) roots.push(cwd);
+	if (cd) {
+		const d = expandVars(cd[1].replace(/^["']|["']$/g, ""), env);
+		if (d !== null) roots.push(resolve(cwd, gitBashPath(d)));
+	}
 	const flat = text.replace(PS_VARS, "").replace(/\\{2,}/g, "\\");
 	for (const tok of flat.split(/[\s"'`=(),;<>|&]+/)) {
 		if (!tok || switches.has(tok)) continue;
@@ -471,8 +486,29 @@ export function unlistableDeleteInTemp(cmd, cwd, temp, env = process.env) {
 		if (drive && !WIN) return false;
 		if (!drive && !/^[\\/]/.test(t)) continue; // a relative path or a plain word
 		if (!inTemp(resolve(t))) return false;
+		roots.push(resolve(t));
 	}
-	return true;
+	// the delete cannot be listed, so look at what is there: a link (symlink, junction) could lead out of the folder
+	const budget = { n: 20000 };
+	return roots.every((r) => noLinksBelow(r, budget));
+}
+
+/** True when nothing at or below p is a symlink or junction (links are not followed); false when the walk is too big. */
+function noLinksBelow(p, budget) {
+	if (--budget.n < 0) return false;
+	let st;
+	try {
+		st = lstatSync(p);
+	} catch {
+		return true; // not there
+	}
+	if (st.isSymbolicLink()) return false;
+	if (!st.isDirectory()) return true;
+	try {
+		return readdirSync(p).every((e) => noLinksBelow(join(p, e), budget));
+	} catch {
+		return false;
+	}
 }
 
 /** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made.

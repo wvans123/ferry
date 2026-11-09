@@ -314,6 +314,27 @@ test("full access: a delete Ferry cannot list goes ahead only when it can only t
 	assert.equal(P.unlistableDeleteInTemp("find . -delete", inT, ""), false); // no temp folder
 	assert.equal(dec(`cd ${f(inT)} && find . -delete`, proj, "acceptEdits"), "ask"); // other modes are unchanged
 	assert.equal(dec("git clean -fd"), "ask");
+	// a later cd that can leave the folder without an absolute path
+	for (const later of ["cd -", "cd", "popd", "Pop-Location", "cd a b", "Set-Location -"]) {
+		assert.equal(ok(`cd ${f(inT)}; ${later}; Remove-Item -Recurse x`), false, later);
+		assert.equal(ok(`${later} && find . -delete`, inT), false, later);
+	}
+	assert.equal(ok(`cd ${f(inT)}; cd sub; find . -delete`), true); // a relative cd is fine, .. is banned
+	// links: the delete cannot be listed, so a link anywhere it can reach means ask
+	let linked = false;
+	try {
+		mkdirSync(join(inT, "job"));
+		symlinkSync(proj, join(inT, "job", "link"), "junction");
+		linked = true;
+	} catch {
+		// no permission to make links here
+	}
+	if (linked) {
+		assert.equal(ok(`cd ${f(join(inT, "job"))} && Get-ChildItem -Recurse | Remove-Item`), false); // the cd target
+		assert.equal(ok("find . -delete", join(inT, "job")), false); // cwd inside temp
+		assert.equal(ok(`ls ${f(join(inT, "job"))} | xargs rm`, inT), false); // a named absolute path (and cwd above it)
+		assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(join(inT, "job", "x"))}')"`, inT), false);
+	}
 	if (process.platform === "win32") {
 		assert.equal(ok(`cd /d ${temp}\\t && rmdir /s /q x`), true);
 		assert.equal(ok(`python -c "import shutil; shutil.rmtree(r'C:\\Users\\x')"`, inT), false);
