@@ -816,6 +816,22 @@ class H(BaseHTTPRequestHandler):
         bad = [k for k in REJECT if k in body]
         if bad:
             return self.send_json(400, {"error": {"message": f"unsupported parameter: {bad[0]}"}})
+        asked = json.dumps(body.get("messages", []))
+        if "HEADERSTEST" in asked:  # slow to answer: no response headers for a while (a busy relay)
+            time.sleep(2)
+        if "COOLTEST" in asked and not state.get("cooled"):  # the account is rate-limited once: 2 s cool-down
+            state["cooled"] = True
+            data = json.dumps({"error": {"message": "Too many requests"}}).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Retry-After", "2")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if "HEADERSERR" in asked:  # refuses after a while: the error comes after the server sent its keep-alives
+            time.sleep(1.5)
+            return self.send_json(400, {"error": {"message": "HEADERSERR: the model refused this request"}})
         kind, *rest = decide(body.get("messages", []))
         base = {"id": "x1", "object": "chat.completion.chunk", "created": int(time.time()), "model": "fake"}
         usage = {"prompt_tokens": len(raw) // 4, "completion_tokens": 5, "total_tokens": len(raw) // 4 + 5}

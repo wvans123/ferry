@@ -2883,6 +2883,25 @@ def check_feishu(root: Path, work: Path) -> None:
         shutil.rmtree(old, ignore_errors=True)
 
 
+def check_keepalive(root: Path, work: Path) -> None:
+    """The server sends keep-alive comments while the model has not answered (a busy relay, a cool-down), so a tunnel
+    that ends silent requests (Cloudflare 524 after ~100 s) does not cut the call; an error afterwards still reaches the agent."""
+    s = Stack(root, work, "agent", server_env={"FERRY_TEST_KEEPALIVE_S": "0.5"})
+    try:
+        c1, o1 = s.ferry("-p", "HEADERSTEST: say hello")
+        c2, o2 = s.ferry("-p", "COOLTEST: say hello")
+        c3, o3 = s.ferry("-p", "HEADERSERR: say hello")
+        audit = jsonl(s.data / "audit.jsonl")
+        committed = [a for a in audit if a.get("event") == "stream_committed"]
+        ok = (c1 == 0 and c2 == 0 and "OK" in o1 and "OK" in o2 and len(committed) >= 3
+              and "HEADERSERR: the model refused this request" in o3)
+        check("F127 模型迟迟不回时服务端保持连接", ok, "模型 2 秒不返回响应头、账号被限流冷却 2 秒、模型过一会儿才报错（服务端 0.5 秒就开始发保活）："
+              "前两种最后照常得到回答，报错那种在流里送到 agent，没有被通道当成沉默的请求"
+              if ok else f"c={c1},{c2},{c3} committed={len(committed)} o1={o1[-200:]!r} o2={o2[-200:]!r} o3={o3[-300:]!r}")
+    finally:
+        s.close()
+
+
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from
 # its source, so `--only F7,F66` runs just the steps that contain those checks and nothing else.
 STEPS = [
@@ -2898,7 +2917,7 @@ STEPS = [
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
     (check_watchdog, "watchdog"), (check_phone_remote, "remote"), (check_phone_console, "console"), (check_feishu, "feishu"),
-    (check_watch_loop, "watchloop"),
+    (check_watch_loop, "watchloop"), (check_keepalive, "keepalive"),
 ]
 
 
