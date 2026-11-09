@@ -74,12 +74,14 @@ def without_placeholder_note(rules: str) -> str:
     return "\n".join(l for l in rules.splitlines() if "[FERRY-...]" not in l).strip()
 
 
-async def pass_sse(lines, usage_out: dict):
-    """Relay an OpenAI-style event stream as it comes, noting the usage it reports."""
+async def pass_sse(lines, usage_out: dict, state: dict | None = None):
+    """Relay an OpenAI-style event stream as it comes, noting the usage it reports (and in `state` whether it finished)."""
     async for line in lines:
         if not line.startswith("data:"):
             continue
         data = line[5:].strip()
+        if data == "[DONE]" and state is not None:
+            state["done"] = True
         if data != "[DONE]":
             try:
                 chunk = json.loads(data)
@@ -87,10 +89,42 @@ async def pass_sse(lines, usage_out: dict):
                 continue
             if isinstance(chunk, dict) and chunk.get("usage"):
                 usage_out.update(chunk["usage"])
+            if state is not None and isinstance(chunk, dict) and any(isinstance(c, dict) and c.get("finish_reason")
+                                                                     for c in chunk.get("choices") or []):
+                state["done"] = True
         yield f"data: {data}\n\n".encode("utf-8")
 
 KEEPALIVE_S = float(os.environ.get("FERRY_TEST_KEEPALIVE_S") or 15)  # (env: test hook) a streaming request that has no upstream answer after this long is committed to 200 and kept alive
                     # with SSE comments (Cloudflare Tunnel ends a request with 524 after ~100 s without a byte)
+
+
+class Stalled(httpx.TransportError):
+    """The upstream sent nothing for the provider's stall_seconds."""
+
+
+async def with_stall(lines, seconds: float):
+    """The lines of an upstream stream; Stalled when none comes for `seconds` (0 = no limit)."""
+    it = lines.__aiter__()
+    while True:
+        try:
+            line = await (asyncio.wait_for(it.__anext__(), seconds) if seconds > 0 else it.__anext__())
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            raise Stalled(f"stalled after {seconds:g} s without data") from None
+        yield line
+
+
+async def chain(first, rest):
+    if first is not None:
+        yield first
+    async for x in rest:
+        yield x
+
+
+def stall_text(model_id: str, seconds: float) -> str:
+    """Worded so pi retries it (overloaded, 504) and still says what happened."""
+    return f"upstream stalled: {model_id} sent no data for {seconds:g} s; the provider is overloaded (HTTP 504), try again"
 
 
 def sse_error(kind: str, status: int, body: bytes) -> bytes:
@@ -296,6 +330,18 @@ def create_app(cfg: Config) -> FastAPI:
         return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": msg}} if kind == "anthropic"
                             else {"error": {"message": msg}}, status_code=400)
 
+    def stall_of(m) -> float:
+        prov = cfg.providers.get(m.provider) if m.provider else None
+        return float(getattr(prov, "stall_seconds", 120))
+
+    def stall_cool(m):
+        """m's upstream stalled: leave its account alone for a short while when a fallback can answer meanwhile.
+        Returns the fallback (or None)."""
+        fb = live.pool.fallback_for(cfg, m)
+        if fb and live.pool.cool(m, 20):
+            write(audit_log, event="cooldown", model=m.id, seconds=20, fallback=fb.id, reason="stalled")
+        return fb
+
     def gave_up(model, last_err, started: float, kind: str) -> Response:
         """The provider's error once the server has stopped asking. A busy or failing provider (5xx, 429, cannot
         reach it) becomes HTTP 424 with a message that names no status code and no retry words: the client's engine
@@ -303,6 +349,8 @@ def create_app(cfg: Config) -> FastAPI:
         over (the same request reaching the model several times, and minutes without an answer). Other errors (a bad
         request, a wrong key) go back as the provider sent them."""
         status = last_err[0]
+        if b"upstream stalled" in last_err[1]:  # worded so the client's engine asks again (see stall_text)
+            return Response(last_err[1], status_code=504, media_type="application/json")
         if status not in TRANSIENT_STATUSES and status != 502:
             return Response(last_err[1], status_code=status, media_type=last_err[2])
         why = "kept refusing (HTTP 4xx, its usage limit)" if status == 429 else "kept failing (HTTP 5xx)"
@@ -796,17 +844,43 @@ def create_app(cfg: Config) -> FastAPI:
                     refused_marks = False
                     await live.pool.enter(cfg, model)
                     holding.append(model.id)
+                    stall = stall_of(model)
+                    raw = first = None
                     try:
                         if not payload.get("stream"):
                             r = await client.post(url, content=body, headers=headers)
                         else:
-                            r = await client.send(client.build_request("POST", url, content=body, headers=headers), stream=True)
-                    except httpx.HTTPError as e:
+                            try:
+                                r = await asyncio.wait_for(client.send(client.build_request("POST", url, content=body, headers=headers),
+                                                                       stream=True), stall or None)
+                            except asyncio.TimeoutError:
+                                raise Stalled(f"stalled after {stall:g} s without response headers") from None
+                            if r.status_code == 200:  # the first line must come too (a relay that accepts and then goes silent)
+                                raw = with_stall(r.aiter_lines(), stall)
+                                first = await raw.__anext__()
+                    except (httpx.HTTPError, StopAsyncIteration) as e:
+                        if isinstance(e, StopAsyncIteration):  # a 200 with an empty body
+                            e = httpx.RemoteProtocolError("the stream ended without data")
+                        if r is not None:
+                            await r.aclose()
                         holding.clear()
                         live.pool.end(model.id)
                         live.pool.failed(model.id, None)
-                        write(audit_log, **audit, status=502, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
-                        last_err = (502, json.dumps({"error": {"message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
+                        stalled = isinstance(e, Stalled)
+                        status = 504 if stalled else 502
+                        write(audit_log, **audit, status=status, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
+                        last_err = (status, json.dumps({"error": {"message": stall_text(model.id, stall) if stalled
+                                                                  else f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
+                        if stalled:
+                            fb = stall_cool(model)
+                            if fb and not same_side(model, fb):
+                                sent = reroute(request, purpose, "openai", model, fb)
+                                if sent:
+                                    return sent
+                                fb = None
+                            if fb:
+                                tries.append((fb, False))
+                                continue
                         if more:
                             continue
                         if time.time() - started + retry_delay(None, again) < RETRY_WAIT_S:  # the only provider: once more after a short wait
@@ -874,17 +948,36 @@ def create_app(cfg: Config) -> FastAPI:
                         return JSONResponse(answer)
                     usage: dict = {}
 
-                    async def relay(upstream=r, model=model, audit=audit):
+                    async def relay(upstream=r, model=model, audit=audit, raw=raw, first=first, stall=stall):
+                        status, err, seen = 200, "", {}
                         try:
-                            lines = (chat_lines(upstream.aiter_lines(), model.model) if model.api == "openai-responses"
-                                     else upstream.aiter_lines())
-                            async for b in pass_sse(lines, usage):
+                            lines = chain(first, raw)
+                            if model.api == "openai-responses":
+                                lines = chat_lines(lines, model.model)
+                            async for b in pass_sse(lines, usage, seen):
                                 yield b
+                            if not seen.get("done"):
+                                status, err = 504, "the upstream stream ended without a finish"
+                        except (asyncio.CancelledError, GeneratorExit):  # the client went away: drop the upstream too
+                            status, err = 499, "client disconnected"
+                            raise
+                        except Exception as e:  # noqa: BLE001 - told to the client as a stream error
+                            stalled = isinstance(e, Stalled)
+                            status, err = 504, (f"stalled after {stall:g} s without data" if stalled else f"{type(e).__name__}: {e}"[:200])
+                            if stalled:
+                                stall_cool(model)
+                            text = (stall_text(model.id, stall) if stalled else
+                                    f"upstream stream failed: {model.id} is overloaded or unreachable (HTTP 502): {type(e).__name__}")
+                            yield sse_error("openai", 504, json.dumps({"error": {"message": text, "type": "ferry_stalled"}}).encode())
                         finally:
+                            try:
+                                await upstream.aclose()
+                            except Exception:  # noqa: BLE001
+                                pass
                             live.pool.end(model.id)
                             tokens = normalize(usage)
-                            write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=usage,
-                                  tokens=tokens, cost=usage_cost(tokens, model.price))
+                            write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000), usage=usage,
+                                  tokens=tokens, cost=usage_cost(tokens, model.price), **({"error": err} if err else {}))
                             done()
 
                     holding.clear()
@@ -1005,17 +1098,42 @@ def create_app(cfg: Config) -> FastAPI:
                     more = n + 1 < len(tries)
                     await live.pool.enter(cfg, model)
                     holding.append(model.id)
+                    stall = stall_of(model)
+                    raw = first = None
                     try:
-                        upstream = await client.send(client.build_request("POST", anthropic_url(model.base_url), content=body,
-                                                                          headers=headers), stream=True)
+                        try:
+                            upstream = await asyncio.wait_for(client.send(client.build_request(
+                                "POST", anthropic_url(model.base_url), content=body, headers=headers), stream=True), stall or None)
+                        except asyncio.TimeoutError:
+                            raise Stalled(f"stalled after {stall:g} s without response headers") from None
                         r = upstream
-                    except httpx.HTTPError as e:
+                        if upstream.status_code == 200:
+                            raw = with_stall(upstream.aiter_lines(), stall)
+                            first = await raw.__anext__()
+                    except (httpx.HTTPError, StopAsyncIteration) as e:
+                        if isinstance(e, StopAsyncIteration):
+                            e = httpx.RemoteProtocolError("the stream ended without data")
+                        if r is not None:
+                            await r.aclose()
                         holding.clear()
                         live.pool.end(model.id)
                         live.pool.failed(model.id, None)
-                        write(audit_log, **audit, status=502, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
-                        last_err = (502, json.dumps({"type": "error", "error": {"type": "api_error",
-                                    "message": f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
+                        stalled = isinstance(e, Stalled)
+                        status = 504 if stalled else 502
+                        write(audit_log, **audit, status=status, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
+                        last_err = (status, json.dumps({"type": "error", "error": {"type": "api_error",
+                                    "message": stall_text(model.id, stall) if stalled else f"cannot reach {model.id}: {type(e).__name__}"}}).encode(),
+                                    "application/json")
+                        if stalled:
+                            fb = stall_cool(model)
+                            if fb and not same_side(model, fb):
+                                sent = reroute(request, purpose, "anthropic", model, fb)
+                                if sent:
+                                    return sent
+                                fb = None
+                            if fb:
+                                tries.append(fb)
+                                continue
                         if more:
                             continue
                         if time.time() - started + retry_delay(None, again) < RETRY_WAIT_S:
@@ -1067,16 +1185,34 @@ def create_app(cfg: Config) -> FastAPI:
                     live.fits[model.id] = max(live.fits.get(model.id, 0), tokens_est)
                     seen = AnthropicSSEUsage()
 
-                    async def relay(upstream=upstream, model=model, audit=audit, seen=seen):
+                    async def relay(upstream=upstream, model=model, audit=audit, seen=seen, raw=raw, first=first, stall=stall):
+                        status, err = 200, ""
                         try:
-                            async for line in upstream.aiter_lines():
+                            async for line in chain(first, raw):
                                 seen.feed(line)
                                 yield (line + "\n").encode("utf-8")
+                            if not seen.stopped:
+                                status, err = 504, "the upstream stream ended without message_stop"
+                        except (asyncio.CancelledError, GeneratorExit):  # the client went away: drop the upstream too
+                            status, err = 499, "client disconnected"
+                            raise
+                        except Exception as e:  # noqa: BLE001 - told to the client as a stream error
+                            stalled = isinstance(e, Stalled)
+                            status, err = 504, (f"stalled after {stall:g} s without data" if stalled else f"{type(e).__name__}: {e}"[:200])
+                            if stalled:
+                                stall_cool(model)
+                            text = (stall_text(model.id, stall) if stalled else
+                                    f"upstream stream failed: {model.id} is overloaded or unreachable (HTTP 502): {type(e).__name__}")
+                            yield sse_error("anthropic", 504, json.dumps({"error": {"message": text, "type": "ferry_stalled"}}).encode())
                         finally:
+                            try:
+                                await upstream.aclose()
+                            except Exception:  # noqa: BLE001
+                                pass
                             live.pool.end(model.id)
                             tokens = normalize(seen.usage)
-                            write(audit_log, **audit, status=200, ms=int((time.time() - started) * 1000), usage=seen.usage,
-                                  tokens=tokens, cost=usage_cost(tokens, model.price))
+                            write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000), usage=seen.usage,
+                                  tokens=tokens, cost=usage_cost(tokens, model.price), **({"error": err} if err else {}))
                             done()
 
                     holding.clear()

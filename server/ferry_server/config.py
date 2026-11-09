@@ -62,6 +62,7 @@ class Provider:
     max_concurrent: int = 0  # calls running at the same time on this account; more wait their turn (0 = no limit)
     rpm: int = 0             # calls started per minute at most; more wait (0 = no limit)
     cooldown: int = 60       # after "too many requests" (429): seconds this account is left alone (Retry-After wins)
+    stall_seconds: int = 120  # a streaming answer that sends nothing for this long is dropped and asked again (0 = off)
     fallback: str = ""       # model that answers while this account cools down ("" = wait); another API form: the client asks it
     share: bool = False      # pool its models with same-named models of other sharing providers (default: kept apart)
 
@@ -344,7 +345,8 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             rename_params=dict(p.get("rename_params", pre.get("rename_params", {}))),
             no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
             api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0),
-            rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60), fallback=str(p.get("fallback", "") or ""),
+            rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60),
+            stall_seconds=max(0, int(p.get("stall_seconds", 120) if p.get("stall_seconds") is not None else 120)), fallback=str(p.get("fallback", "") or ""),
             share=bool(p.get("share", False)))  # "separate" (0.29, now the default) is ignored
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
@@ -441,6 +443,8 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
         for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback", "share"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
+        if p.get("stall_seconds") is not None and int(p["stall_seconds"]) != 120:  # 0 (off) must be written too
+            out.append(f"stall_seconds = {int(p['stall_seconds'])}")
     for m in models:
         out += ["", f"[models.{_toml_key(m['id'])}]"]
         for k in ("provider", "model", "name", "context_window", "max_tokens", "vision", "price", "base_url",

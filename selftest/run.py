@@ -2900,6 +2900,22 @@ def check_keepalive(root: Path, work: Path) -> None:
               if ok else f"c={c1},{c2},{c3} committed={len(committed)} o1={o1[-200:]!r} o2={o2[-200:]!r} o3={o3[-300:]!r}")
     finally:
         s.close()
+    # a relay that accepts the request and then sends nothing: after stall_seconds the request goes to the fallback
+    toml = ('\n[providers.slow]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nfallback = "main"\n'
+            'stall_seconds = 1\ndrop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\n\n[models.slowm]\nprovider = "slow"\nmodel = "stall-model"\n\n[routing]\ndefault = "slowm"\n')
+    s = Stack(root / "stall", work, "agent", extra_toml=toml)
+    try:
+        c1, o1 = s.ferry("-p", "say hello")
+        c2, o2 = s.ferry("-p", "say hello again")
+        stalled = [u for u in jsonl(s.upstream) if u.get("model") == "stall-model"]
+        audit = jsonl(s.data / "audit.jsonl")
+        rows = [a for a in audit if a.get("event") == "chat" and a.get("status") == 504 and "stalled" in str(a.get("error"))]
+        ok = c1 == 0 and c2 == 0 and "OK" in o1 and "OK" in o2 and len(stalled) == 1 and len(rows) == 1
+        check("F128 上游接了请求又不出声就改问备用模型", ok, "中转收下请求后一个字节都不发：1 秒后服务端放弃它，同一次请求改由备用模型回答，"
+              "调用记录写 504（卡住），不是成功；账号冷却期间后面的请求直接问备用模型"
+              if ok else f"c={c1},{c2} stalled={len(stalled)} rows={len(rows)} o1={o1[-200:]!r} o2={o2[-200:]!r}")
+    finally:
+        s.close()
 
 
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from

@@ -817,6 +817,13 @@ class H(BaseHTTPRequestHandler):
         if bad:
             return self.send_json(400, {"error": {"message": f"unsupported parameter: {bad[0]}"}})
         asked = json.dumps(body.get("messages", []))
+        if body.get("model") == "stall-model" and body.get("stream"):  # a relay that accepts the request and goes silent
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.flush()
+            time.sleep(12)
+            return
         if "HEADERSTEST" in asked:  # slow to answer: no response headers for a while (a busy relay)
             time.sleep(2)
         if "COOLTEST" in asked and not state.get("cooled"):  # the account is rate-limited once: 2 s cool-down
