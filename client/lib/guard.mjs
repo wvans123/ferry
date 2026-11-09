@@ -2,7 +2,7 @@
 // Asking happens in the terminal; a subagent asks through the main window (opts.ui) and says who is asking.
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { findBash } from "./config.mjs";
+import { findBash, tempDirOf } from "./config.mjs";
 import { basename, resolve } from "node:path";
 import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, newSession, noteCreated, prefixRule, restoreSession } from "./permissions.mjs";
 import { openRemote, race } from "./remote.mjs";
@@ -88,6 +88,9 @@ export async function ask(cfg, ui, verdict, event, cwd, who) {
  */
 export function createGuard(cfg, opts = {}) {
 	return (pi) => {
+		// the temp folder counts like the project for edits, and in full access deleting inside it does not ask
+		const tempDir = tempDirOf(cfg);
+		if (!state.extraDirs.includes(tempDir)) state.extraDirs.push(tempDir);
 		if (!opts.ui) { // the main agent: its conversation keeps the record (subagents write to it through state.persist)
 			state.persist = (data) => {
 				try {
@@ -119,7 +122,7 @@ export function createGuard(cfg, opts = {}) {
 				// a background job is a shell command like any other
 				const tool = event.toolName === "job_start" ? (findBash() ? "bash" : "powershell") : event.toolName;
 				const verdict = decide({ tool, input: event.input, mode: state.mode, cwd, session: state.session,
-					rules: loadRules(cwd), blockedPaths: cfg.blockedPaths ?? [], readOnlyTool, extraDirs: state.extraDirs });
+					rules: loadRules(cwd), blockedPaths: cfg.blockedPaths ?? [], readOnlyTool, extraDirs: state.extraDirs, tempDir });
 				const made = (r) => {
 					if (!r && CREATES.has(tool) && event.input?.path) {
 						const added = noteCreated(state.session, resolve(cwd, String(event.input.path)));

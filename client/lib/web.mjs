@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { serverHeaders } from "./config.mjs";
+import { serverHeaders, tempDirOf } from "./config.mjs";
 import { gatewayPage } from "./gateway.mjs";
 import { wrapExternal } from "./external.mjs";
 
@@ -339,14 +339,14 @@ export async function readByServer(cfg, url, prompt, offset, signal) {
 	return out;
 }
 
-/** A PDF, Office file or archive web_fetch got: into the project's downloads folder, for office_read. */
-function saveFile(page, cwd) {
+/** A PDF, Office file or archive web_fetch got: into <temp folder>/downloads, for office_read. */
+function saveFile(page, tempDir) {
 	const f = page.file;
 	if (f.cut) {
 		return { content: [{ type: "text", text: `${page.url} is a file (${f.ctype}) bigger than ${FILE_BYTES / 1e6} MB: download it ` +
 			"with a command (curl -L --retry 3 -C - -o <file> <url>)." }], details: { url: page.url } };
 	}
-	const dir = join(cwd, "downloads");
+	const dir = join(tempDir, "downloads");
 	mkdirSync(dir, { recursive: true });
 	let file = join(dir, f.name);
 	for (let i = 2; existsSync(file) && readFileSync(file).compare(f.buf) !== 0; i++) file = join(dir, f.name.replace(/(\.[^.]*)?$/, `-${i}$1`));
@@ -391,7 +391,7 @@ export function createWeb(cfg) {
 				`pages it cannot reach, on this computer (${where.toLowerCase().replace(/\.$/, "")}). With prompt, the page is ` +
 				"read for you and only the answer comes back (like Claude Code's WebFetch); without it you get the page's text, " +
 				"long pages in parts (call again with offset). A PDF, Word, Excel or PowerPoint file is saved into the downloads " +
-				"folder for office_read. Pages that need a login or are built by scripts: use the browser.",
+				"folder inside the temp folder, for office_read. Pages that need a login or are built by scripts: use the browser.",
 			promptSnippet: "Read a web page, or ask a question about it",
 			parameters: FetchParams,
 			annotations: { readOnlyHint: true, openWorldHint: true },
@@ -414,7 +414,7 @@ export function createWeb(cfg) {
 					}
 				}
 				const page = await readPage(params.url, signal);
-				if (page.file) return saveFile(page, ctx?.cwd ?? process.cwd());
+				if (page.file) return saveFile(page, tempDirOf(cfg, ctx?.cwd ?? process.cwd()));
 				if (page.sparse) {
 					return show({ url: page.url, title: page.title, text: `${page.text}\n\n[This page is probably built by JavaScript, ` +
 						"so it reads almost empty here. " + (cfg.browser === false ? "Another source may have the same information; otherwise tell the user.]"

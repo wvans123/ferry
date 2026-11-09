@@ -527,6 +527,12 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "bash", {"command": "curl -sSL -o got.zip http://127.0.0.1:9100/ftp/23501-j40.zip && echo downloaded"})
         return ("text", "UPLOAD: " + text_of(tools[0])[:300].replace("\n", " ") + " || " + text_of(tools[1])[:80])
+    if "TEMPDELTEST" in first:  # in full access: delete a file that was there before inside the temp folder (no prompt), then one in the project (asks)
+        tmpf = first.split("TEMPDELTEST:")[1].split()[0]
+        steps = [("bash", {"command": f"rm {tmpf} && echo removed-temp"}), ("bash", {"command": "rm old.txt && echo removed-old"})]
+        if len(tools) < len(steps):
+            return ("tool", steps[len(tools)][0], steps[len(tools)][1])
+        return ("text", "TEMPDEL: " + " || ".join(text_of(t)[:160].replace("\n", " ") for t in tools))
     if "DELETETEST" in first:  # delete a file made in this session (also one in the temp folder with "TMP"), then one that was there before
         tmp = (__import__("tempfile").gettempdir() + "/ferry-f70-scratch.txt").replace("\\", "/")
         steps = [("write", {"path": "made-now.txt", "content": "made by the agent\n"}),
