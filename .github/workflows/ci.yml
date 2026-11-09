@@ -1,11 +1,18 @@
 name: test and release
 
-# Pull request: unit tests on Linux and Windows, the end-to-end self-test on Linux (nothing when only docs change).
-# A release pull request (it changes package.json's version) also runs the self-test on Windows.
-# Push to main: a feature merge runs everything on both systems (nobody waits for it, nothing is released). A
-# release merge whose pull request already passed with the same files is not tested again. If package.json's
-# version has no release yet, build the offline Windows package and publish release v<version> (that is what
-# `ferry update` downloads). So releasing = bumping the version.
+# Which tests run is decided by the gate job below (the selection itself is scripts/affected.py, which you also run
+# locally before pushing: `python scripts/affected.py --base origin/main --run`).
+#   Pull request, version unchanged (a feature): Linux only, only the tests the change touches. Nobody has to wait
+#     long for it; the agent's own local run of the same command is what counts. Docs only: nothing.
+#   Push to main after a feature merge: everything, on Linux and Windows, the whole self-test included. This is the
+#     safety net, nobody waits for it, nothing is released by it.
+#   Pull request that bumps the version (a release: the four version files and GOAL.md only): no tests when the
+#     base commit on main has a full green run (both test jobs succeeded); otherwise everything.
+#   Release merge push: no tests when it changes only those files and the commit before it has a full green run.
+#     If package.json's version has no release yet, build the offline Windows package and publish release
+#     v<version> (that is what `ferry update` downloads). The release job refuses when main's last full run is
+#     not green. So releasing = bumping the version.
+#   workflow_dispatch: everything.
 on:
   push:
     branches: [main]
@@ -27,45 +34,72 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       test: ${{ steps.g.outputs.test }}
-      full: ${{ steps.g.outputs.full }}
+      mode: ${{ steps.g.outputs.mode }}
+      os: ${{ steps.g.outputs.os }}
+      base: ${{ steps.g.outputs.base }}
+      green: ${{ steps.g.outputs.green }}
     env:
       GH_TOKEN: ${{ github.token }}
       R: ${{ github.repository }}
     steps:
-      - name: do the tests need to run?
+      - name: do the tests need to run, and which?
         id: g
         run: |
           # docs/, eval results and top-level .md files; a SKILL.md inside client/ is code (the agent reads it)
           docs_only() { ! grep -qvE '^(docs/|evals/results/|[^/]+\.md$)' "$1"; }
-          # full: the self-test on Windows too
-          verdict() { echo "test=$1" >> "$GITHUB_OUTPUT"; echo "full=${3:-true}" >> "$GITHUB_OUTPUT"; echo "tests: $1, full: ${3:-true} ($2)"; }
+          # what a version bump touches (plus GOAL.md's last-result line)
+          bump_only() { ! grep -qvE '^(package\.json|package-lock\.json|server/pyproject\.toml|server/ferry_server/__init__\.py|GOAL\.md)$' "$1"; }
+          skippable() { ! grep -qvE '^(docs/|evals/results/|[^/]+\.md$|package\.json|package-lock\.json|server/pyproject\.toml|server/ferry_server/__init__\.py)' "$1"; }
+          # verdict <run tests?> <affected|all> <reason>: "all" is every unit test and the whole self-test, on both systems
+          verdict() {
+            echo "test=$1" >> "$GITHUB_OUTPUT"; echo "mode=$2" >> "$GITHUB_OUTPUT"
+            if [ "$2" = all ]; then echo 'os=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"; else echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"; fi
+            echo "tests: $1, mode: $2 ($3)"
+          }
           ver() { gh api -H "Accept: application/vnd.github.raw+json" "repos/$R/contents/package.json?ref=$1" | jq -r .version; }
+          # green <sha>: the last full run on main at or before this commit succeeded on both systems. Commits that
+          # only change docs or version files have no run of their own, so look at the one before them.
+          green() {
+            local s=$1 i runs
+            for i in $(seq 1 15); do
+              runs=$(gh api "repos/$R/commits/$s/check-runs?per_page=100" \
+                --jq '[.check_runs[] | select(.name|startswith("test ("))] | group_by(.name) | map(sort_by(.started_at)|last)')
+              if [ "$(jq length <<<"$runs")" -gt 0 ]; then
+                [ "$(jq '[.[] | select(.conclusion=="success")] | length' <<<"$runs")" -ge 2 ]; return
+              fi
+              gh api "repos/$R/commits/$s" --jq '.files[].filename' > cfiles
+              skippable cfiles || return 1
+              s=$(gh api "repos/$R/commits/$s" --jq '.parents[0].sha')
+            done
+            return 1
+          }
+          echo "green=false" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = pull_request ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
             gh api --paginate "repos/$R/pulls/${{ github.event.number }}/files" --jq '.[].filename' > files
-            if docs_only files; then verdict false "only docs changed"; exit 0; fi
+            if docs_only files; then verdict false affected "only docs changed"; exit 0; fi
             if [ "$(ver ${{ github.event.pull_request.head.sha }})" != "$(ver ${{ github.event.pull_request.base.sha }})" ]; then
-              verdict true "a release" true
+              if bump_only files && green ${{ github.event.pull_request.base.sha }}; then
+                verdict false affected "a release, and main's last full run is green"
+              else
+                verdict true all "a release, and main is not known to be green or other files changed"
+              fi
             else
-              verdict true "a feature: the Windows self-test runs when it is merged and on the release" false
+              verdict true affected "a feature: only the tests the change touches, on Linux"
             fi
             exit 0
           fi
-          if [ "${{ github.event_name }}" != push ]; then verdict true "${{ github.event_name }}"; exit 0; fi
+          if [ "${{ github.event_name }}" != push ]; then verdict true all "${{ github.event_name }}"; exit 0; fi
           sha=${{ github.sha }}
+          parent=$(gh api "repos/$R/commits/$sha" --jq '.parents[0].sha')
           gh api "repos/$R/commits/$sha" --jq '.files[].filename' > files
-          if docs_only files; then verdict false "only docs changed"; exit 0; fi
-          if [ "$(ver $sha)" = "$(ver "$(gh api "repos/$R/commits/$sha" --jq '.parents[0].sha')")" ]; then
-            verdict true "a feature merge: everything, also the Windows self-test the pull request skipped"; exit 0
+          g=false; if green "$parent"; then g=true; fi
+          echo "green=$g" >> "$GITHUB_OUTPUT"
+          if docs_only files; then verdict false affected "only docs changed"; exit 0; fi
+          if [ "$(ver $sha)" != "$(ver "$parent")" ] && bump_only files && [ "$g" = true ]; then
+            verdict false affected "a release merge, and main was green before it"; exit 0
           fi
-          tree=$(gh api "repos/$R/commits/$sha" --jq .commit.tree.sha)
-          head=$(gh api "repos/$R/commits/$sha/pulls" --jq '[.[] | select(.merged_at != null)][0].head.sha // empty')
-          if [ -z "$head" ]; then verdict true "not from a pull request"; exit 0; fi
-          if [ "$(gh api "repos/$R/commits/$head" --jq .commit.tree.sha)" != "$tree" ]; then
-            verdict true "main moved after the pull request was tested"; exit 0
-          fi
-          ok=$(gh api "repos/$R/commits/$head/check-runs?per_page=100" \
-            --jq '[.check_runs[] | select(.name|startswith("test (")) | select(.conclusion=="success")] | length')
-          if [ "$ok" -ge 2 ]; then verdict false "pull request $head passed on Linux and Windows"; else verdict true "pull request not tested"; fi
+          verdict true all "everything: the safety net after a merge"
 
   test:
     needs: gate
@@ -73,13 +107,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.gate.outputs.os) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -89,13 +125,14 @@ jobs:
           python-version: "3.12"
       - run: npm ci
       - run: python -m pip install -e server pytest
-      - name: unit tests
+      - name: tests
         run: |
-          python -m pytest -q server/tests
-          node --test "client/test/*.test.mjs"
-      - name: end-to-end self-test (fake model, no API key)
-        if: matrix.os == 'ubuntu-latest' || needs.gate.outputs.full == 'true'
-        run: python selftest/run.py
+          if [ "${{ needs.gate.outputs.mode }}" = all ]; then
+            python scripts/affected.py --all --run
+          else
+            python scripts/affected.py --base "${{ needs.gate.outputs.base }}" --run
+          fi
+        shell: bash
 
   release:
     needs: [gate, test]
@@ -117,6 +154,9 @@ jobs:
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: main's last full run must be green
+        if: steps.v.outputs.new == 'true' && needs.test.result != 'success' && needs.gate.outputs.green != 'true'
+        run: echo "main's last full run is not green; fix it or re-run this workflow" && exit 1
       - uses: actions/setup-node@v4
         if: steps.v.outputs.new == 'true'
         with:

@@ -53,24 +53,30 @@ the change needs.
 2. Read only what the module needs: its own files, the one line that plugs it in, docs/MODULES.md. Do not read the
    big shared files whole (selftest/run.py, server/ferry_server/admin.html, app.py, client/bin/ferry.mjs,
    package-lock.json): grep for the spot you change and read that range.
-3. Test locally only what changed: the module's unit tests (`pytest server/tests/test_<name>.py`,
-   `node --test client/test/<name>.test.mjs`) and its end-to-end checks, `python selftest/run.py --only F66,F67`
-   (`--list` shows which step holds which F; one step takes seconds). The full run is CI's job; do not repeat it
-   locally. On a feature PR CI runs all unit tests on Linux and Windows and the self-test on Linux (about 4 minutes);
-   the Windows self-test runs after the merge on main and on the release PR, so a Windows-only break shows up there
-   before anything is published. Do not sit waiting for CI either: open the PR, go on with other work or end the
-   turn, and read the result when it is done (fix it if it is red). A unit test that waits on real timers (retry
+3. Test locally only what changed: before pushing run `python scripts/affected.py --base origin/main --run`. It picks the
+   module's unit tests (`client/lib/x.mjs` -> `client/test/x*.test.mjs`, `server/ferry_server/x.py` ->
+   `server/tests/test_x*.py`) and the self-test steps whose code changed (`python selftest/run.py --only F66,F67`;
+   `--list` shows which step holds which F; one step takes seconds). A shared core file (listed at the top of the
+   script: ferry.mjs, sync.mjs, config.mjs, app.py, server config.py, store.py, package files, scripts/, workflows)
+   or a code file with no test of its own runs all unit tests of its side. Without `--run` it only prints the plan.
+   That local run is what counts: on a feature PR CI runs the same command on Linux, nothing else, and nobody
+   waits for it. Push to main after the merge runs everything on Linux and Windows (self-test included) as the safety
+   net; if it is red, fix it before the next release. Do not sit waiting for CI: open the PR, go on with other work or end
+   the turn, and read the result when it is done (fix it if it is red). A unit test that waits on real timers (retry
    back-off, cool-downs) shortens them, like the others in test_pool.py.
 4. A user-visible behaviour that needs the whole stack (client, server, fake model) gets an end-to-end check in
    selftest/run.py with the next free F number, listed in GOAL.md. Checks of text alone (what the system prompt
    says, a tool description) are unit tests, not F checks.
 5. Releases are batched: features collect on main, and when the owner wants the work PC updated, one small release
    PR runs `python scripts/bump.py x.y.z` (package.json, package-lock.json, server/pyproject.toml,
-   server/ferry_server/__init__.py) and nothing else. Its CI runs everything on both systems, the Windows self-test
-   included. Merging it publishes: CI skips tests that already passed on the PR with the same files (and tests for docs-only changes), builds the offline Windows package and publishes release
-   v<version>; `ferry update` picks it up. Only a version with no release yet is published, so merging feature PRs
-   publishes nothing. A new pi version arrives the same way: update-pi.yml tests it and opens a PR
-   (`claude/pi-<version>`, pi only, with pi's release notes); the owner reads the notes and merges.
+   server/ferry_server/__init__.py) and nothing else, plus GOAL.md's last-result line. Its CI runs no tests when the
+   base commit on main has a green full run (Linux and Windows); if main is red or its run is not finished, it runs
+   everything. Merging it publishes: when only those files changed and the commit before is green, tests are
+   skipped, then CI builds the offline Windows package and publishes release v<version>; `ferry update` picks it up.
+   The release job refuses to publish when main's last full run is not green (re-run the workflow once it is). Only a
+   version with no release yet is published, so merging feature PRs publishes nothing. A new pi version arrives the
+   same way: update-pi.yml tests it and opens a PR (`claude/pi-<version>`, pi only, with pi's release notes); the owner
+   reads the notes and merges.
 6. Feature PR title: what changed for the user; its description is a table 问题 / 改了什么 / 自测. Release PR title
    `Ferry x.y.z: the features in it`; its description is the version's record: the feature PRs with links and one
    line each (versions up to 0.30 are in docs/history/). The release PR updates GOAL.md's "最近一次结果" line.
