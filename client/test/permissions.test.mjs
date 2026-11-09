@@ -1,8 +1,8 @@
 // node --test client/test
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-perm-"));
@@ -238,6 +238,111 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	assert.equal(P.decide({ tool: "bash", input: { command: "rm old.txt" }, mode: "default", cwd: proj, rules: none, session }).action, "ask");
 });
 
+test("full access: deleting inside the temp folder does not ask, whenever it was made", () => {
+	const root = mkdtempSync(join(tmpdir(), "ferry-tdel-"));
+	const proj = join(root, "proj");
+	const temp = join(root, "temp");
+	mkdirSync(join(temp, "task", "sub"), { recursive: true });
+	mkdirSync(proj);
+	writeFileSync(join(temp, "task", "old.txt"), "x");
+	writeFileSync(join(temp, "task", "sub", "old2.txt"), "x");
+	writeFileSync(join(proj, "old.txt"), "x");
+	const session = { start: Date.now() + 60_000, made: new Set() }; // everything on disk is older than the session
+	const fwd = (p) => p.replaceAll("\\", "/");
+	const v = (command, o = {}) => P.decide({ tool: "bash", input: { command }, mode: "bypass", cwd: proj, rules: none, session, tempDir: temp, ...o });
+	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`).action, "allow");
+	assert.equal(v(`rm -rf ${fwd(join(temp, "task"))}`).action, "allow"); // a folder: everything in it is inside temp
+	assert.equal(v(`rm -rf ${fwd(join(temp, "task", "*.txt"))}`).action, "allow");
+	assert.equal(v("rm old.txt").action, "ask"); // the project is not the temp folder
+	assert.equal(v(`rm -rf ${fwd(temp)}`).action, "ask"); // the temp folder itself
+	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`, { tempDir: "" }).action, "ask");
+	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`, { mode: "acceptEdits" }).action, "ask"); // other modes are unchanged
+	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))} ${fwd(join(proj, "old.txt"))}`).action, "ask"); // one target outside
+	P.noteCreated(session, join(proj, "made.txt"));
+	writeFileSync(join(proj, "made.txt"), "x");
+	assert.equal(v(`rm ${fwd(join(proj, "made.txt"))} ${fwd(join(temp, "task", "old.txt"))}`).action, "allow"); // a mix is fine
+	// a link inside the tree: Remove-Item -Recurse on a junction can reach the real folder
+	let linked = false;
+	try {
+		symlinkSync(proj, join(temp, "task", "link"), "junction");
+		linked = true;
+	} catch {
+		// no permission to make links here
+	}
+	if (linked) {
+		assert.equal(v(`rm -rf ${fwd(join(temp, "task"))}`).action, "ask");
+		assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`).action, "allow"); // the file next to it is fine
+	}
+});
+
+test("full access: a delete Ferry cannot list goes ahead only when it can only touch the temp folder", () => {
+	const root = mkdtempSync(join(tmpdir(), "ferry-tunl-"));
+	const temp = join(root, "temp");
+	const proj = join(root, "proj");
+	mkdirSync(join(temp, "t"), { recursive: true });
+	mkdirSync(proj);
+	const inT = join(temp, "t");
+	const f = (p) => p.replaceAll("\\", "/");
+	const ok = (cmd, cwd = proj) => P.unlistableDeleteInTemp(cmd, cwd, temp);
+	const dec = (command, cwd = proj, mode = "bypass") => P.decide({ tool: "bash", input: { command }, mode, cwd, rules: none, session: { start: Date.now() + 6e4, made: new Set() }, tempDir: temp }).action;
+	// allowed
+	assert.equal(ok(`cd ${f(inT)} && find . -delete`), true);
+	assert.equal(ok(`cd ${f(inT)}; ls | xargs rm`), true);
+	assert.equal(ok(`cd "${f(inT)}" && python3 -c "import shutil; shutil.rmtree('${f(inT)}/x')"`), true);
+	assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(inT)}/x')"`, inT), true); // the session folder is in temp
+	assert.equal(ok(`ls ${f(inT)} | xargs rm`, inT), true);
+	assert.equal(ok("Get-ChildItem . | ForEach-Object { Remove-Item $_.FullName } ; Write-Output $null", inT), true); // $_ and $null
+	assert.equal(dec(`cd ${f(inT)} && find . -delete`), "allow");
+	assert.equal(dec("find . -delete", inT), "allow");
+	assert.equal(dec(`cd ${f(inT)} && git clean -fd`), "allow");
+	// the dangerous cases ask
+	assert.equal(ok(`find ${f(proj)} -delete`, inT), false); // an absolute path outside temp
+	assert.equal(ok(`cd ${f(inT)} && find . -delete; rm -rf ${f(proj)}`), false); // outside, later in the command
+	assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(proj)}')"`, inT), false); // inside a quoted string
+	assert.equal(ok(`python3 -c "import os; os.remove('${f(inT)}/../x')"`, inT), false); // ..
+	assert.equal(ok("cd .. && find . -delete", inT), false);
+	assert.equal(ok("find . -delete", proj), false); // relative from the project folder
+	assert.equal(ok(`ls ${f(inT)} | xargs rm`), false); // a pipe without the cd
+	assert.equal(ok(`cd ${f(proj)} && find . -delete`), false); // a cd out of temp
+	assert.equal(ok(`cd ${f(inT)} | find . -delete`), false); // the cd must be a plain first step
+	assert.equal(ok("find . -name $PATTERN -delete", inT), false); // a variable Ferry does not know
+	assert.equal(ok("find . -delete -name $(whoami)", inT), false);
+	assert.equal(ok("find / -delete", inT), false);
+	assert.equal(ok("find $HOME -delete", inT), false); // a known variable that points outside
+	assert.equal(ok("find ~/x -delete", inT), false);
+	assert.equal(ok("find //server/share -delete", inT), false);
+	assert.equal(P.unlistableDeleteInTemp("find . -delete", inT, ""), false); // no temp folder
+	assert.equal(dec(`cd ${f(inT)} && find . -delete`, proj, "acceptEdits"), "ask"); // other modes are unchanged
+	assert.equal(dec("git clean -fd"), "ask");
+	// a later cd that can leave the folder without an absolute path
+	for (const later of ["cd -", "cd", "popd", "Pop-Location", "cd a b", "Set-Location -"]) {
+		assert.equal(ok(`cd ${f(inT)}; ${later}; Remove-Item -Recurse x`), false, later);
+		assert.equal(ok(`${later} && find . -delete`, inT), false, later);
+	}
+	assert.equal(ok(`cd ${f(inT)}; cd sub; find . -delete`), true); // a relative cd is fine, .. is banned
+	// links: the delete cannot be listed, so a link anywhere it can reach means ask
+	const lk = join(temp, "lk"); // its own folder: the Windows checks below use inT
+	let linked = false;
+	try {
+		mkdirSync(join(lk, "job"), { recursive: true });
+		symlinkSync(proj, join(lk, "job", "link"), "junction");
+		linked = true;
+	} catch {
+		// no permission to make links here
+	}
+	if (linked) {
+		assert.equal(ok(`cd ${f(join(lk, "job"))} && Get-ChildItem -Recurse | Remove-Item`), false); // the cd target
+		assert.equal(ok("find . -delete", join(lk, "job")), false); // cwd inside temp
+		assert.equal(ok(`ls ${f(join(lk, "job"))} | xargs rm`, lk), false); // a named absolute path (and cwd above it)
+		assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(join(lk, "job", "x"))}')"`, lk), false);
+	}
+	if (process.platform === "win32") {
+		assert.equal(ok(`cd /d ${temp}\\t && rmdir /s /q x`), true);
+		assert.equal(ok(`python -c "import shutil; shutil.rmtree(r'C:\\Users\\x')"`, inT), false);
+		assert.equal(ok(`Get-ChildItem C:\\Users | Remove-Item`, inT), false);
+	}
+});
+
 test("the guard: an upload prompt has no always-allow; a file the write tool made can be deleted in full access", async () => {
 	const { createGuard, _state } = await import("../lib/guard.mjs");
 	const proj = mkdtempSync(join(tmpdir(), "ferry-guard-"));
@@ -304,5 +409,25 @@ test("reading programs that write a file or run another program through an optio
 	}
 	for (const c of ["sort -u a.txt", "sort -n -k2 a", "uniq -c a", "tree -L 2", "git log --oneline", "rg --pre-glob '*.gz' foo", "rg -n foo"]) {
 		assert.equal(P.isReadOnlyCommand(c), true, c);
+	}
+});
+
+test("tempDirOf: the default, a chosen folder, and values that are refused", async () => {
+	const { tempDirOf, FERRY_HOME } = await import("../lib/config.mjs");
+	const quiet = process.stderr.write.bind(process.stderr);
+	process.stderr.write = () => true; // the warning is not the test's output
+	try {
+		const proj = mkdtempSync(join(tmpdir(), "ferry-tproj-"));
+		assert.equal(tempDirOf({}, proj, { win: false, exists: () => false }), join(FERRY_HOME, "temp"));
+		assert.equal(tempDirOf({}, proj, { win: true, exists: (p) => p === "D:\\" }), "D:\\ferry\\temp");
+		assert.equal(tempDirOf({}, proj, { win: true, exists: () => false }), join(FERRY_HOME, "temp"));
+		const mine = join(mkdtempSync(join(tmpdir(), "ferry-tmine-")), "scratch");
+		assert.equal(tempDirOf({ tempDir: mine }, proj), mine);
+		assert.ok(existsSync(mine)); // created
+		const dflt = join(FERRY_HOME, "temp");
+		const os = { win: process.platform === "win32", exists: () => false }; // no D: drive, so the default is the same everywhere
+		for (const bad of ["/", FERRY_HOME, homedir(), dirname(proj), proj, "relative/dir"]) assert.equal(tempDirOf({ tempDir: bad }, proj, os), dflt, bad);
+	} finally {
+		process.stderr.write = quiet;
 	}
 });

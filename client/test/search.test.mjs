@@ -155,12 +155,13 @@ test("web_fetch with a question but no reading on the server: the page's text, w
 	}
 });
 
-test("web_fetch saves a PDF into the downloads folder for office_read", async () => {
+test("web_fetch saves a PDF into <temp folder>/downloads for office_read", async () => {
 	const s = await site(() => [500, {}]);
 	const cwd = mkdtempSync(join(tmpdir(), "ferry-dl-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "ferry-tempdir-"));
 	try {
-		const r = await fetchTool({ server: s.base }).execute("1", { url: `${s.base}/spec.pdf` }, undefined, undefined, { cwd });
-		assert.equal(r.details.path, join(cwd, "downloads", "spec.pdf"));
+		const r = await fetchTool({ server: s.base, tempDir }).execute("1", { url: `${s.base}/spec.pdf` }, undefined, undefined, { cwd });
+		assert.equal(r.details.path, join(tempDir, "downloads", "spec.pdf"));
 		assert.equal(readFileSync(r.details.path, "utf8"), "%PDF-1.4 fake");
 		assert.match(r.content[0].text, /read it with office_read/);
 	} finally {

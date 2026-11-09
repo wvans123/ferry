@@ -1346,6 +1346,23 @@ def check_upload_delete(root: Path, work: Path) -> None:
               "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样，带通配符的（rm tmp_*.txt）和先 cd 再删的也一样（全部放行、自动接受编辑已验证）；"
               "删除原来就有的文件在每个模式下都要确认，也没有\"以后都允许\""
               if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r} | glob={c5} {o5[-500:]!r}")
+        # full access + a temp folder: a file from before the session inside it goes without asking; the project's old file still asks
+        tdir = root / "ferry-temp-dir"
+        (tdir / "task").mkdir(parents=True, exist_ok=True)
+        pre = tdir / "task" / "before.txt"
+        pre.write_text("was here before\n", encoding="utf-8")
+        cfgf = s.home / "config.json"
+        base = json.loads(cfgf.read_text(encoding="utf-8")) if cfgf.exists() else {}
+        cfgf.write_text(json.dumps({**base, "tempDir": str(tdir)}), encoding="utf-8")
+        try:
+            c6, o6 = s.ferry("-p", f"TEMPDELTEST:{pre.as_posix()} clean up", cwd=proj, env_extra=full)
+        finally:
+            cfgf.write_text(json.dumps(base), encoding="utf-8")
+        ok6 = (c6 == 0 and "removed-temp" in o6 and not pre.exists() and "did not create in this session" in o6
+               and "removed-old" not in o6 and (proj / "old.txt").exists())
+        check("F123 全部放行下临时文件夹里的删除不问", ok6,
+              "全部放行时，删除临时文件夹（tempDir）里会话之前就有的文件直接执行；同样删项目里原来就有的文件仍然要确认"
+              if ok6 else f"bypass={c6} {o6[-500:]!r}")
     finally:
         s.close()
 
