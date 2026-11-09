@@ -432,7 +432,7 @@ export function madeThisSession(p, session, budget = { n: 5000 }, temp = "") {
 
 const PS_VARS = /\$(_|psitem|true|false|null)\b/gi;
 const CD_FIRST = /^\s*(?:cd|chdir|pushd|set-location|sl|push-location)\s+(?:(?:\/d|-path|-literalpath)\s+)?("[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;|\r?\n)/i;
-const CMD_SWITCH = /^(del|erase|rd|rmdir|cmd)$/;
+const CMD_SWITCH = /^(del|erase|rd|rmdir|cmd|cd|chdir|pushd)$/;
 
 /**
  * Full access only: a delete Ferry cannot list (a pipe, python -c, find -delete) may still go ahead without asking when

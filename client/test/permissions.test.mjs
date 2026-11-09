@@ -403,7 +403,8 @@ test("tempDirOf: the default, a chosen folder, and values that are refused", asy
 		assert.equal(tempDirOf({ tempDir: mine }, proj), mine);
 		assert.ok(existsSync(mine)); // created
 		const dflt = join(FERRY_HOME, "temp");
-		for (const bad of ["/", FERRY_HOME, homedir(), dirname(proj), proj, "relative/dir"]) assert.equal(tempDirOf({ tempDir: bad }, proj), dflt, bad);
+		const os = { win: process.platform === "win32", exists: () => false }; // no D: drive, so the default is the same everywhere
+		for (const bad of ["/", FERRY_HOME, homedir(), dirname(proj), proj, "relative/dir"]) assert.equal(tempDirOf({ tempDir: bad }, proj, os), dflt, bad);
 	} finally {
 		process.stderr.write = quiet;
 	}
