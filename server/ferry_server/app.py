@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from starlette.background import BackgroundTask
 
 from . import PROTOCOL, __version__
-from .config import Config, provider_labels, refresh_models
+from .config import STALL_DEFAULT, Config, provider_labels, refresh_models
 from .devices import Devices
 from . import feishu
 from . import globalmem
@@ -332,7 +332,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     def stall_of(m) -> float:
         prov = cfg.providers.get(m.provider) if m.provider else None
-        return float(getattr(prov, "stall_seconds", 120))
+        return float(getattr(prov, "stall_seconds", STALL_DEFAULT))
 
     def stall_cool(m):
         """m's upstream stalled: leave its account alone for a short while when a fallback can answer meanwhile.

@@ -26,7 +26,7 @@ import httpx
 
 from . import PROTOCOL, __version__
 from . import presets as presets_mod
-from .config import (Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
+from .config import (STALL_DEFAULT, Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
 from . import feishu
 from . import globalmem
 from . import report as reports
@@ -590,7 +590,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                             (pre.get("api", "openai") == "openai" and p.get("api") in ("openai", "openai-responses")) else pre.get("api", "openai"),
                      "max_concurrent": max(0, int(p.get("max_concurrent") or 0)),
                      "rpm": max(0, int(p.get("rpm") or 0)), "cooldown": max(1, int(p.get("cooldown") or 60)),
-                     "stall_seconds": max(0, int(p["stall_seconds"])) if p.get("stall_seconds") is not None else 120,
+                     "stall_seconds": max(0, int(p["stall_seconds"])) if p.get("stall_seconds") is not None else STALL_DEFAULT,
                      "fallback": str(p.get("fallback") or ""), "share": bool(p.get("share")),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:

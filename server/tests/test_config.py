@@ -98,7 +98,7 @@ def test_old_deepseek_sizes_are_raised_but_chosen_ones_kept():
 def test_stall_seconds_default_and_zero_survive_the_models_file(tmp_path, monkeypatch):
     from ferry_server.config import load_default, render_models_toml
     monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
-    for sec, want in ((None, 120), (0, 0), (45, 45), (120, 120)):
+    for sec, want in ((None, 300), (0, 0), (45, 45), (300, 300), (120, 120)):
         p = {"id": "x", "base_url": "http://x/v1", "api_key_env": "K", "no_key": True}
         if sec is not None:
             p["stall_seconds"] = sec
