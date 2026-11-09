@@ -321,19 +321,20 @@ test("full access: a delete Ferry cannot list goes ahead only when it can only t
 	}
 	assert.equal(ok(`cd ${f(inT)}; cd sub; find . -delete`), true); // a relative cd is fine, .. is banned
 	// links: the delete cannot be listed, so a link anywhere it can reach means ask
+	const lk = join(temp, "lk"); // its own folder: the Windows checks below use inT
 	let linked = false;
 	try {
-		mkdirSync(join(inT, "job"));
-		symlinkSync(proj, join(inT, "job", "link"), "junction");
+		mkdirSync(join(lk, "job"), { recursive: true });
+		symlinkSync(proj, join(lk, "job", "link"), "junction");
 		linked = true;
 	} catch {
 		// no permission to make links here
 	}
 	if (linked) {
-		assert.equal(ok(`cd ${f(join(inT, "job"))} && Get-ChildItem -Recurse | Remove-Item`), false); // the cd target
-		assert.equal(ok("find . -delete", join(inT, "job")), false); // cwd inside temp
-		assert.equal(ok(`ls ${f(join(inT, "job"))} | xargs rm`, inT), false); // a named absolute path (and cwd above it)
-		assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(join(inT, "job", "x"))}')"`, inT), false);
+		assert.equal(ok(`cd ${f(join(lk, "job"))} && Get-ChildItem -Recurse | Remove-Item`), false); // the cd target
+		assert.equal(ok("find . -delete", join(lk, "job")), false); // cwd inside temp
+		assert.equal(ok(`ls ${f(join(lk, "job"))} | xargs rm`, lk), false); // a named absolute path (and cwd above it)
+		assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(join(lk, "job", "x"))}')"`, lk), false);
 	}
 	if (process.platform === "win32") {
 		assert.equal(ok(`cd /d ${temp}\\t && rmdir /s /q x`), true);
