@@ -2329,8 +2329,8 @@ def check_phone_remote(root: Path, work: Path) -> None:
 
     s = Stack(root / "phone", work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark",
                                                          "FERRY_PUBLIC_URL": "http://127.0.0.1:8787"})
-    old = work / "phone-old.txt"
-    old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks (default mode: what ferry did not make asks)
+    old = s.home / "temp"  # Ferry's temp folder: a protected place, so deleting it asks even in full access
+    old.mkdir(parents=True, exist_ok=True)
     seen = b""
     pid = 0
     try:
@@ -2385,12 +2385,12 @@ def check_phone_remote(root: Path, work: Path) -> None:
                 return e.code, e.read().decode("utf-8")
 
         started = wait_for("shift+tab", 60)
-        typed(b"PHONEAPPROVAL: remove the old file")
+        typed(f"PHONEAPPROVAL:{old.as_posix()} remove the old folder".encode())
         asked = wait_for("Allow bash?", 30)
         p = push(1)
         url = p.get("url", "")
         code, first = page(url) if url else (0, "")
-        shown = (code == 200 and url.startswith("http://127.0.0.1:8787/m/") and "rm phone-old.txt" in first
+        shown = (code == 200 and url.startswith("http://127.0.0.1:8787/m/") and f"rm -rf {old.as_posix()}" in first
                  and "小心" in first and "等你批准 bash" in p.get("body", ""))
         _, again = page(url, {"action": "once"}) if url else (0, "")
         second = "再点一次确认" in again and old.exists()
@@ -2435,7 +2435,7 @@ def check_phone_remote(root: Path, work: Path) -> None:
             except (ProcessLookupError, ChildProcessError):
                 pass
         s.close()
-        old.unlink(missing_ok=True)
+        shutil.rmtree(old, ignore_errors=True)
 
 
 def check_phone_console(root: Path, work: Path) -> None:
@@ -2648,7 +2648,7 @@ def check_feishu(root: Path, work: Path) -> None:
         return False
 
     pid = 0
-    old = work / "phone-old.txt"  # the fake model's PHONEAPPROVAL deletes this one
+    old = s.home / "temp"  # the fake model's PHONEAPPROVAL deletes this one (Ferry's temp folder: asks even in full access)
     try:
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps({"on": True, "app_id": "cli_selftest", "app_secret": "fs-secret", "token": "fs-verify",
@@ -2679,7 +2679,7 @@ def check_feishu(root: Path, work: Path) -> None:
             return
         import pty
         import select
-        old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks (default mode: what ferry did not make asks)
+        old.mkdir(parents=True, exist_ok=True)
         s.home.mkdir(parents=True, exist_ok=True)
         (s.home / "config.json").write_text(json.dumps({"phoneApprovalSeconds": 1}), encoding="utf-8")
         env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40"}
@@ -2720,9 +2720,9 @@ def check_feishu(root: Path, work: Path) -> None:
             return ""
 
         started = wait_for("shift+tab", 60)
-        typed(b"PHONEAPPROVAL: remove the old file")
+        typed(f"PHONEAPPROVAL:{old.as_posix()} remove the old folder".encode())
         asked = wait_for("Allow bash?", 30)
-        card = card_with("rm phone-old.txt", 20)
+        card = card_with(f"rm -rf {old.as_posix()}", 20)
         values = re.findall(r'"value": (\{[^{}]*\})', card)
         once = next((json.loads(v) for v in values if '"a": "once"' in v), {})
         first = click(once) if once else {}
@@ -2773,7 +2773,7 @@ def check_feishu(root: Path, work: Path) -> None:
             except (ProcessLookupError, ChildProcessError):
                 pass
         s.close()
-        old.unlink(missing_ok=True)
+        shutil.rmtree(old, ignore_errors=True)
 
 
 # Every step of the run: (function, folder under the log dir; "" for the part_* steps, which name their own). The F numbers a step checks are read from

@@ -274,7 +274,7 @@ def decide_agent(msgs):
         return ("text", "PARWRITTEN: " + text_of(tools[-1])[:600].replace("\n", " | "))
     if "PHONEAPPROVAL" in first:  # a delete that asks every time, answered on the phone page
         if not tools:
-            return ("tool", "bash", {"command": "rm phone-old.txt && echo removed-by-phone"})
+            return ("tool", "bash", {"command": "rm -rf " + first.split("PHONEAPPROVAL:")[1].split()[0] + " && echo removed-by-phone"})
         return ("text", "PHONEAPPROVED: " + text_of(tools[-1])[:160].replace("\n", " "))
     if "PHONEQUESTION" in first:  # ask_user, answered on the phone page
         if not tools:
