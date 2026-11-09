@@ -463,8 +463,9 @@ def test_a_fallback_of_the_other_api_is_asked_by_the_client(tmp_path, monkeypatc
 
     r, ack, r2 = asyncio.run(ask(hdr))
     assert r.status_code == 422 and "ferry-reroute:gpt@openai" in r.text  # gpt speaks OpenAI's API: the client asks it
+    assert "[model=gpt-6.1-sol]" in r.text  # its upstream name: the client needs it to ask with thinking
     kiro = {o["model"]: o for o in ack["cooling"]}["kiro"]
-    assert kiro["fallback"] == "gpt" and kiro["switch"] is True
+    assert kiro["fallback"] == "gpt" and kiro["switch"] is True and kiro["fallbackModel"] == "gpt-6.1-sol"
     assert r2.status_code == 422 and calls == ["c.example.com"]  # while it cools down: not asked at all
 
 
@@ -510,3 +511,74 @@ def test_a_model_switched_to_the_other_api_tells_the_client_to_resend_in_its_for
     assert new.status_code == 422 and new.json()["error"]["message"].startswith("ferry-reroute:other@anthropic ")
     assert old.status_code == 400 and "ferry update" in old.json()["error"]["message"]
     assert back.status_code == 422 and back.json()["error"]["message"].startswith("ferry-reroute:gpt@openai ")
+
+
+def test_thinking_asked_of_the_main_model_reaches_a_fallback_on_the_same_api(tmp_path, monkeypatch):
+    """The fallback answers the same request body, so the level the user chose travels along: Chat Completions
+    reasoning_effort, the Responses API's reasoning.effort, Claude's thinking and effort."""
+    seen = []
+
+    def handler(req: httpx.Request):
+        body = json.loads(req.content)
+        seen.append((req.url.host, req.url.path, body))
+        if req.url.host in ("b.example.com", "d.example.com"):
+            return httpx.Response(429, json={"error": {"message": "Too many requests"}}, headers={"retry-after": "1"})
+        if req.url.host == "e.example.com":
+            return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant", "model": "claude",
+                                             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
+                                             "usage": {"input_tokens": 5, "output_tokens": 1}})
+        if req.url.path.endswith("/responses"):
+            return httpx.Response(200, json={"id": "r", "status": "completed", "output": [
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                "usage": {"input_tokens": 5, "output_tokens": 1}})
+        return answer("ok")
+
+    extra = """
+[providers.r]
+base_url = "https://r.example.com/v1"
+api_key_env = "KEY_A"
+api = "openai-responses"
+
+[models.resp]
+provider = "r"
+model = "gpt-6.1-sol"
+
+[providers.d]
+base_url = "https://d.example.com"
+api_key_env = "KEY_A"
+api = "anthropic"
+fallback = "haiku"
+
+[models.opus]
+provider = "d"
+model = "claude-opus-5-5"
+
+[providers.e]
+base_url = "https://e.example.com"
+api_key_env = "KEY_A"
+api = "anthropic"
+
+[models.haiku]
+provider = "e"
+model = "claude-haiku-5"
+"""
+    cfg, app = make(tmp_path, monkeypatch, handler, extra)
+    token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}"}
+    cfg.providers["b"].fallback = "resp"  # "other" on b falls back to resp (Responses API on r)
+    msgs = [{"role": "user", "content": "hi"}]
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            a = await c.post("/v1/chat/completions", headers=hdr, json={"model": "other", "reasoning_effort": "high", "messages": msgs})
+            b = await c.post("/anthropic/v1/messages", headers=hdr, json={
+                "model": "opus", "max_tokens": 100, "thinking": {"type": "adaptive"}, "output_config": {"effort": "high"},
+                "messages": msgs})
+            return a, b
+
+    a, b = asyncio.run(go())
+    assert a.status_code == 200 and b.status_code == 200
+    resp = next(x for x in seen if x[0] == "r.example.com")
+    assert resp[1].endswith("/responses") and resp[2]["reasoning"] == {"effort": "high"}
+    haiku = next(x for x in seen if x[0] == "e.example.com")
+    assert haiku[2]["thinking"] == {"type": "adaptive"} and haiku[2]["output_config"] == {"effort": "high"}
