@@ -9,6 +9,10 @@ import { AGENT_DIR } from "./config.mjs";
 
 const WIN = process.platform === "win32";
 const EXE = WIN ? ".exe" : "";
+/** The tar to unpack with. On Windows the one Windows ships: a bare "tar" may be GNU tar from Git, which reads a path that starts with C: as a remote host. */
+export function tarCommand(win = WIN, env = process.env) {
+	return win ? join(env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+}
 export const BIN_DIR = join(AGENT_DIR, "bin"); // where pi looks first
 
 // Pinned so the release zip and a git checkout get the same programs
@@ -85,7 +89,7 @@ export async function downloadMissing() {
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const archive = join(tmp, p.asset);
 			writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
-			const x = spawnSync(WIN ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar",
+			const x = spawnSync(tarCommand(),
 				[p.asset.endsWith(".zip") ? "-xf" : "-xzf", archive, "-C", tmp], { stdio: "pipe", windowsHide: true });
 			if (x.status !== 0) throw new Error(`could not unpack: ${x.stderr?.toString().trim() || x.error?.message}`);
 			const bin = findFile(tmp, t.name + EXE);

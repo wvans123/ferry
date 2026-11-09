@@ -2,6 +2,7 @@
 silence) keeps the connection; errors after that point arrive as SSE error events."""
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -148,11 +149,34 @@ def test_reroute_after_commit_carries_the_reroute_text(tmp_path, monkeypatch):
     assert m and m.group(1) == "gpt" and m.group(2) == "openai" and m.group(4) == "gpt-6.1-sol"
 
 
-def test_a_client_that_leaves_while_queued_frees_its_place(tmp_path, monkeypatch):
-    state = {"calls": 0}
+async def until(cond, limit=10):
+    """Wait for a condition, not for a fixed time: a slow machine (Windows CI) takes longer than any guess."""
+    end = time.time() + limit
+    while not cond():
+        assert time.time() < end, "timed out waiting for the condition"
+        await asyncio.sleep(0.01)
 
+
+def queued_then_leaves(tmp_path, monkeypatch, leave_at_commit):
+    """First request holds the provider's only slot, the second is queued behind it and leaves, then the first ends
+    and a third must get the slot. leave_at_commit: the second leaves in the very moment its stream is committed,
+    before the response has started (the client side of that is a plain cancel)."""
+    state = {"calls": 0, "commits": 0}
     cfg, _ = make(tmp_path, monkeypatch, lambda req: httpx.Response(200, content=OPENAI_SSE))
     token = (tmp_path / "token").read_text().strip()
+    box = {}
+    real_aok = app_mod.answer_or_keepalive
+
+    async def aok(request, kind, stream, work, on_commit=None):
+        def committed():
+            state["commits"] += 1
+            if leave_at_commit and state["commits"] == 2:
+                box["second"].cancel()
+            if on_commit:
+                on_commit()
+        return await real_aok(request, kind, stream, work, committed)
+
+    monkeypatch.setattr(app_mod, "answer_or_keepalive", aok)
 
     async def go():
         gate = asyncio.Event()
@@ -171,19 +195,31 @@ def test_a_client_that_leaves_while_queued_frees_its_place(tmp_path, monkeypatch
                 return c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
                               json={"model": "other", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
             first = asyncio.create_task(post())
-            await asyncio.sleep(0.05)
-            second = asyncio.create_task(post())
-            await asyncio.sleep(0.4)  # committed and queued behind the first
-            second.cancel()
-            await asyncio.sleep(0.05)
+            await until(lambda: state["calls"] == 1)  # the first has the slot
+            box["second"] = asyncio.create_task(post())
+            await until(lambda: state["commits"] == 2)  # the second is committed and queued behind the first
+            if not leave_at_commit:
+                box["second"].cancel()
+            await asyncio.wait({box["second"]}, timeout=5)
+            await asyncio.sleep(0.05)  # lets the cancel reach the queued work
             gate.set()
             assert (await first).status_code == 200
-            third = await asyncio.wait_for(post(), 3)  # would hang if the cancelled request still held a place
+            third = await asyncio.wait_for(post(), 5)  # would hang if the cancelled request still held a place
             return third, state["calls"]
 
-    third, calls = asyncio.run(go())
+    return asyncio.run(go())
+
+
+def test_a_client_that_leaves_while_queued_frees_its_place(tmp_path, monkeypatch):
+    third, calls = queued_then_leaves(tmp_path, monkeypatch, False)
     assert third.status_code == 200 and '"later"' in third.text
     assert calls == 2  # the cancelled request never reached the provider
+
+
+def test_a_client_that_leaves_before_the_committed_stream_starts_frees_its_place(tmp_path, monkeypatch):
+    third, calls = queued_then_leaves(tmp_path, monkeypatch, True)
+    assert third.status_code == 200 and '"later"' in third.text
+    assert calls == 2
 
 
 # ---- an upstream that accepts the request and then goes silent (a stalled relay)

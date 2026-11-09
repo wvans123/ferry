@@ -201,7 +201,17 @@ async def answer_or_keepalive(request: Request, kind: str, stream: bool, work, o
             if not task.done():
                 task.cancel()
 
-    return StreamingResponse(gen(), media_type="text/event-stream", headers={"x-accel-buffering": "no"})
+    class Kept(StreamingResponse):
+        async def __call__(self, scope, receive, send):
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                # gen()'s own finally does not run when the client leaves before gen() has started (an unstarted
+                # generator is never entered), which left the work running and its provider slot held for good
+                if not task.done():
+                    task.cancel()
+
+    return Kept(gen(), media_type="text/event-stream", headers={"x-accel-buffering": "no"})
 
 
 def create_app(cfg: Config) -> FastAPI:
