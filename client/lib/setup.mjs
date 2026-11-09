@@ -23,7 +23,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FERRY_HOME, loadConfig, saveConfig } from "./config.mjs";
-import { downloadMissing, installBundled, toolStatus } from "./toolbins.mjs";
+import { downloadMissing, installBundled, tarCommand, toolStatus } from "./toolbins.mjs";
 
 export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WIN = process.platform === "win32";
@@ -482,7 +482,7 @@ export async function update(version, repo, zipArg) {
 		// tar ships with Windows 10 and 11 and reads zip files; elsewhere use Python's zipfile
 		const py = findPython({}, false);
 		const x = WIN || !py
-			? spawnSync("tar", ["-xf", zip, "-C", out], { stdio: "inherit" })
+			? spawnSync(tarCommand(), ["-xf", zip, "-C", out], { stdio: "inherit" })
 			: spawnSync(py[0], [...py.slice(1), "-m", "zipfile", "-e", zip, out], { stdio: "inherit" });
 		if (x.status !== 0) throw new Error(`could not unpack ${zip}`);
 		const root = [out, ...readdirSync(out).map((n) => join(out, n))].find((d) => existsSync(join(d, "client", "bin", "ferry.mjs")));
