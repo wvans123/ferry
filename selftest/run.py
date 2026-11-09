@@ -1326,11 +1326,13 @@ def check_upload_delete(root: Path, work: Path) -> None:
                and "downloaded" in o1 and (proj / "got.zip").exists() and "SECRET-PAYLOAD-69" not in up)
         check("F69 上传每次都问", ok1, "全部放行模式加上 bash(curl*) 规则，curl 上传本机文件仍要确认（没有终端时拦下，说明规则和模式都放不行），"
               "文件没发出去；curl 下载照常不问" if ok1 else f"code={c1} {o1[-400:]!r}")
-        # every mode: what this session made goes (project folder, temp folder); what was there before always asks
+        # every mode: what this session made goes (project folder, temp folder); outside full access what was there before asks
         tmpf = Path(tempfile.gettempdir()) / "ferry-f70-scratch.txt"
         c2, o2 = s.ferry("-p", "DELETETEST-TMP: clean up", cwd=proj, env_extra=full)
+        # full access: the old file goes too, with no prompt (F123 checks what still asks there)
         ok2 = (c2 == 0 and "removed-new" in o2 and "removed-tmp" in o2 and not (proj / "made-now.txt").exists() and not tmpf.exists()
-               and "did not create in this session" in o2 and "removed-old" not in o2 and (proj / "old.txt").exists())
+               and "did not create in this session" not in o2 and "removed-old" in o2 and not (proj / "old.txt").exists())
+        (proj / "old.txt").write_text("was here before\n", encoding="utf-8")
         c3, o3 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "acceptEdits"})
         c4, o4 = s.ferry("-p", "DELETETEST: clean up", cwd=proj, env_extra={**full, "FERRY_PERMISSION_MODE": "default"})
         # default mode asks for the write itself (no terminal here), so only the old file is checked there
@@ -1342,11 +1344,12 @@ def check_upload_delete(root: Path, work: Path) -> None:
                and "did not create in this session" in o5 and not (proj / "tmp_a.txt").exists() and not (proj / "sub" / "c.txt").exists()
                and (proj / "old.txt").exists())
         ok4 = ok4 and ok5
-        check("F70 删除只放行本次新建的", ok2 and ok3 and ok4,
+        check("F70 删除只放行本次新建的（全部放行除外）", ok2 and ok3 and ok4,
               "任何模式下，删除本次会话里 agent 新建的文件直接执行，项目里和临时文件夹里都一样，带通配符的（rm tmp_*.txt）和先 cd 再删的也一样（全部放行、自动接受编辑已验证）；"
-              "删除原来就有的文件在每个模式下都要确认，也没有\"以后都允许\""
+              "删除原来就有的文件在自动接受编辑和默认模式下要确认，也没有\"以后都允许\"（全部放行下不问，见 F123）"
               if ok2 and ok3 and ok4 else f"bypass={c2} {o2[-400:]!r} | acceptEdits={c3} {o3[-300:]!r} | default={c4} {o4[-300:]!r} | glob={c5} {o5[-500:]!r}")
-        # full access + a temp folder: a file from before the session inside it goes without asking; the project's old file still asks
+        # full access: a file from before the session, in the temp folder or the project, goes without asking; the project
+        # folder itself and FERRY_HOME (a protected place) ask
         tdir = root / "ferry-temp-dir"
         (tdir / "task").mkdir(parents=True, exist_ok=True)
         pre = tdir / "task" / "before.txt"
@@ -1355,14 +1358,15 @@ def check_upload_delete(root: Path, work: Path) -> None:
         base = json.loads(cfgf.read_text(encoding="utf-8")) if cfgf.exists() else {}
         cfgf.write_text(json.dumps({**base, "tempDir": str(tdir)}), encoding="utf-8")
         try:
-            c6, o6 = s.ferry("-p", f"TEMPDELTEST:{pre.as_posix()} clean up", cwd=proj, env_extra=full)
+            c6, o6 = s.ferry("-p", f"TEMPDELTEST:{pre.as_posix()} FHOME:{s.home.as_posix()} clean up", cwd=proj, env_extra=full)
         finally:
             cfgf.write_text(json.dumps(base), encoding="utf-8")
-        ok6 = (c6 == 0 and "removed-temp" in o6 and not pre.exists() and "did not create in this session" in o6
-               and "removed-old" not in o6 and (proj / "old.txt").exists())
-        check("F123 全部放行下临时文件夹里的删除不问", ok6,
-              "全部放行时，删除临时文件夹（tempDir）里会话之前就有的文件直接执行；同样删项目里原来就有的文件仍然要确认"
-              if ok6 else f"bypass={c6} {o6[-500:]!r}")
+        ok6 = (c6 == 0 and "removed-temp" in o6 and not pre.exists() and "removed-old" in o6 and not (proj / "old.txt").exists()
+               and "removed-proj" not in o6 and "removed-home" not in o6 and "protects even in full access" in o6
+               and proj.exists() and s.home.exists())
+        check("F123 全部放行下删除不问，删项目文件夹本身才问", ok6,
+              "全部放行时，删除临时文件夹和项目里会话之前就有的文件直接执行，不问；删项目文件夹本身、FERRY_HOME 这类受保护的地方仍然要确认，没有终端时拦下，文件夹还在"
+              if ok6 else f"bypass={c6} {o6[-600:]!r}")
     finally:
         s.close()
 
@@ -2326,7 +2330,7 @@ def check_phone_remote(root: Path, work: Path) -> None:
     s = Stack(root / "phone", work, "agent", server_env={"FERRY_BARK_URL": "http://127.0.0.1:9100/bark",
                                                          "FERRY_PUBLIC_URL": "http://127.0.0.1:8787"})
     old = work / "phone-old.txt"
-    old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks, even in full access
+    old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks (default mode: what ferry did not make asks)
     seen = b""
     pid = 0
     try:
@@ -2675,7 +2679,7 @@ def check_feishu(root: Path, work: Path) -> None:
             return
         import pty
         import select
-        old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks, even in full access
+        old.write_text("made before ferry started\n", encoding="utf-8")  # so deleting it asks (default mode: what ferry did not make asks)
         s.home.mkdir(parents=True, exist_ok=True)
         (s.home / "config.json").write_text(json.dumps({"phoneApprovalSeconds": 1}), encoding="utf-8")
         env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40"}

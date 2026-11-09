@@ -70,8 +70,6 @@ const tempRules = (dir) => [
 	"# Where files go",
 	"- Deliverables go where the user said, else in the project. Downloads, temporary scripts and the files they read " +
 		`and write, and reference files you fetch only to read go in a subfolder of the temp folder named for the task: ${dir}${process.platform === "win32" ? "\\" : "/"}<task>. ` +
-		"In full access, deleting inside the temp folder does not ask. To clean up there, name the folder " +
-		`(Remove-Item -Recurse ${dir}${process.platform === "win32" ? "\\" : "/"}<task>) or cd into it first (a delete the shell cannot list, like a pipe or python -c, only goes ahead after that cd). ` +
 		"Delete what you no longer need when you are done.",
 ];
 

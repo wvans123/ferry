@@ -158,20 +158,23 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
 | 默认 | 问 | 只读命令（`git status`、`dir`、`rg`……）不问，其他问。能写文件或运行别的程序的写法不算只读，比如 `sort -o`、`rg --pre` |
 | 自动改文件 | 项目文件夹里的不问 | 同上 |
 | 只读规划 | 不允许 | 只允许只读命令 |
-| 全部放行 | 不问 | 不问，上传和删除除外（见下）；删除临时文件夹里的东西也不问 |
+| 全部放行 | 不问 | 不问，上传、碰到隐私的浏览器命令、删除几个受保护的地方除外（见下） |
 
 - agent 也可以提议切换，但每次都要你点头。任务大、要求不清楚或者有几种做法要权衡时，它会说明原因，问你要不要先进只读规划；选 No 就照原来的模式接着做。规划时它把计划写出来后，会问你能不能开始；选 Yes 回到进规划前的模式，选 No 留在规划里，你接着提意见。回去的模式不会比你原来的更宽：用 Shift+Tab 从"全部放行"一路切到规划的，回到"自动改文件"。`ferry -p` 和团队成员没人回答，agent 不会提议切换。
 - 确认框里可以选"以后都允许这类命令"，比如以 `npm test` 开头的命令。规则按项目记住。
 - 危险操作（删整个目录、`git push --force`、`git reset --hard`、`curl … | sh`……）除了"全部放行"以外都会问，并说明危险在哪。
 - 把本机文件或数据发到网络上的命令，每次都问，"全部放行"也问，已有的 `bash(curl*)` 这类规则也放不过去，确认框里没有"以后都允许"。比如 `curl -d/-F/-T/--json`、`wget --post-file`、PowerShell 的 `Invoke-WebRequest -InFile/-Body/-Method Post`、往远程主机的 `scp`/`rsync`/`sftp`/`ftp`。提示是"Careful: this sends data from this computer to 主机名"。普通下载（`curl -L -o 文件 网址`）和发给本机 `localhost` 的请求不算。
-- 删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`）：所有模式下规则都一样。要删的东西都是这次对话里 agent 自己新建的，就直接删，不问，不管在项目文件夹、%TEMP% 还是 D:\tmp。Ferry 会把路径列出来再判断：通配符（`rm tmp_*.txt`、`Remove-Item .\out\*.json`）展开成现在匹配到的文件，每一个都得是新建的，没有匹配就当什么都不删；`%TEMP%`、`%USERPROFILE%`、`%LOCALAPPDATA%`、`%APPDATA%`、`$env:TEMP`、`$TEMP`、`$HOME`、开头的 `~` 换成真实路径；`cd 目录 && rm x`（或用 `;`）按这个目录算。只要有一个不是新建的（原来就有的文件、不认识的变量、一个通配符匹配超过 2000 个文件、没法跟着走的 `cd`、`git clean`，以及列不出要删什么的写法，比如 `find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），就每次都问，也没有"以后都允许"。提示里会写明是哪一个目标不是新建的，或者什么没法列出来。删文件夹时，里面每个文件都得是新建的。重新打开 ferry 接着以前的对话（`ferry -c`、`/resume`），之前在这个对话里新建的文件仍然算。命令里除了删除还有别的操作时，其余部分按当前模式判断。
+- 删除文件（`rm`、`rmdir`/`rd /s`、`del`、`Remove-Item`）：全部放行以外的模式：要删的东西都是这次对话里 agent 自己新建的，就直接删，不问，不管在项目文件夹、%TEMP% 还是 D:\tmp。Ferry 会把路径列出来再判断：通配符（`rm tmp_*.txt`、`Remove-Item .\out\*.json`）展开成现在匹配到的文件，每一个都得是新建的，没有匹配就当什么都不删；`%TEMP%`、`%USERPROFILE%`、`%LOCALAPPDATA%`、`%APPDATA%`、`$env:TEMP`、`$TEMP`、`$HOME`、开头的 `~` 换成真实路径；`cd 目录 && rm x`（或用 `;`）按这个目录算。只要有一个不是新建的（原来就有的文件、不认识的变量、一个通配符匹配超过 2000 个文件、没法跟着走的 `cd`、`git clean`，以及列不出要删什么的写法，比如 `find -delete`、`xargs rm`、`rimraf`、`python -c`/`node -e` 里删文件），就每次都问，也没有"以后都允许"。提示里会写明是哪一个目标不是新建的，或者什么没法列出来。删文件夹时，里面每个文件都得是新建的。重新打开 ferry 接着以前的对话（`ferry -c`、`/resume`），之前在这个对话里新建的文件仍然算。命令里除了删除还有别的操作时，其余部分按当前模式判断。
 
-  全部放行下还有一个临时文件夹（设置 `tempDir`，下面设置表里有）。删除里面的东西不问，不管是不是这次对话新建的；agent 的下载、临时脚本、脚本读写的文件、只为了看一眼才取的参考文件，都放在它的子文件夹里。有四点要知道：
-  - 里面如果有符号链接或 junction，整个删除照样要问（`Remove-Item -Recurse` 碰到 junction 可能删到真实的文件夹）。
-  - 删临时文件夹本身要问，删它里面的子文件夹不问。
-  - 列不出要删什么的写法（`find -delete`、管道、`python -c`），只有同时满足下面四条才不问：命令里写出的每个绝对路径（`D:\...`、`D:/...`、Git Bash 的 `/d/...`、`~`、`%TEMP%` 这类认识的变量，引号里的也算）都在临时文件夹里；没有 `..`；没有不认识的变量（PowerShell 的 `$_`、`$PSItem`、`$true`、`$false`、`$null` 除外）；命令里的相对路径只可能指临时文件夹，也就是当前文件夹已经在临时文件夹里，或者命令开头是 `cd` 到临时文件夹里的某个文件夹（后面接 `&&` 或 `;`）。有一条不满足就照常问。
-  - 其他模式（默认、自动改文件）不变。上传、碰隐私的浏览器命令、禁止目录和 deny 规则也都不变。
-  - 临时文件夹里改文件，和在项目里一样，"自动改文件"不会再问"在项目外面"。计划模式仍然只读。子 agent 要你批准时，主窗口会留一行"哪个子 agent 要做什么、为什么"，你回答后再留一行结果（只显示，不发给模型）。
+  全部放行下删除不问，不管是不是这次对话新建的，原来就有的文件也直接删。只有要删的东西是下面这些地方，或者包含它们的文件夹时才问，也没有"以后都允许"：
+  - 整个盘或文件系统的根（`/`、`C:\`、`D:\`、网络共享的根）；
+  - 用户主目录，和主目录下面第一层的文件夹（桌面、文档、下载……，主目录里有什么就算什么）。`rm -rf ~/Documents` 会问，`rm -rf ~/Documents/x` 不问；
+  - Windows 的系统文件夹：`C:\Windows`、`Program Files`、`Program Files (x86)`、`ProgramData`，以及 `%APPDATA%`、`%LOCALAPPDATA%` 本身；
+  - `.ferry` 文件夹、临时文件夹本身、当前项目文件夹和被当作项目的其他文件夹，只是文件夹本身，里面的东西可以删。
+
+  比较时 Windows 不分大小写，`..`、`~`、`%TEMP%` 这类认识的变量、Git Bash 的 `/c/...` 路径和通配符都会先展开。通配符匹配到上面的地方也算（`rm -rf ~/*` 会问）。提示里会写明碰到的是哪一个，比如"deletes C:\Users\me\Documents, a folder directly in your home folder, which Ferry protects even in full access"。
+
+  列不出要删什么的写法（`find -delete`、管道、`python -c`、`git clean`、没法跟着走的 `cd`）在全部放行下也直接执行，除非：命令里任何地方写出了上面的地方（绝对路径、`~`、认识的变量、Git Bash 路径，引号里的代码也算），或者前面有 `cd`（不带路径的 `cd`、`cd ~`、`cd /`、`cd C:\`，`Set-Location` 也一样）到了上面的地方或者它的上一级。不认识的变量单独出现不再是问的理由。
 - 改项目文件夹以外的文件，总要先确认。
 - `.env`、`.ssh` 这类路径永远不碰（`blockedPaths` 可改）。read、write、edit 这类文件工具：路径里任何地方出现这个词就拦（比如 `Project Titan/notes.txt` 含 `titan`）。bash 命令：只看像路径的写法，`.env`、`config/.env`、`~/.ssh/id_rsa`、`secrets/key.pem`、`secrets.json` 这样名字是完整的一段或文件名的才拦；普通文字和代码不拦，比如引号里一段话里的 secrets、`fetch(url, {credentials:'include'})`、heredoc 里的正文。
 - 启动时用哪种模式：`ferry config set permissionMode acceptEdits`。
@@ -300,7 +303,7 @@ Ferry 自己再查一遍证据：原话必须真的在那张卡片上，并且�
 - 15 分钟内读过的网页不再重新下载。`web_fetch` 碰到 PDF、Word、Excel、PowerPoint 文件，存进临时文件夹里的 `downloads` 文件夹，agent 接着用 `office_read` 读。
 - `web_search`：由服务端去搜，工作电脑只把搜索词发过去。服务端同时问几家（Exa 的免费搜索，接了 DeepSeek 就加上 DeepSeek 搜索，管理页填了 Key 的搜索 API），合并去重，再读前 3 个网页，拿回带编号的结果：标题、地址、日期、摘要，以及从网页里原样摘出的相关段落。不用设置就能用，见 [SERVER.md](SERVER.md#网页搜索)。服务端搜索出错或什么都没搜到时自动改用 Bing 的结果页，并告诉 agent。agent 可以只搜某些网站（`allowed_domains`，比如 3gpp.org），或者排除某些网站（`blocked_domains`）。
 - 查资料的方法写在 agent 的系统提示里：换几种说法搜，中英文都试，限定权威网站；查会变的东西时搜索词里带上今年的年份；只看摘要不算数，要打开来源读，顺着链接找到原始出处；核对日期和版本，重要的事找第二个来源；回答末尾列出处。问题大的交给调研子 agent。没设搜索来源、Bing 的结果又不对题时，agent 会用本机浏览器打开搜索引擎去搜，和你自己搜一样。
-- 下载文件和在 Cursor 里一样直接交代：agent 用 `curl -L --retry 3 -C - -o` 下载（断了能续上），大文件放到后台下。放哪：你说了放哪就放哪；没说就放在合适的地方（和它相关的文件旁边，或者当前文件夹）；成品放你说的地方，没说就放项目里；下载、临时脚本和它读写的文件、只为了看一眼才取的参考文件，放进临时文件夹里按任务取名的子文件夹。用完自己清理：全部放行下，命令里写出临时文件夹里的路径，或者先 `cd` 进去，删除就不会问。命令也走公司代理，并且和 ferry 用同一份证书（`%USERPROFILE%\.ferry\ca-bundle.pem`，公司检查 HTTPS 用的证书也在里面）。下完它会确认拿到的不是网关的确认页。
+- 下载文件和在 Cursor 里一样直接交代：agent 用 `curl -L --retry 3 -C - -o` 下载（断了能续上），大文件放到后台下。放哪：你说了放哪就放哪；没说就放在合适的地方（和它相关的文件旁边，或者当前文件夹）；成品放你说的地方，没说就放项目里；下载、临时脚本和它读写的文件、只为了看一眼才取的参考文件，放进临时文件夹里按任务取名的子文件夹。用完自己清理。命令也走公司代理，并且和 ferry 用同一份证书（`%USERPROFILE%\.ferry\ca-bundle.pem`，公司检查 HTTPS 用的证书也在里面）。下完它会确认拿到的不是网关的确认页。
 - 不许打开的网站：`ferry config set blockedSites mail.corp.com,chat.corp.com,pan.corp.com`。这些网站和它们的子域名，`web_fetch`、浏览器和命令（比如 curl）都不打开，`web_fetch` 跳转过去的也拦下。
 
 ### 浏览器
@@ -411,7 +414,7 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | 名字 | 默认 | 作用 |
 |---|---|---|
 | `permissionMode` | `default` | 启动时的权限模式：`default` / `acceptEdits` / `plan` / `bypass` |
-| `tempDir` | 空 | 临时文件夹，放下载、临时脚本和它们读写的文件。空就是自动：Windows 上有 D 盘用 `D:\ferry\temp`，否则 `%USERPROFILE%\.ferry\temp`；别的系统是 `~/.ferry/temp`。要改就写完整路径。盘符根目录、用户主目录、`.ferry` 文件夹、包含当前项目的文件夹不能用，会改回默认并提示一次。全部放行下，删除里面的东西不问 |
+| `tempDir` | 空 | 临时文件夹，放下载、临时脚本和它们读写的文件。空就是自动：Windows 上有 D 盘用 `D:\ferry\temp`，否则 `%USERPROFILE%\.ferry\temp`；别的系统是 `~/.ferry/temp`。要改就写完整路径。盘符根目录、用户主目录、`.ferry` 文件夹、包含当前项目的文件夹不能用，会改回默认并提示一次。 |
 | `thinking` | `medium` | Claude 和 GPT 想多久再回答：`low` / `medium` / `high` / `xhigh`。越高越适合难题，也越慢越贵 |
 | `memory` | `true` | 跨对话的记忆 |
 | `memoryReview` | `true` | 新开对话时，从上一段对话里挑记忆候选，你确认了才记；该跑 `/memory distill` 时提示一行 |
