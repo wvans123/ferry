@@ -1,8 +1,8 @@
 // node --test client/test
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-perm-"));
@@ -387,5 +387,24 @@ test("reading programs that write a file or run another program through an optio
 	}
 	for (const c of ["sort -u a.txt", "sort -n -k2 a", "uniq -c a", "tree -L 2", "git log --oneline", "rg --pre-glob '*.gz' foo", "rg -n foo"]) {
 		assert.equal(P.isReadOnlyCommand(c), true, c);
+	}
+});
+
+test("tempDirOf: the default, a chosen folder, and values that are refused", async () => {
+	const { tempDirOf, FERRY_HOME } = await import("../lib/config.mjs");
+	const quiet = process.stderr.write.bind(process.stderr);
+	process.stderr.write = () => true; // the warning is not the test's output
+	try {
+		const proj = mkdtempSync(join(tmpdir(), "ferry-tproj-"));
+		assert.equal(tempDirOf({}, proj, { win: false, exists: () => false }), join(FERRY_HOME, "temp"));
+		assert.equal(tempDirOf({}, proj, { win: true, exists: (p) => p === "D:\\" }), "D:\\ferry\\temp");
+		assert.equal(tempDirOf({}, proj, { win: true, exists: () => false }), join(FERRY_HOME, "temp"));
+		const mine = join(mkdtempSync(join(tmpdir(), "ferry-tmine-")), "scratch");
+		assert.equal(tempDirOf({ tempDir: mine }, proj), mine);
+		assert.ok(existsSync(mine)); // created
+		const dflt = join(FERRY_HOME, "temp");
+		for (const bad of ["/", FERRY_HOME, homedir(), dirname(proj), proj, "relative/dir"]) assert.equal(tempDirOf({ tempDir: bad }, proj), dflt, bad);
+	} finally {
+		process.stderr.write = quiet;
 	}
 });
