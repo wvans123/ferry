@@ -6,6 +6,9 @@
 // When a job ends you get a notice and the agent is told. In the window it takes the result up at once, like Cursor and
 // Claude Code: a turn of its own when it was idle, its next step when it is working. A job you stopped, ferry -p, or
 // wakeOnJobEnd = false: it is told with your next message. Jobs stop when ferry exits.
+// job_start with watch: true is Claude Code's Monitor: the agent writes a small script that tails a log, polls a status
+// or watches a folder, and every line it prints reaches the agent the same way a finished job does (lines printed
+// within two seconds come as one message), so it reacts while the script keeps running.
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,13 +19,17 @@ const jobs = new Map(); // id -> job, shared by the main agent and its subagents
 let nextId = 1;
 let hooks = { ui: null, wake: false, tell: () => {} };
 const WAKE_NOTE = "\n(From Ferry, not the user: use the result now; if nothing else needs doing, tell the user briefly what came of it.)";
+const WATCH_NOTE = "\n(From Ferry, not the user: output from a job you started with watch; it is still running. Act on it when " +
+	"it calls for action; otherwise answer in one short line.)";
 const DIR = join(FERRY_HOME, "jobs", String(process.pid));
+/** A watched job's lines are delivered together after this long; a test shortens it. */
+export const watchTuning = { windowMs: 2000, maxLines: 40, maxBytes: 4000 };
 
 // A subagent's job gets from subagent.mjs: agent (its name), steps (its tool calls so far), transcript (file path).
 
 /** The "Running" line for a job, cut to `width`: a subagent shows what it is doing now. */
 export function widgetLine(j, width = 80) {
-	const line = j.kind !== "subagent" ? `  #${j.id} command: ${j.name}`
+	const line = j.kind !== "subagent" ? `  #${j.id} ${j.watch ? "watch" : "command"}: ${j.name}`
 		: j.steps?.length && j.agent ? `  #${j.id} ${j.agent}: ${j.steps.at(-1)}` : `  #${j.id} subagent: ${j.name}`;
 	return line.length > width ? `${line.slice(0, width - 3)}...` : line;
 }
@@ -61,7 +68,8 @@ function finished(job) {
 	const how = job.status === "stopped" ? "was stopped" : job.kind === "subagent" ? (job.status === "done" ? "finished" : "failed")
 		: `exited with code ${job.code}`;
 	hooks.ui?.notify(`${what} ${how}. /tasks to see it.`, job.status === "done" ? "info" : "warning");
-	const body = job.kind === "subagent" ? (job.report ?? job.error ?? "") : tailOf(output(job), 30);
+	// a watched job's lines were delivered as they came; only the end is news
+	const body = job.kind === "subagent" ? (job.report ?? job.error ?? "") : job.watch ? "" : tailOf(output(job), 30);
 	const wake = hooks.wake && job.status !== "stopped";
 	hooks.tell(`${what} ${how}.${body ? `\n${job.kind === "subagent" ? "Report" : "Last output"}:\n${body}` : ""}${wake ? WAKE_NOTE : ""}`, wake);
 }
@@ -92,19 +100,43 @@ export function trackSubagent(name) {
 	};
 }
 
-/** Start a shell command in the background. */
-export function startCommand(command, name, cwd) {
+/** The lines a watched job printed since the last delivery go to the agent, cut to maxLines / maxBytes. */
+function deliverWatched(job) {
+	clearTimeout(job.watchTimer);
+	job.watchTimer = null;
+	const text = job.pending.replace(/\r/g, "");
+	job.pending = "";
+	if (!text.trim()) return;
+	let lines = text.replace(/\n$/, "").split("\n");
+	let more = "";
+	if (lines.length > watchTuning.maxLines) {
+		more = `\n(... ${lines.length - watchTuning.maxLines} more lines; job_output ${job.id} shows them all)`;
+		lines = lines.slice(0, watchTuning.maxLines);
+	}
+	let body = lines.join("\n");
+	if (body.length > watchTuning.maxBytes) body = `${body.slice(0, watchTuning.maxBytes)}\n(... cut; job_output ${job.id} shows it all)`;
+	hooks.tell(`Watched job ${job.id} (${job.name}) printed:\n${body}${more}${hooks.wake ? WATCH_NOTE : ""}`, hooks.wake);
+}
+
+/** Start a shell command in the background; watch: every line it prints goes to the agent as it appears. */
+export function startCommand(command, name, cwd, { watch = false } = {}) {
 	mkdirSync(DIR, { recursive: true });
 	const id = nextId++;
 	const bash = findBash();
 	const [prog, args] = bash ? [bash, ["-c", command]]
 		: ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${command}`]];
 	const job = { id, kind: "command", name: name || command.slice(0, 40), command, status: "running", started: Date.now(),
-		log: join(DIR, `${id}.log`) };
+		log: join(DIR, `${id}.log`), watch, pending: "", watchTimer: null };
 	appendFileSync(job.log, "");
 	const child = spawn(prog, args, { cwd, env: process.env, windowsHide: true, detached: process.platform !== "win32" });
 	job.child = child;
-	const write = (d) => appendFileSync(job.log, d);
+	const write = (d) => {
+		appendFileSync(job.log, d);
+		if (!watch) return;
+		job.pending += String(d);
+		// the first line of a batch starts the clock; whatever arrives within the window comes along
+		if (!job.watchTimer && job.pending.includes("\n")) job.watchTimer = setTimeout(() => deliverWatched(job), watchTuning.windowMs);
+	};
 	child.stdout.on("data", write);
 	child.stderr.on("data", write);
 	child.on("error", (e) => write(`\n${e.message}\n`));
@@ -113,6 +145,8 @@ export function startCommand(command, name, cwd) {
 		job.code = code;
 		job.ended = Date.now();
 		job.child = null;
+		if (watch && job.status !== "stopped") deliverWatched(job);
+		else if (watch) clearTimeout(job.watchTimer);
 		finished(job);
 	});
 	jobs.set(id, job);
@@ -159,7 +193,7 @@ export function stopJob(job) {
 
 const age = (job) => `${Math.round(((job.ended ?? Date.now()) - job.started) / 1000)}s`;
 export const listJobs = () => [...jobs.values()];
-export const describeJob = (j) => `#${j.id} ${j.kind === "subagent" ? (j.foreground ? "subagent" : "background subagent") : "background command"} ` +
+export const describeJob = (j) => `#${j.id} ${j.kind === "subagent" ? (j.foreground ? "subagent" : "background subagent") : j.watch ? "watched command" : "background command"} ` +
 	`${j.status} ${age(j)}  ${j.name}`;
 
 export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
@@ -190,17 +224,27 @@ export function createJobs(cfg = {}, deps = { todoText: () => "" }) {
 			label: "Background job",
 			description: "Run a long-lived command in the background (a dev server, a watcher, a long build or test run) and " +
 				"return at once. Check it with job_output, stop it with job_stop. Use the normal shell tool for commands that " +
-				"finish quickly.",
-			promptSnippet: "Run a long command in the background",
+				"finish quickly. To watch something (tail a log, poll a status or a folder in a loop and print only what " +
+				"changed), write that small script and start it with watch: true: each line it prints is delivered to you as it " +
+				"appears, so you react without polling it yourself.",
+			promptSnippet: "Run a long command in the background, or watch something",
 			parameters: Type.Object({
 				command: Type.String({ description: "The command, as for the shell tool" }),
 				name: Type.Optional(Type.String({ description: "A short name, e.g. dev server" })),
+				watch: Type.Optional(Type.Boolean({ description: "Deliver every line it prints to you as it appears (lines printed " +
+					"within two seconds come together). For scripts that print only on changes, not for noisy output." })),
 			}),
 			async execute(_id, p, _signal, _onUpdate, ctx) {
-				const job = startCommand(p.command, p.name, ctx?.cwd ?? process.cwd());
+				const job = startCommand(p.command, p.name, ctx?.cwd ?? process.cwd(), { watch: p.watch === true });
 				await new Promise((r) => setTimeout(r, 1500)); // the first lines usually say whether it started
+				const first = tailOf(output(job), 15);
+				if (job.watch) { // the lines shown here need not come again as a watch message
+					clearTimeout(job.watchTimer);
+					job.watchTimer = null;
+					job.pending = "";
+				}
 				return {
-					content: [{ type: "text", text: `Started job ${job.id} (${job.name}), ${job.status}.\n${tailOf(output(job), 15) || "(no output yet)"}` }],
+					content: [{ type: "text", text: `Started ${job.watch ? "watch " : ""}job ${job.id} (${job.name}), ${job.status}.\n${first || "(no output yet)"}` }],
 					details: { id: job.id },
 				};
 			},

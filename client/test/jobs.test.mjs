@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-jobs-home-"));
-const { createJobs, startCommand, startSubagentJob, stopJob } = await import("../lib/jobs.mjs");
+const { createJobs, describeJob, startCommand, startSubagentJob, stopJob, watchTuning } = await import("../lib/jobs.mjs");
 
 /** Loads the jobs module into a stand-in for pi; returns the messages it sends. */
 function load(cfg, hasUI = true) {
@@ -55,4 +55,51 @@ test("a job you stopped, wakeOnJobEnd = false, or no window: the agent hears wit
 		await ended(quick);
 		assert.deepEqual(sent.at(-1).options, { deliverAs: "nextTurn" });
 	}
+});
+
+test("a watched job: each batch of lines reaches the agent while it runs; the end brings no repeat", async () => {
+	watchTuning.windowMs = 150;
+	const sent = load({});
+	const job = startCommand("echo one; echo two; sleep 0.6; echo three; sleep 0.6; printf 'four\\nfive'", "poller", process.cwd(), { watch: true });
+	await ended(job);
+	await new Promise((r) => setTimeout(r, 50));
+	const watched = sent.filter((m) => m.text.startsWith("Watched job"));
+	assert.equal(watched.length, 3, JSON.stringify(sent.map((m) => m.text)));
+	assert.match(watched[0].text, /\(poller\) printed:\none\ntwo\n\(From Ferry, not the user: output from a job you started with watch/);
+	assert.equal(watched[1].text.split("\n")[1], "three");
+	assert.match(watched[2].text, /printed:\nfour\nfive\n/); // the last line without a newline is delivered at the end
+	assert.deepEqual(watched[0].options, { triggerTurn: true, deliverAs: "steer" });
+	const end = sent.at(-1).text;
+	assert.match(end, /Background job \d+ \(poller\) exited with code 0\./);
+	assert.doesNotMatch(end, /Last output/); // the lines were delivered already
+	assert.match(describeJob(job), /watched command done/);
+	watchTuning.windowMs = 2000;
+});
+
+test("a watched job that floods: one message per window, cut to maxLines, pointing at job_output", async () => {
+	watchTuning.windowMs = 150;
+	watchTuning.maxLines = 5;
+	const sent = load({});
+	const job = startCommand("for i in $(seq 1 12); do echo line-$i; done", "flood", process.cwd(), { watch: true });
+	await ended(job);
+	await new Promise((r) => setTimeout(r, 50));
+	const watched = sent.filter((m) => m.text.startsWith("Watched job"));
+	assert.equal(watched.length, 1);
+	assert.match(watched[0].text, /line-1\nline-2\nline-3\nline-4\nline-5\n\(\.\.\. 7 more lines; job_output \d+ shows them all\)/);
+	watchTuning.windowMs = 2000;
+	watchTuning.maxLines = 40;
+});
+
+test("a stopped watch job delivers nothing more", async () => {
+	watchTuning.windowMs = 150;
+	const sent = load({});
+	const job = startCommand("echo early; sleep 5; echo late", "stopper", process.cwd(), { watch: true });
+	await new Promise((r) => setTimeout(r, 400));
+	stopJob(job);
+	await ended(job);
+	const watched = sent.filter((m) => m.text.startsWith("Watched job"));
+	assert.equal(watched.length, 1);
+	assert.match(watched[0].text, /early/);
+	assert.match(sent.at(-1).text, /was stopped/);
+	watchTuning.windowMs = 2000;
 });
