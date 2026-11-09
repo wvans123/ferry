@@ -9,7 +9,7 @@ const P = await import("../lib/permissions.mjs");
 const none = { allow: [], ask: [], deny: [] };
 const fwd = (p) => p.replaceAll("\\", "/"); // a bash command takes C:/x on Windows
 
-test("in every mode, deleting what this session made never asks, wherever it is; anything else always asks", () => {
+test("deleting what this session made never asks, wherever it is; in the other modes (not full access) anything else always asks", () => {
 	const proj = mkdtempSync(join(tmpdir(), "ferry-selfdel-"));
 	const outside = mkdtempSync(join(tmpdir(), "ferry-selfdel-out-"));
 	writeFileSync(join(proj, "old.txt"), "x");
@@ -26,6 +26,10 @@ test("in every mode, deleting what this session made never asks, wherever it is;
 		assert.equal(v(`rm -f ${fwd(join(outside, "mine.txt"))}`, mode).action, "allow", mode); // outside it, e.g. a temp folder
 		assert.equal(v("rm mine.txt && echo done", mode).action, "allow", mode);
 		for (const c of ["rm old.txt", `rm ${fwd(join(outside, "old.txt"))}`, "rm mine.txt old.txt", "rm -rf *.txt", "find . -delete"]) {
+			if (mode === "bypass") { // full access: old files may go too (permissions.test.mjs covers what still asks)
+				assert.equal(v(c, mode).action, "allow", `${mode}: ${c}`);
+				continue;
+			}
 			const r = v(c, mode);
 			assert.equal(r.action, "ask", `${mode}: ${c}`);
 			assert.ok(r.always, `${mode}: ${c}`); // no "always allow"

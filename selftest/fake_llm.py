@@ -274,7 +274,7 @@ def decide_agent(msgs):
         return ("text", "PARWRITTEN: " + text_of(tools[-1])[:600].replace("\n", " | "))
     if "PHONEAPPROVAL" in first:  # a delete that asks every time, answered on the phone page
         if not tools:
-            return ("tool", "bash", {"command": "rm phone-old.txt && echo removed-by-phone"})
+            return ("tool", "bash", {"command": "rm -rf " + first.split("PHONEAPPROVAL:")[1].split()[0] + " && echo removed-by-phone"})
         return ("text", "PHONEAPPROVED: " + text_of(tools[-1])[:160].replace("\n", " "))
     if "PHONEQUESTION" in first:  # ask_user, answered on the phone page
         if not tools:
@@ -539,9 +539,11 @@ def decide_agent(msgs):
         if len(tools) == 1:
             return ("tool", "bash", {"command": "curl -sSL -o got.zip http://127.0.0.1:9100/ftp/23501-j40.zip && echo downloaded"})
         return ("text", "UPLOAD: " + text_of(tools[0])[:300].replace("\n", " ") + " || " + text_of(tools[1])[:80])
-    if "TEMPDELTEST" in first:  # in full access: delete a file that was there before inside the temp folder (no prompt), then one in the project (asks)
+    if "TEMPDELTEST" in first:  # in full access: delete old files in the temp folder and the project (no prompt), then the project folder itself and FERRY_HOME (ask)
         tmpf = first.split("TEMPDELTEST:")[1].split()[0]
-        steps = [("bash", {"command": f"rm {tmpf} && echo removed-temp"}), ("bash", {"command": "rm old.txt && echo removed-old"})]
+        fhome = first.split("FHOME:")[1].split()[0]
+        steps = [("bash", {"command": f"rm {tmpf} && echo removed-temp"}), ("bash", {"command": "rm old.txt && echo removed-old"}),
+                 ("bash", {"command": "rm -rf . && echo removed-proj"}), ("bash", {"command": f"rm -rf {fhome} && echo removed-home"})]
         if len(tools) < len(steps):
             return ("tool", steps[len(tools)][0], steps[len(tools)][1])
         return ("text", "TEMPDEL: " + " || ".join(text_of(t)[:160].replace("\n", " ") for t in tools))

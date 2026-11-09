@@ -5,19 +5,21 @@
 //   default     ask before changing files and before commands that are not read-only
 //   acceptEdits file changes inside the project folder go ahead; commands still ask
 //   plan        read-only: reading, searching and read-only commands only; the agent presents a plan
-//   bypass      nothing asks but uploads and deletes of what this session did not make (blocked paths, deny rules apply)
+//   bypass      full access: nothing asks but uploads, private browser commands and deletes of a few protected places
+//               (a drive root, the home folder and the folders directly in it, system folders, the project folder itself)
+//               (blocked paths and deny rules still apply)
 //
 // Rules: "allow", "ask" and "deny" lists of entries like  bash(git log*)  edit(src/**)  powershell  web_fetch
 //   user level      <FERRY_HOME>/permissions.json                      (every project)
 //   project, yours  <FERRY_HOME>/projects/<folder>-<hash>/permissions.json   ("always allow" answers go here)
 //   project, team   <project>/.ferry/permissions.json                  (read only; can be committed to the repo)
 // deny beats ask beats allow. Read-only commands (git status, dir, ls, rg...) are allowed without a rule;
-// dangerous ones (rm -rf, git push --force, ...) always ask unless the mode is bypass. Uploads ask in every mode; in
+// dangerous ones (rm -rf, git push --force, ...) always ask unless the mode is bypass. Uploads ask in every mode; outside
 // bypass a delete goes ahead only when everything it deletes was made in this ferry session.
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { FERRY_HOME } from "./config.mjs";
 
 export const MODES = ["default", "acceptEdits", "plan", "bypass"];
@@ -25,7 +27,7 @@ export const MODE_LABEL = {
 	default: "ask before edits and commands",
 	acceptEdits: "auto-edit: file changes go ahead",
 	plan: "plan: read-only",
-	bypass: "full access: nothing asks",
+	bypass: "full access: only uploads and deleting protected places ask",
 };
 const SHELL = new Set(["bash", "powershell"]);
 const EDIT = new Set(["edit", "write", "office_edit", "office_create", "image_create"]);
@@ -414,8 +416,8 @@ const under = (dir, p, same = false) => {
 
 /** True when ferry made this path in this session (born after it started, or created by a file tool) and, for a
  *  folder, everything in it. A path that does not exist yet can only be made by this command. Symlinks: never.
- *  temp: the temp folder; in full access what is inside it counts too, whenever it was made (still never a symlink). */
-export function madeThisSession(p, session, budget = { n: 5000 }, temp = "") {
+ */
+export function madeThisSession(p, session, budget = { n: 5000 }) {
 	if (--budget.n < 0) return false;
 	let st;
 	try {
@@ -425,103 +427,173 @@ export function madeThisSession(p, session, budget = { n: 5000 }, temp = "") {
 	}
 	if (st.isSymbolicLink()) return false;
 	// no birth time (some Linux file systems): only what the file tools noted counts, since ctime changes on every edit
-	const inTemp = temp && under(temp, p);
-	if (!inTemp && !session.made.has(keyOf(p)) && !(st.birthtimeMs > 0 && st.birthtimeMs >= session.start)) return false;
-	return !st.isDirectory() || readdirSync(p).every((e) => madeThisSession(join(p, e), session, budget, temp));
+	if (!session.made.has(keyOf(p)) && !(st.birthtimeMs > 0 && st.birthtimeMs >= session.start)) return false;
+	return !st.isDirectory() || readdirSync(p).every((e) => madeThisSession(join(p, e), session, budget));
 }
 
 const PS_VARS = /\$(_|psitem|true|false|null)\b/gi;
-const CD_FIRST = /^\s*(?:cd|chdir|pushd|set-location|sl|push-location)\s+(?:(?:\/d|-path|-literalpath)\s+)?("[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;|\r?\n)/i;
 const CMD_SWITCH = /^(del|erase|rd|rmdir|cmd|cd|chdir|pushd)$/;
 
-/**
- * Full access only: a delete Ferry cannot list (a pipe, python -c, find -delete) may still go ahead without asking when
- * it can only touch the temp folder. All of these must hold: every absolute path in the command (Windows X:\ or X:/,
- * Git Bash /d/..., ~ and the variables expandVars knows, also inside quoted strings) is inside the temp folder; no ..
- * segment; no variable except the known ones and PowerShell's $_ $PSItem $true $false $null; relative paths can only
- * mean the temp folder: the session folder is inside it, or the command starts with a cd to a folder inside it.
- */
-export function unlistableDeleteInTemp(cmd, cwd, temp, env = process.env) {
-	if (!temp) return false;
-	const text = String(cmd ?? "");
-	if (/\$\(|`/.test(text)) return false;
-	if (/(^|[\\/'"\s=(,:])\.\.($|[\\/'"\s);,|&])/.test(text)) return false;
-	const inTemp = (p) => under(temp, p, true);
-	const cd = CD_FIRST.exec(text);
-	let relativeOk = inTemp(cwd);
-	if (!relativeOk && cd) {
-		const d = expandVars(cd[1].replace(/^["']|["']$/g, ""), env);
-		relativeOk = d !== null && inTemp(resolve(cwd, gitBashPath(d)));
+// ---------- full access: the few places a delete still asks about ----------
+
+const isRoot = (p) => {
+	const r = resolve(p);
+	return parse(r).root === r; // /, C:\, \\server\share\
+};
+const dirsIn = (dir) => {
+	try {
+		return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => join(dir, e.name));
+	} catch {
+		return [];
 	}
-	if (!relativeOk) return false;
-	// every cd names exactly one path that is not "-"; a bare cd (home), cd -, popd and Pop-Location can leave the folder
+};
+
+/**
+ * Full access: the places a delete asks about, as [{ path, label, project }]. Filesystem and drive roots are checked
+ * separately (isRoot). Here: the home folder and the folders directly in it, on Windows the system folders, FERRY_HOME,
+ * the temp folder, the project folder and every folder treated like the project. The folders themselves, not their contents.
+ */
+export function protectedPlaces({ cwd, extraDirs = [], tempDir = "", env = process.env, win = WIN } = {}) {
+	const out = [];
+	const add = (path, label, project = false) => path && out.push({ path: resolve(path), label, project });
+	const home = homedir();
+	add(home, "your home folder");
+	for (const d of dirsIn(home)) add(d, "a folder directly in your home folder");
+	if (win) {
+		const e = (n) => Object.entries(env).find(([k]) => k.toUpperCase() === n.toUpperCase())?.[1];
+		const sys = [e("SystemRoot") ?? "C:\\Windows", e("ProgramFiles") ?? "C:\\Program Files", e("ProgramFiles(x86)") ?? "C:\\Program Files (x86)",
+			e("ProgramData") ?? "C:\\ProgramData", e("APPDATA"), e("LOCALAPPDATA")];
+		for (const p of sys) add(p, "a Windows system folder");
+	}
+	add(FERRY_HOME, "Ferry's own folder");
+	add(tempDir, "Ferry's temp folder", true);
+	add(cwd, "the project folder", true);
+	for (const d of extraDirs) add(d, "a folder treated like the project", true);
+	return out;
+}
+
+/** What a path (written absolute, may hold wildcards) would delete that is protected: { path, place } or null.
+ *  Equal to a protected place, or a folder that contains one. */
+function protectedHit(abs, places) {
+	const test = (p) => {
+		if (isRoot(p)) return { path: resolve(p), label: "a drive or filesystem root", self: true };
+		for (const pl of places) if (under(p, pl.path, true)) return { ...pl, self: keyOf(p) === keyOf(pl.path) };
+		return null;
+	};
+	if (!hasGlob(abs)) return test(abs);
+	// a wildcard right under a protected place (not a project folder) can empty it: ask whatever it matches
+	const head = abs.split(/[\\/]+/);
+	const at = head.findIndex(hasGlob);
+	let prefix = head.slice(0, at).join(sep) || sep;
+	if (/^[a-z]:$/i.test(prefix)) prefix += sep;
+	const same = (a, b) => keyOf(a) === keyOf(b);
+	if (!places.some((pl) => pl.project && same(prefix, pl.path))) {
+		if (isRoot(prefix)) return { path: resolve(prefix), label: "a drive or filesystem root", self: true };
+		const pl = places.find((x) => !x.project && same(prefix, x.path));
+		if (pl) return { ...pl, self: true };
+	}
+	const found = globMatches(abs);
+	if (found) {
+		for (const m of found) {
+			const h = test(m);
+			if (h) return h;
+		}
+		return null;
+	}
+	// too many matches to list: a wildcard under the folder before it may reach a protected place
+	for (const pl of places) if (!same(prefix, pl.path) && under(prefix, pl.path, true)) return { ...pl, self: false };
+	return null;
+}
+
+const protectedWhy = (what, h) => `${what}${h.self ? "" : ` (it contains ${h.path})`}, ${h.label}, which Ferry protects even in full access`;
+
+/** Full access: why a delete still asks (it hits a protected place), or "". A delete Ferry cannot list goes ahead unless
+ *  the command names a protected place as a path anywhere, or a cd to one comes first. */
+export function protectedDeleteOf(cmd, cwd, places, env = process.env) {
+	const r = deleteTargetsEx(cmd);
+	if (!r.why) {
+		let unknown = false;
+		for (const t of r.targets) {
+			const e = expandTarget(t, cwd, env);
+			if (e.why && /does not know/.test(e.why)) {
+				unknown = true;
+				continue;
+			}
+			const v = expandVars(t, env);
+			if (v !== null && hasGlob(v)) { // judged as a pattern: what it matches, and the folder it sits in
+				const h = protectedHit(resolve(cwd, gitBashPath(v)), places);
+				if (h) return protectedWhy(`deletes ${t}`, h);
+				continue;
+			}
+			for (const abs of e.paths) {
+				const h = protectedHit(abs, places);
+				if (h) return protectedWhy(`deletes ${abs === resolve(cwd, t) || t === abs ? t : `${abs} (from ${t})`}`, h);
+			}
+		}
+		if (!unknown) return "";
+	}
+	return unlistableHit(cmd, cwd, places, env);
+}
+
+function unlistableHit(cmd, cwd, places, env) {
+	const text = String(cmd ?? "");
+	const home = homedir();
+	// a cd (bare cd = home) to a protected place, or to a folder above one, before the delete
+	let at = cwd;
+	const cdTokens = new Set(); // judged by the cd rule, not again as a path below
 	for (const seg of splitCommand(text)) {
 		const w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
 		const c = prog(w[0] ?? "");
-		if (c === "popd" || c === "pop-location") return false;
+		if (c === "popd" || c === "pop-location") continue;
 		if (!CD.test(c)) continue;
-		const dirs = w.slice(1).filter((x) => !/^-(path|literalpath|p|l)$/i.test(x) && !/^\/d$/i.test(x));
-		if (dirs.length !== 1 || dirs[0] === "-") return false;
+		const dirs = w.slice(1).filter((x) => !/^-(path|literalpath|p|l|d)$/i.test(x) && !/^\/d$/i.test(x));
+		let dest = null;
+		for (const x of dirs) cdTokens.add(x);
+		if (!dirs.length) dest = home;
+		else if (dirs.length === 1 && dirs[0] !== "-") {
+			const v = expandVars(dirs[0], env);
+			if (v !== null) dest = resolve(at, gitBashPath(v));
+		}
+		if (dest === null) continue;
+		at = dest;
+		if (isRoot(dest)) return `deletes something Ferry cannot list after changing folder to ${dest}, a drive or filesystem root, which Ferry protects even in full access`;
+		for (const pl of places) {
+			// the project folders may be cleared from inside; a folder above them or a place outside them may not
+			const hit = pl.project ? under(dest, pl.path) : under(dest, pl.path, true);
+			if (hit) return `deletes something Ferry cannot list after changing folder to ${dest}, ${keyOf(dest) === keyOf(pl.path) ? pl.label : `a folder that contains ${pl.path}`}, which Ferry protects even in full access`;
+		}
 	}
-	// cmd's own switches (del /s /q, rd /s, cmd /c) are not paths
-	const switches = new Set();
+	// a path anywhere in the command (also inside quoted code)
+	const switches = new Set(); // cmd's own switches (del /s /q, rd /s, cmd /c) are not paths
 	for (const seg of splitCommand(text)) {
 		const w = words(seg);
 		if (CMD_SWITCH.test(prog(w[0] ?? ""))) for (const x of w.slice(1)) if (/^\/[a-z](:\S*)?$/i.test(x)) switches.add(x);
 	}
-	// collapse doubled backslashes (a Python or JSON string) so D:\\ferry\\temp reads as D:\ferry\temp
-	const roots = []; // folders the command can reach: relative paths start in them, absolute ones are named
-	if (inTemp(cwd)) roots.push(cwd);
-	if (cd) {
-		const d = expandVars(cd[1].replace(/^["']|["']$/g, ""), env);
-		if (d !== null) roots.push(resolve(cwd, gitBashPath(d)));
-	}
+	// doubled backslashes (a Python or JSON string) read as single ones
 	const flat = text.replace(PS_VARS, "").replace(/\\{2,}/g, "\\");
 	for (const tok of flat.split(/[\s"'`=(),;<>|&]+/)) {
-		if (!tok || switches.has(tok)) continue;
+		if (!tok || switches.has(tok) || cdTokens.has(tok)) continue;
 		const v = expandVars(tok, env);
-		if (v === null) return false;
+		if (v === null) continue; // an unknown variable alone is not a reason to ask
 		const t = gitBashPath(v);
-		const drive = /^[a-z]:([\\/]|$)/i.test(t);
-		if (drive && !WIN) return false;
+		const drive = /^[a-z]:[\\/]/i.test(t);
+		if (drive && !WIN) continue;
 		if (!drive && !/^[\\/]/.test(t)) continue; // a relative path or a plain word
-		if (!inTemp(resolve(t))) return false;
-		roots.push(resolve(t));
+		const h = protectedHit(resolve(t), places);
+		if (h) return protectedWhy(`deletes something Ferry cannot list and names ${t}`, h);
 	}
-	// the delete cannot be listed, so look at what is there: a link (symlink, junction) could lead out of the folder
-	const budget = { n: 20000 };
-	return roots.every((r) => noLinksBelow(r, budget));
+	return "";
 }
 
-/** True when nothing at or below p is a symlink or junction (links are not followed); false when the walk is too big. */
-function noLinksBelow(p, budget) {
-	if (--budget.n < 0) return false;
-	let st;
-	try {
-		st = lstatSync(p);
-	} catch {
-		return true; // not there
-	}
-	if (st.isSymbolicLink()) return false;
-	if (!st.isDirectory()) return true;
-	try {
-		return readdirSync(p).every((e) => noLinksBelow(join(p, e), budget));
-	} catch {
-		return false;
-	}
-}
-
-/** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made.
- *  temp: the temp folder, in full access only (what is inside it may go, and so may a delete that can only touch it). */
-export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }, env = process.env, temp = "") {
+/** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made. */
+export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }, env = process.env) {
 	const r = deleteTargetsEx(cmd);
-	if (r.why) return unlistableDeleteInTemp(cmd, cwd, temp, env) ? "" : `deletes something Ferry cannot list: ${r.why}`;
+	if (r.why) return `deletes something Ferry cannot list: ${r.why}`;
 	for (const t of r.targets) {
 		const e = expandTarget(t, cwd, env);
-		if (e.why) return unlistableDeleteInTemp(cmd, cwd, temp, env) ? "" : `deletes something Ferry cannot list: ${e.why}`;
+		if (e.why) return `deletes something Ferry cannot list: ${e.why}`;
 		for (const abs of e.paths) {
-			if (temp && under(temp, abs, true) && !under(temp, abs)) return `deletes ${t}, the temp folder itself (name a folder inside it)`;
-			if (!madeThisSession(abs, session, { n: 5000 }, temp)) return `deletes ${abs === resolve(cwd, t) || t === abs ? t : `${abs} (from ${t})`}, which Ferry did not create in this session`;
+			if (!madeThisSession(abs, session, { n: 5000 })) return `deletes ${abs === resolve(cwd, t) || t === abs ? t : `${abs} (from ${t})`}, which Ferry did not create in this session`;
 		}
 	}
 	return "";
@@ -747,13 +819,13 @@ export function decide({ tool, input = {}, mode, cwd, rules, blockedPaths = [], 
 	// asked every time, even in full access and over allow rules; a "danger" prompt has no "always allow"
 	const always = shell ? browserPrivacyOf(cmd) || uploadOf(cmd) : "";
 	if (always) return { action: "ask", danger: always, segments, always: true };
-	// Deletes, in every mode: what Ferry made in this session goes ahead without asking, wherever it is (project, temp
-	// folder, any drive); anything else, or anything that cannot be listed, asks every time (no "always allow").
-	// Full access also lets through what is inside tempDir (see unlistableDeleteInTemp for deletes that cannot be listed)
+	// Deletes. Full access: they go ahead, except those that hit a protected place (protectedPlaces). Other modes: what
+	// Ferry made in this session goes ahead wherever it is; anything else, or anything that cannot be listed, asks.
+	// Neither has an "always allow".
 	if (shell) {
 		const t = deleteTargets(cmd);
 		if (t === null || t.length) {
-			const del = unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session, process.env, mode === "bypass" ? tempDir : "");
+			const del = mode === "bypass" ? protectedDeleteOf(cmd, cwd, protectedPlaces({ cwd, extraDirs, tempDir })) : unsafeDeleteOf(cmd, cwd, [cwd, ...extraDirs], session);
 			if (del) return { action: "ask", danger: del, segments, always: true };
 			if (segments.every((s) => { const x = deleteTargets(s); return (x && x.length) || isReadOnlySegment(s); })) return { action: "allow" };
 		}

