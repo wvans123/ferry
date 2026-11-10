@@ -578,10 +578,6 @@ def decide_agent(msgs):
         out = [text_of(t) for t in tools]
         return ("text", f"PLANMODE entered={'plan mode is on' in out[0]} refused={'Plan mode is on' in out[1]} "
                         f"left={'plan mode is off' in out[2]} wrote={'Successfully wrote' in out[3]}")
-    if "LIMITTEST" in first:  # answered by the fallback (an OpenAI-style model) while Claude's account cools down
-        if not tools:
-            return ("tool", "bash", {"command": "echo fallback-step"})
-        return ("text", "LIMIT: answered by the fallback after " + text_of(tools[-1]).strip()[:40])
     if "TODOTEST" in first:
         if not tools:
             return ("tool", "todo", {"todos": [{"content": "step one", "status": "completed"},
@@ -659,15 +655,6 @@ def anthropic_to_openai(body):
 
 class H(BaseHTTPRequestHandler):
     def anthropic(self, body, raw):
-        if "LIMITTEST" in json.dumps(body.get("messages", [])):  # this Claude account is rate-limited
-            data = json.dumps({"type": "error", "error": {"type": "rate_limit_error", "message": "Too many requests"}}).encode()
-            self.send_response(429)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Retry-After", "30")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
         problems = anthropic_problems(body, self.headers)
         if problems:
             return self.send_json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "; ".join(problems)}})
@@ -807,7 +794,8 @@ class H(BaseHTTPRequestHandler):
         if bad:
             return self.send_json(400, {"error": {"message": f"unsupported parameter: {bad[0]}"}})
         asked = json.dumps(body.get("messages", []))
-        if body.get("model") == "stall-model" and body.get("stream"):  # a relay that accepts the request and goes silent
+        if body.get("model") == "stall-model" and body.get("stream") and not state.get("stalled"):  # a relay that accepts the request and goes silent (once)
+            state["stalled"] = True
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()

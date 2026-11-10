@@ -102,10 +102,9 @@ const oneAtATime = (fn) => {
 	return run;
 };
 
-// A model whose account cools down after "too many requests", with a fallback that speaks the other API (Claude's
-// vs OpenAI's): the server cannot pass our stored conversation on to it, so we ask the fallback ourselves, in its
-// format, until the cool-down is over. model id -> { to, until }. Learned from the server's answers (a "reroute"
-// error, the commit answers' "cooling" list); a cool-down has a fixed length, so an entry simply runs out.
+// A model whose provider was switched to the other API (Claude's vs OpenAI's) in the admin page: the server cannot
+// pass our stored conversation on in the old format, so it tells us (a "reroute" error) and we ask again in the
+// new one. model id -> { to, until }; an entry simply runs out.
 const switched = new Map();
 const REROUTE = /ferry-reroute:([^\s"'\\,}@]+)@(anthropic|openai)(?:.*?\((\d+) s to go\))?(?:.*?\[model=([^\]\s]+)\])?/;
 
@@ -268,10 +267,6 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (!res.ok) throw new FerryError(`Ferry sync failed: HTTP ${res.status} ${await res.text()}`);
 		const ack = await res.json();
 		cfg.onRoute?.(ack.cooling ?? null); // an account cooling down after "too many requests": the status line says so
-		const cooling = new Map((ack.cooling ?? []).map((c) => [c.model, c]));
-		for (const c of cooling.values()) {
-			if (c.switch && c.fallback) switchTo(c.model, c.fallback, c.api, c.seconds, c.fallbackModel);
-		}
 		if (ack.count !== msgs.length || ack.hash !== chain[msgs.length]) {
 			known.delete(conv);
 			throw new FerryError("Ferry server state does not match this client; it will resend on the next try");
@@ -308,9 +303,9 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	// request once more, which re-uploads the session in full.
 	const SESSION_LOST = /\b409\b|session not found|tools not found/i;
 
-	/** Ask `to` instead of `from` for the next `seconds`. A fallback the server does not list (routing.expose off)
+	/** Ask `to` instead of `from` for the next `seconds`. A model the server does not list (routing.expose off)
 	 * is known from here on by its API and upstream name (`upstream`: without it pi cannot tell the model thinks, and
-	 * the fallback would answer without thinking), with the size of the model it stands in for. */
+	 * it would answer without thinking), with the size of the model it stands in for. */
 	function switchTo(from, to, api, seconds, upstream) {
 		const side = api === "anthropic" ? "anthropic" : "openai";
 		if (!byId.has(to)) {
@@ -327,7 +322,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		if (!cfg.server || !cfg.token) return errorStream(model, "Ferry is not set up. Run: ferry login <server> <token>");
 		const sw = switched.get(model.id);
 		if (hop === 0 && sw && sw.until > Date.now() && byId.has(sw.to)) {
-			return streamFerry(asModel(model, sw.to), context, options, 1); // cooling down: its fallback answers
+			return streamFerry(asModel(model, sw.to), context, options, 1); // the server said to use `to` (and its API)
 		}
 		const userOnPayload = options?.onPayload;
 		// the server says which API its model speaks: Claude through Anthropic's own, everything else OpenAI-style
@@ -341,7 +336,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			...options,
 			apiKey: cfg.token,
 			headers: { ...(options?.headers ?? {}), ...(cfg.headers ?? {}), "x-ferry-project": encodeURIComponent(project), // headers must be ASCII; folder names may not be
-				"x-ferry-protocol": PROTOCOL, "x-ferry-reroute": "1" }, // we can ask a fallback of the other API ourselves
+				"x-ferry-protocol": PROTOCOL, "x-ferry-reroute": "1" }, // we can ask again in the other API's format ourselves
 			onPayload: async (payload, m) => {
 				const replaced = userOnPayload ? await userOnPayload(payload, m) : undefined;
 				return shrink(replaced ?? payload, options?.signal, api, options?.sessionId);
@@ -360,7 +355,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 							continue;
 						}
 						const re = ev.type === "error" && hop === 0 ? REROUTE.exec(ev.error?.errorMessage ?? "") : null;
-						if (re) { // rate-limited, and the fallback speaks the other API: ask it ourselves, in its format
+						if (re) { // the model's API was switched: ask again in its format
 							const [, to, toApi, secs, upstream] = re;
 							switchTo(model.id, to, toApi, secs ?? 30, upstream);
 							for await (const e of streamFerry(asModel(model, to), context, options, 1)) out.push(e);

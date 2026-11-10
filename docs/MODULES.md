@@ -27,7 +27,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模块 | 做什么 | 代码 | 自测 |
 |---|---|---|---|
 | 增量同步 | 只传新增的消息，每个请求 ≤ 1 MB，服务端拼回完整对话 | `client/lib/sync.mjs`、`server/ferry_server/store.py`、`app.py` | F1–F5、F14、F17、F26、F47 |
-| 模型接入 | 选模型、几家服务商分配和切换、限流和回退、Claude 原生接口、Responses 接口、费用 | `server/ferry_server/pool.py`、`presets.py`、`responses.py`、`usage.py`、`config.py` | F12、F25、F40、F60、F61 |
+| 模型接入 | 选模型、几家服务商分配和切换、限流和冷却、Claude 原生接口、Responses 接口、费用 | `server/ferry_server/pool.py`、`presets.py`、`responses.py`、`usage.py`、`config.py` | F12、F25、F40、F60 |
 | 上下文 | 服务端写摘要、请求封顶、按模型上下文长度 | `server/ferry_server/fit.py`、`prompt.py`；`client/lib/commands.mjs`（`/context`）、`compact.mjs`（压缩失败两次就停、压缩后的提示）、`config.mjs`（压缩线） | F5、F21、F43、F48、F81、F82 |
 | 提示词 | Ferry 自己的系统提示，服务端规则 | `client/lib/prompt.mjs`、`server/ferry_server/prompt.py` | F9、F10、F33、F63 |
 | 权限 | 四种模式、agent 提议进出计划模式（`switch_mode`）、规则、危险命令、禁止目录 | `client/lib/permissions.mjs`、`guard.mjs` | F15、F32、F90 |

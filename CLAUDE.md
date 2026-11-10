@@ -27,6 +27,8 @@ code map).
 
 | Removed | Version | Why |
 |---|---|---|
+| Feishu bot (`feishu.py`, `/feishu/event`, admin page block) | after 0.44.2 | owner: Bark and the phone page are enough; the bot only added chatting with it |
+| backup ("fallback") model for a rate-limited or stalled provider, and the client switching to it (`fallback`, `fallback_for`, cross-API `reroute()` for a cooling model) | after 0.44.2 | owner: another model answering mid-conversation causes API differences; only same-named pooled models (share = true) take over |
 | Playwright MCP browser (`@playwright/mcp`) | 0.27 | replaced by agent-browser: a CLI the agent calls with bash plus a skill, no tool definitions, compact snapshots |
 | redaction (placeholders, word list, stream restoring) | 0.26 | off by default, never worked with Claude's own API, owner did not use it; /report keeps a small filter of its own |
 | server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. Brought back in 0.30 at the owner's request in another form: search and public pages on the server (only the address goes up), intranet/private addresses still on the PC |

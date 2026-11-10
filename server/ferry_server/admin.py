@@ -469,7 +469,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         for p in cfg.providers.values():
             key = p.api_key
             views[p.id] = {"id": p.id, "name": p.name, "preset": p.preset, "base_url": p.base_url, "api": p.api,
-                           "max_concurrent": p.max_concurrent, "rpm": p.rpm, "cooldown": p.cooldown, "stall_seconds": p.stall_seconds, "fallback": p.fallback,
+                           "max_concurrent": p.max_concurrent, "rpm": p.rpm, "cooldown": p.cooldown, "stall_seconds": p.stall_seconds,
                            "share": p.share,
                            "api_key_env": p.api_key_env, "no_key": p.no_key,
                            "key_tail": key[-4:] if key else "", "key_source": (
@@ -568,7 +568,7 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                      "max_concurrent": max(0, int(p.get("max_concurrent") or 0)),
                      "rpm": max(0, int(p.get("rpm") or 0)), "cooldown": max(1, int(p.get("cooldown") or 60)),
                      "stall_seconds": max(0, int(p["stall_seconds"])) if p.get("stall_seconds") is not None else STALL_DEFAULT,
-                     "fallback": str(p.get("fallback") or ""), "share": bool(p.get("share")),
+                     "share": bool(p.get("share")),
                      "rename_params": pre.get("rename_params", {}), "no_key": bool(pre.get("no_key"))}
             if not entry["base_url"]:
                 return JSONResponse({"error": f"{entry['name']}：接口地址不能为空"}, 400)

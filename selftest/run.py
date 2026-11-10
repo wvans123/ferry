@@ -1318,45 +1318,17 @@ def check_v019(root: Path, work: Path) -> None:
 
 
 def check_v022(root: Path, work: Path) -> None:
-    """A rate-limited Claude account whose fallback speaks OpenAI's API: the client asks the fallback itself."""
+    """A provider with its own Claude model next to the pooled ones: the model list shows whose model it is."""
     toml = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
-            'fallback = "main"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
+            'cooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
             'context_window = 200000\nmax_tokens = 8000\n\n[routing]\ndefault = "claude"\nexpose = true\n')
     s = Stack(root, work, "agent", extra_toml=toml)
     try:
-        c1, o1 = s.ferry("-p", "LIMITTEST: say something")
-        c2, o2 = s.ferry("-p", "LIMITTEST: once more")
-        claude_calls = [u for u in jsonl(s.upstream) if u.get("model") == "claude-opus-5-5"]
-        reroutes = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "reroute"]
-        ok = (c1 == 0 and c2 == 0 and "LIMIT: answered by the fallback after fallback-step" in o1 and "LIMIT: answered" in o2
-              and len(claude_calls) == 1 and len(reroutes) == 2)
-        check("F61 限流时改用另一种接口的模型", ok, "Claude 账号 429 冷却，回退模型是 OpenAI 接口：客户端按它的格式重发，"
-              "同一次运行里后面的请求直接问回退模型，冷却期间不再打扰 Claude 账号"
-              if ok else f"c={c1},{c2} claude={len(claude_calls)} reroutes={len(reroutes)} o1={o1[-300:]!r} o2={o2[-200:]!r}")
         c3, listed = s.ferry("--list-models")
         ok3 = (c3 == 0 and re.search(r"(?m)^kiro\s+claude\b", listed) and re.search(r"(?m)^ferry\s+main\b", listed)
                and not re.search(r"(?m)^\S+\s+auto\b", listed))
         check("F68 模型按服务商列出", bool(ok3), "服务商 kiro 的模型在工作电脑上显示成 kiro/claude；逐个列出模型时不再多一个 auto"
               if ok3 else f"{listed[-400:]!r}")
-    finally:
-        s.close()
-    # the fallback is a GPT model pi knows to think, not offered to the client (expose off): it still gets the level
-    toml2 = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
-             'fallback = "gptfb"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
-             'context_window = 200000\nmax_tokens = 8000\n\n[models.gptfb]\nbase_url = "http://127.0.0.1:9100/v1"\n'
-             'api_key_env = "DEEPSEEK_API_KEY"\ndrop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\nmodel = "gpt-6.1-sol"\ncontext_window = 200000\nmax_tokens = 8000\n'
-             '\n[routing]\ndefault = "claude"\n')
-    s = Stack(root / "fb", work, "agent", extra_toml=toml2)
-    try:
-        c1, o1 = s.ferry("--thinking", "high", "-p", "LIMITTEST: think about it")
-        c2, o2 = s.ferry("--thinking", "high", "-p", "LIMITTEST: once more")
-        gpt_calls = [u for u in jsonl(s.upstream) if u.get("model") == "gpt-6.1-sol"]
-        claude_calls = [u for u in jsonl(s.upstream) if u.get("model") == "claude-opus-5-5"]
-        ok = (c1 == 0 and c2 == 0 and "LIMIT: answered" in o1 and "LIMIT: answered" in o2 and len(claude_calls) == 1
-              and len(gpt_calls) >= 3 and all(u.get("reasoning_effort") == "high" for u in gpt_calls))
-        check("F126 限流后的回退模型也带思考", ok, "Claude 账号 429，回退模型是 OpenAI 接口的 GPT（模型列表里不给客户端看）："
-              "回退模型收到的请求带着用户设的思考档位（reasoning_effort=high），不会没有思考"
-              if ok else f"c={c1},{c2} claude={len(claude_calls)} gpt={[u.get('reasoning_effort') for u in gpt_calls]} o1={o1[-300:]!r}")
     finally:
         s.close()
 
@@ -2724,20 +2696,20 @@ def check_keepalive(root: Path, work: Path) -> None:
               if ok else f"c={c1},{c2},{c3} committed={len(committed)} o1={o1[-200:]!r} o2={o2[-200:]!r} o3={o3[-300:]!r}")
     finally:
         s.close()
-    # a relay that accepts the request and then sends nothing: after stall_seconds the request goes to the fallback
-    toml = ('\n[providers.slow]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nfallback = "main"\n'
+    # a relay that accepts the request and then sends nothing: after stall_seconds the server asks the same model again
+    toml = ('\n[providers.slow]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\n'
             'stall_seconds = 1\ndrop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\n\n[models.slowm]\nprovider = "slow"\nmodel = "stall-model"\n\n[routing]\ndefault = "slowm"\n')
     s = Stack(root / "stall", work, "agent", extra_toml=toml)
     try:
         c1, o1 = s.ferry("-p", "say hello")
         c2, o2 = s.ferry("-p", "say hello again")
-        stalled = [u for u in jsonl(s.upstream) if u.get("model") == "stall-model"]
+        asked = [u for u in jsonl(s.upstream) if u.get("model") == "stall-model"]
         audit = jsonl(s.data / "audit.jsonl")
         rows = [a for a in audit if a.get("event") == "chat" and a.get("status") == 504 and "stalled" in str(a.get("error"))]
-        ok = c1 == 0 and c2 == 0 and "OK" in o1 and "OK" in o2 and len(stalled) == 1 and len(rows) == 1
-        check("F128 上游接了请求又不出声就改问备用模型", ok, "中转收下请求后一个字节都不发：1 秒后服务端放弃它，同一次请求改由备用模型回答，"
-              "调用记录写 504（卡住），不是成功；账号冷却期间后面的请求直接问备用模型"
-              if ok else f"c={c1},{c2} stalled={len(stalled)} rows={len(rows)} o1={o1[-200:]!r} o2={o2[-200:]!r}")
+        ok = c1 == 0 and c2 == 0 and "OK" in o1 and "OK" in o2 and len(asked) == 3 and len(rows) == 1
+        check("F128 上游接了请求又不出声就再问同一个模型", ok, "中转第一次收下请求后一个字节都不发：1 秒后服务端放弃这一次，"
+              "同一次请求再问同一个模型并得到回答，调用记录写 504（卡住）而不是成功；后面的请求照常"
+              if ok else f"c={c1},{c2} asked={len(asked)} rows={len(rows)} o1={o1[-200:]!r} o2={o2[-200:]!r}")
     finally:
         s.close()
 

@@ -43,7 +43,7 @@ from .usage import AnthropicSSEUsage, normalize
 from .usage import cost as usage_cost
 from .fit import anthropic_answer, openai_answer, summarize, summary_prompt
 from .responses import chat_lines, from_responses, responses_url, to_responses
-from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay, same_side
+from .pool import RETRY_STATUSES, RETRY_WAIT_S, TRANSIENT_STATUSES, Pool, groups, retry_delay
 from .prompt import (adapt_params, add_cache_marks, apply_rules, cap_upstream, estimate_tokens, load_rules, overflow_message,
                      restore_cache_marks, summary_rules, wants_cache_marks)
 from .store import BaseMismatch, MissingBlobs, Store
@@ -285,42 +285,20 @@ def create_app(cfg: Config) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
-    def limited(m, headers) -> tuple[float, object]:
+    def limited(m, headers) -> float:
         """A 429 from m's account: leave the account alone for its cool-down (Retry-After, else the provider's
-        setting) and tell the phone once. Returns (seconds, the fallback model or None)."""
+        setting) and tell the phone once. Returns the seconds; the request waits on the server (pool.enter) and asks again."""
         prov = cfg.providers.get(m.provider) if m.provider else None
         try:
             secs = float((headers or {}).get("retry-after", "")) or 0
         except ValueError:
             secs = 0
         secs = min(max(secs or float(getattr(prov, "cooldown", 60) or 60), 1), 120)  # a client waits ~5 min at most
-        fb = live.pool.fallback_for(cfg, m)
         if live.pool.cool(m, secs):
-            write(audit_log, event="cooldown", model=m.id, seconds=secs, fallback=fb.id if fb else "")
+            write(audit_log, event="cooldown", model=m.id, seconds=secs)
             from .notify import send
-            what = f"这段时间由 {fb.id} 回答" if fb else "请求在服务端排队，冷却后继续"
-            asyncio.create_task(send(cfg, "Ferry", f"{m.id} 被限流，冷却 {int(secs)} 秒；{what}", "limit"))
-        return secs, fb
-
-    def reroute(request, purpose: str, kind: str, m, fb):
-        """m cools down and its fallback speaks the other API (Claude's vs OpenAI's): the server cannot pass the
-        stored conversation on as it is, so it tells the client to ask the fallback itself, in the fallback's format
-        (the client keeps the conversation in a neutral form). 422: no SDK retries it (Node's fetch would resend a 421
-        with an empty body). None when the client is too old for that, or for a summary (written here by summary_models)."""
-        if request.headers.get("x-ferry-reroute") != "1" or purpose == "summary":
-            return None
-        left = int(live.pool.cooling(m))
-        side = "anthropic" if fb.api == "anthropic" else "openai"
-        # [model=...]: the fallback's upstream name. A client that does not list the fallback (routing.expose off)
-        # needs it to know whether the model thinks and how to ask it to (thinking.mjs); older clients ignore it
-        msg = (f"ferry-reroute:{fb.id}@{side} {m.id} is rate-limited ({left} s to go); ask {fb.id} meanwhile "
-               f"[model={fb.model}]")
-        write(audit_log, event="reroute", user=getattr(request.state, "user", ""), model=m.id, to=fb.id, seconds=left)
-        if kind == "anthropic":
-            return JSONResponse({"type": "error", "error": {"type": "ferry_reroute", "message": msg}}, status_code=422,
-                                headers={"x-ferry-reroute": fb.id})
-        return JSONResponse({"error": {"message": msg, "type": "ferry_reroute", "code": "ferry_reroute"}}, status_code=422,
-                            headers={"x-ferry-reroute": fb.id})
+            asyncio.create_task(send(cfg, "Ferry", f"{m.id} 被限流，冷却 {int(secs)} 秒；请求在服务端排队，冷却后继续", "limit"))
+        return secs
 
     def api_changed(request, kind: str, m):
         """The client asked m in the other API's format: m's provider was switched (admin page: 接口格式) while the
@@ -343,13 +321,23 @@ def create_app(cfg: Config) -> FastAPI:
         prov = cfg.providers.get(m.provider) if m.provider else None
         return float(getattr(prov, "stall_seconds", STALL_DEFAULT))
 
-    def stall_cool(m):
-        """m's upstream stalled: leave its account alone for a short while when a fallback can answer meanwhile.
-        Returns the fallback (or None)."""
-        fb = live.pool.fallback_for(cfg, m)
-        if fb and live.pool.cool(m, 20):
-            write(audit_log, event="cooldown", model=m.id, seconds=20, fallback=fb.id, reason="stalled")
-        return fb
+    async def ask_again(model, started: float, again: int, status: int | None = None, headers=None, secs: float = 0,
+                        big: bool = False, stalled: bool = False) -> int | None:
+        """The only (or last) provider failed. Returns the new repeat count when it should be asked once more, after
+        waiting as it asks (Retry-After) or a little, or None to hand the error on (gave_up). status is None when the
+        call never got an answer. A 429 waits out its cool-down (secs) in pool.enter(), so there is nothing to sleep
+        here. A stall is asked once more even past the time budget: the keep-alive holds the client meanwhile."""
+        if status == 429 and secs and time.time() - started + secs < RETRY_WAIT_S:
+            return again
+        if status is not None and status not in TRANSIENT_STATUSES:
+            return None
+        d = retry_delay(headers, again)
+        if (big and again) or (time.time() - started + d >= RETRY_WAIT_S and not (stalled and again == 0)):
+            return None
+        if status is not None:
+            write(audit_log, event="upstream_wait", model=model.id, status=status, seconds=d)
+        await asyncio.sleep(d)
+        return again + 1
 
     def gave_up(model, last_err, started: float, kind: str) -> Response:
         """The provider's error once the server has stopped asking. A busy or failing provider (5xx, 429, cannot
@@ -376,10 +364,7 @@ def create_app(cfg: Config) -> FastAPI:
         for m in cfg.models.values():
             left = live.pool.cooling(m)
             if left > 0 and all(o["model"] != m.id for o in out):
-                fb = live.pool.fallback_for(cfg, m)
-                out.append({"model": m.id, "seconds": int(left), "fallback": fb.id if fb else "",
-                            **({"switch": True, "api": "anthropic" if fb.api == "anthropic" else "openai", "fallbackModel": fb.model}
-                               if fb and not same_side(m, fb) else {})})  # the client asks fb itself
+                out.append({"model": m.id, "seconds": int(left)})
         return out[:5]
 
     def learn_limit(m, tokens: int) -> None:
@@ -585,9 +570,6 @@ def create_app(cfg: Config) -> FastAPI:
             if requested not in cfg.models:
                 raise HTTPException(400, "This model is not configured on the Ferry server; refresh the model list.")
             return cfg.models[requested]
-        if requested in cfg.models and any(live.pool.cooling(m) and (fb := live.pool.fallback_for(cfg, m)) and fb.id == requested
-                                           for m in cfg.models.values()):
-            return cfg.models[requested]  # the client asks a cooling model's fallback itself (reroute)
         default = cfg.models[cfg.default_model]
         if purpose == "summary" and cfg.summary_model and cfg.models[cfg.summary_model].api == default.api:
             return cfg.models[cfg.summary_model]  # (a summary model with another API cannot take this request)
@@ -778,14 +760,6 @@ def create_app(cfg: Config) -> FastAPI:
                                            "code": "context_length_exceeded"}}, status_code=413)
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
-        fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
-        if fb and not same_side(tries[0], fb):  # the fallback speaks Claude's API: the client asks it itself
-            sent = reroute(request, purpose, "openai", tries[0], fb)
-            if sent:
-                return sent
-            fb = None
-        if fb:  # its account cools down after "too many requests": the fallback answers meanwhile
-            tries = [fb, *tries]
         model = tries[0]
         if not model.ready:
             how = (f"set {model.api_key_env} and restart ferry-server" if model.api_key_env
@@ -877,22 +851,11 @@ def create_app(cfg: Config) -> FastAPI:
                         write(audit_log, **audit, status=status, error=f"{type(e).__name__}: {e}"[:200], ms=int((time.time() - started) * 1000))
                         last_err = (status, json.dumps({"error": {"message": stall_text(model.id, stall) if stalled
                                                                   else f"cannot reach {model.id}: {type(e).__name__}"}}).encode(), "application/json")
-                        if stalled:
-                            fb = stall_cool(model)
-                            if fb and not same_side(model, fb):
-                                sent = reroute(request, purpose, "openai", model, fb)
-                                if sent:
-                                    return sent
-                                fb = None
-                            if fb:
-                                tries.append((fb, False))
-                                continue
                         if more:
                             continue
-                        if time.time() - started + retry_delay(None, again) < RETRY_WAIT_S:  # the only provider: once more after a short wait
-                            d = retry_delay(None, again)
-                            await asyncio.sleep(d)
-                            again += 1
+                        again_n = await ask_again(model, started, again, stalled=stalled)  # the only provider: once more after a short wait
+                        if again_n is not None:
+                            again = again_n
                             tries.append((model, marks))
                             continue
                         break
@@ -908,32 +871,19 @@ def create_app(cfg: Config) -> FastAPI:
                             refused_marks = True
                             write(audit_log, event="cache_marks_refused", model=model.id)
                             continue
-                        if r.status_code == 429:  # too many requests: cool down, then the fallback or this one again
-                            secs, fb = limited(model, r.headers)
-                            if fb and not same_side(model, fb):
-                                sent = reroute(request, purpose, "openai", model, fb)
-                                if sent:
-                                    return sent
-                                fb = None
-                            if fb:
-                                tries.append((fb, False))
-                                continue
-                            if not more and time.time() - started + secs < RETRY_WAIT_S:
-                                tries.append((model, marks))  # enter() waits for the cool-down
-                                continue
+                        secs = limited(model, r.headers) if r.status_code == 429 else 0  # cool down; the request waits for it
                         if more and r.status_code in RETRY_STATUSES:
                             live.pool.failed(model.id, r.status_code)
                             continue
                         big = too_big(model, r.status_code, tokens_est)
-                        if not more and r.status_code in TRANSIENT_STATUSES and time.time() - started + retry_delay(r.headers, again) < RETRY_WAIT_S and not (big and again):
+                        if not more:
                             # the only (or last) provider is busy: wait as it asks (Retry-After) or a little, then once more,
                             # instead of handing the error to the client, which would ask again at once
-                            d = retry_delay(r.headers, again)
-                            write(audit_log, event="upstream_wait", model=model.id, status=r.status_code, seconds=d)
-                            await asyncio.sleep(d)
-                            again += 1
-                            tries.append((model, marks))
-                            continue
+                            again_n = await ask_again(model, started, again, r.status_code, r.headers, secs, big)
+                            if again_n is not None:
+                                again = again_n
+                                tries.append((model, marks))
+                                continue
                         if not more and big:  # refused because it is too big: the client summarises its history and goes on
                             learn_limit(model, tokens_est)
                             done()
@@ -970,8 +920,6 @@ def create_app(cfg: Config) -> FastAPI:
                         except Exception as e:  # noqa: BLE001 - told to the client as a stream error
                             stalled = isinstance(e, Stalled)
                             status, err = 504, (f"stalled after {stall:g} s without data" if stalled else f"{type(e).__name__}: {e}"[:200])
-                            if stalled:
-                                stall_cool(model)
                             text = (stall_text(model.id, stall) if stalled else
                                     f"upstream stream failed: {model.id} is overloaded or unreachable (HTTP 502): {type(e).__name__}")
                             yield sse_error("openai", 504, json.dumps({"error": {"message": text, "type": "ferry_stalled"}}).encode())
@@ -1033,14 +981,6 @@ def create_app(cfg: Config) -> FastAPI:
             return api_changed(request, "anthropic", model)
         conv = key(request, ref["conv"]) if ref else ""
         tries = live.pool.order(cfg, model, conv)
-        fb = live.pool.fallback_for(cfg, tries[0]) if live.pool.cooling(tries[0]) else None
-        if fb and not same_side(tries[0], fb):  # the fallback speaks OpenAI's API: the client asks it itself
-            sent = reroute(request, purpose, "anthropic", tries[0], fb)
-            if sent:
-                return sent
-            fb = None
-        if fb:
-            tries = [fb, *tries]
         model = tries[0]
         if not model.ready:
             return JSONResponse({"type": "error", "error": {"type": "authentication_error", "message":
@@ -1130,22 +1070,11 @@ def create_app(cfg: Config) -> FastAPI:
                         last_err = (status, json.dumps({"type": "error", "error": {"type": "api_error",
                                     "message": stall_text(model.id, stall) if stalled else f"cannot reach {model.id}: {type(e).__name__}"}}).encode(),
                                     "application/json")
-                        if stalled:
-                            fb = stall_cool(model)
-                            if fb and not same_side(model, fb):
-                                sent = reroute(request, purpose, "anthropic", model, fb)
-                                if sent:
-                                    return sent
-                                fb = None
-                            if fb:
-                                tries.append(fb)
-                                continue
                         if more:
                             continue
-                        if time.time() - started + retry_delay(None, again) < RETRY_WAIT_S:
-                            d = retry_delay(None, again)
-                            await asyncio.sleep(d)
-                            again += 1
+                        again_n = await ask_again(model, started, again, stalled=stalled)
+                        if again_n is not None:
+                            again = again_n
                             tries.append(model)
                             continue
                         break
@@ -1156,30 +1085,17 @@ def create_app(cfg: Config) -> FastAPI:
                         live.pool.end(model.id)
                         write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
                         last_err = (upstream.status_code, err, upstream.headers.get("content-type", "application/json"))
-                        if upstream.status_code == 429:
-                            secs, fb = limited(model, upstream.headers)
-                            if fb and not same_side(model, fb):
-                                sent = reroute(request, purpose, "anthropic", model, fb)
-                                if sent:
-                                    return sent
-                                fb = None
-                            if fb:
-                                tries.append(fb)
-                                continue
-                            if not more and time.time() - started + secs < RETRY_WAIT_S:
-                                tries.append(model)
-                                continue
+                        secs = limited(model, upstream.headers) if upstream.status_code == 429 else 0
                         if more and upstream.status_code in RETRY_STATUSES:
                             live.pool.failed(model.id, upstream.status_code)
                             continue
                         big = too_big(model, upstream.status_code, tokens_est)
-                        if not more and upstream.status_code in TRANSIENT_STATUSES and time.time() - started + retry_delay(upstream.headers, again) < RETRY_WAIT_S and not (big and again):
-                            d = retry_delay(upstream.headers, again)
-                            write(audit_log, event="upstream_wait", model=model.id, status=upstream.status_code, seconds=d)
-                            await asyncio.sleep(d)
-                            again += 1
-                            tries.append(model)
-                            continue
+                        if not more:
+                            again_n = await ask_again(model, started, again, upstream.status_code, upstream.headers, secs, big)
+                            if again_n is not None:
+                                again = again_n
+                                tries.append(model)
+                                continue
                         if not more and big:
                             learn_limit(model, tokens_est)
                             done()
@@ -1205,8 +1121,6 @@ def create_app(cfg: Config) -> FastAPI:
                         except Exception as e:  # noqa: BLE001 - told to the client as a stream error
                             stalled = isinstance(e, Stalled)
                             status, err = 504, (f"stalled after {stall:g} s without data" if stalled else f"{type(e).__name__}: {e}"[:200])
-                            if stalled:
-                                stall_cool(model)
                             text = (stall_text(model.id, stall) if stalled else
                                     f"upstream stream failed: {model.id} is overloaded or unreachable (HTTP 502): {type(e).__name__}")
                             yield sse_error("anthropic", 504, json.dumps({"error": {"message": text, "type": "ferry_stalled"}}).encode())

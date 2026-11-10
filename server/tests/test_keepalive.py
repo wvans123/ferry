@@ -134,19 +134,22 @@ def test_overflow_after_commit_keeps_the_text_pi_recognises(tmp_path, monkeypatc
     assert "context_length_exceeded" in msg and "exceeds the context window" in msg
 
 
-def test_reroute_after_commit_carries_the_reroute_text(tmp_path, monkeypatch):
-    import re
-    err = {"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}}
-    cfg, app = make(tmp_path, monkeypatch, slow(0.3, lambda: httpx.Response(429, json=err, headers={"retry-after": "5"})), CLAUDE)
+def test_a_429_after_the_keepalive_began_waits_on_the_server_and_the_answer_follows(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}},
+                                  headers={"retry-after": "1"})
+        return httpx.Response(200, content=CLAUDE_SSE)
+
+    cfg, app = make(tmp_path, monkeypatch, slow(0.3, lambda: handler(None)), CLAUDE)
     token = (tmp_path / "token").read_text().strip()
     r = ask(app, token, "anthropic", headers={"x-ferry-reroute": "1"})
     assert r.status_code == 200 and ": ferry waiting" in r.text
-    ev, data = events(r.text)[0]
-    assert ev == "error"
-    # what pi's Anthropic stream throws is the data text; the client's REROUTE pattern is searched in it
-    reroute = re.compile(r"ferry-reroute:([^\s\"'\\,}@]+)@(anthropic|openai)(?:.*?\((\d+) s to go\))?(?:.*?\[model=([^\]\s]+)\])?")
-    m = reroute.search(data)
-    assert m and m.group(1) == "gpt" and m.group(2) == "openai" and m.group(4) == "gpt-6.1-sol"
+    assert [ev for ev, _ in events(r.text)] == ["message_start", "message_stop"] and "ferry-reroute" not in r.text
+    assert len(calls) == 2  # asked again after the cool-down, the same model
 
 
 async def until(cond, limit=10):
@@ -261,6 +264,24 @@ def test_a_stall_before_any_data_goes_to_the_other_pool_member(tmp_path, monkeyp
     assert r.status_code == 200 and '"later"' in r.text and seen == ["a.example.com", "b.example.com"]
     rows = audit_rows(cfg)
     assert rows[0]["status"] == 504 and "stalled after 0.3 s" in rows[0]["error"] and rows[-1]["status"] == 200
+
+
+def test_a_stall_asks_the_same_model_once_more_even_past_the_time_budget(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.host)
+        return httpx.Response(200, stream=Silent()) if len(calls) == 1 else httpx.Response(200, content=OPENAI_SSE)
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    cfg.providers["b"].stall_seconds = 0.3
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0.01)
+    monkeypatch.setattr(app_mod, "RETRY_WAIT_S", 0.1)  # the stall alone used it up
+    monkeypatch.setattr(app_mod, "KEEPALIVE_S", 30)
+    r = ask(app, (tmp_path / "token").read_text().strip(), "openai")  # "other" is only on provider b: no other model answers
+    assert r.status_code == 200 and '"later"' in r.text and calls == ["b.example.com", "b.example.com"]
+    rows = audit_rows(cfg)
+    assert [x["status"] for x in rows] == [504, 200]
 
 
 def test_a_stall_after_data_ends_the_stream_with_a_retryable_error_and_is_not_a_success(tmp_path, monkeypatch):
