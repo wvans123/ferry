@@ -27,6 +27,8 @@ code map).
 
 | Removed | Version | Why |
 |---|---|---|
+| Feishu bot (`feishu.py`, `/feishu/event`, admin page block) | after 0.44.2 | owner: Bark and the phone page are enough; the bot only added chatting with it |
+| backup ("fallback") model for a rate-limited or stalled provider, and the client switching to it (`fallback`, `fallback_for`, cross-API `reroute()` for a cooling model) | after 0.44.2 | owner: another model answering mid-conversation causes API differences; only same-named pooled models (share = true) take over |
 | Playwright MCP browser (`@playwright/mcp`) | 0.27 | replaced by agent-browser: a CLI the agent calls with bash plus a skill, no tool definitions, compact snapshots |
 | redaction (placeholders, word list, stream restoring) | 0.26 | off by default, never worked with Claude's own API, owner did not use it; /report keeps a small filter of its own |
 | server-side web access (`web = server`, FERRY_WEB) | 0.26 | web tools run on the work PC since 0.11; nobody used the server path. Brought back in 0.30 at the owner's request in another form: search and public pages on the server (only the address goes up), intranet/private addresses still on the PC |
@@ -98,8 +100,8 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
 ## Where things stand (2026-11-10, release 0.44.2)
 
 - Released: 0.44.2 (stall time default 300 s). Releases since 0.31: 0.32 to 0.41 (models per provider, server web search,
-  memory distill, Word tracked changes, eval tasks), 0.42 (gateway wait, watchdog), 0.43 (phone approvals and console,
-  Feishu bot), 0.44.x (background job watch and /loop, delete rule, stall fallback and keep-alive). Per-version record:
+  memory distill, Word tracked changes, eval tasks), 0.42 (gateway wait, watchdog), 0.43 (phone approvals and console),
+  0.44.x (background job watch and /loop, delete rule, keep-alive). Per-version record:
   GOAL.md and the release PRs. Not yet released: whatever is on main after v0.44.2 (check `git log v0.44.2..main`).
 - Models: each server provider is its own pi provider, so /model shows `kiro/claude-opus-5.5`; "ferry" holds pooled
   models. The client takes models only from the server's list (server-models.mjs). Same-named models are pooled only
@@ -110,16 +112,17 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
   (`ferry browser login <url>`). Code: server/ferry_server/search.py, client/lib/web.mjs. Measure with `evals/search_eval.py`.
 - Away from the PC: a request that meets the company gateway waits up to `gatewayWaitMinutes` (gateway.mjs); the
   server watchdog pushes the phone when a run goes quiet for 15 minutes (heartbeat.mjs, watchdog.py); approvals and
-  questions can be answered on a phone page or in a Feishu card, and the per-session phone console steers the run
-  (remote.mjs, console.mjs, feishu). Details in docs/MODULES.md.
+  questions can be answered on a phone page, and the per-session phone console steers the run
+  (remote.mjs, console.mjs). Details in docs/MODULES.md.
 - Agent work: `/goal` with agreed completion criteria, background jobs that can be watched, `/loop`, `/memory distill`,
   Word edits as tracked changes. In full access, deleting asks only for a whole drive, the home or system folders,
   Ferry's data folder or the project folder itself; temporary files go to D:\ferry\temp.
 - Server upstream: it keeps the connection alive for Cloudflare (no 524) and, when the upstream accepts a request and
-  then says nothing for 300 s, answers from the fallback model. CI: a feature PR runs only the affected tests; the full
+  then says nothing for 120 s (`stall_seconds` per provider), asks the same model once more, then answers 504. A 429 cools
+  the account down and the request waits on the server; no other model takes over, except same-named models of
+  providers with `share = true`. CI: a feature PR runs only the affected tests; the full
   run (Linux and Windows, self-test included) happens on main after the merge.
-- Not verified on a real machine yet: the phone page and Feishu cards through the real Cloudflare Tunnel and Feishu
-  tenant (needs `public_url`); the watchdog and gateway wait overnight; Google sign-in through `ferry browser login`;
+- Not verified on a real machine yet: the phone page through the real Cloudflare Tunnel (needs `public_url`); the watchdog and gateway wait overnight; Google sign-in through `ferry browser login`;
   the model-native search and DeepSeek Fetch paths against the real APIs. The last `python evals/run.py` result is
   0.41.0 (macOS, DeepSeek, 8/8); the nine agent-feature tasks added in #57 and everything since have not been run on the
   work PC.

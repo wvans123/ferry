@@ -1322,45 +1322,17 @@ def check_v019(root: Path, work: Path) -> None:
 
 
 def check_v022(root: Path, work: Path) -> None:
-    """A rate-limited Claude account whose fallback speaks OpenAI's API: the client asks the fallback itself."""
+    """A provider with its own Claude model next to the pooled ones: the model list shows whose model it is."""
     toml = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
-            'fallback = "main"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
+            'cooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
             'context_window = 200000\nmax_tokens = 8000\n\n[routing]\ndefault = "claude"\nexpose = true\n')
     s = Stack(root, work, "agent", extra_toml=toml)
     try:
-        c1, o1 = s.ferry("-p", "LIMITTEST: say something")
-        c2, o2 = s.ferry("-p", "LIMITTEST: once more")
-        claude_calls = [u for u in jsonl(s.upstream) if u.get("model") == "claude-opus-5-5"]
-        reroutes = [a for a in jsonl(s.data / "audit.jsonl") if a.get("event") == "reroute"]
-        ok = (c1 == 0 and c2 == 0 and "LIMIT: answered by the fallback after fallback-step" in o1 and "LIMIT: answered" in o2
-              and len(claude_calls) == 1 and len(reroutes) == 2)
-        check("F61 限流时改用另一种接口的模型", ok, "Claude 账号 429 冷却，回退模型是 OpenAI 接口：客户端按它的格式重发，"
-              "同一次运行里后面的请求直接问回退模型，冷却期间不再打扰 Claude 账号"
-              if ok else f"c={c1},{c2} claude={len(claude_calls)} reroutes={len(reroutes)} o1={o1[-300:]!r} o2={o2[-200:]!r}")
         c3, listed = s.ferry("--list-models")
         ok3 = (c3 == 0 and re.search(r"(?m)^kiro\s+claude\b", listed) and re.search(r"(?m)^ferry\s+main\b", listed)
                and not re.search(r"(?m)^\S+\s+auto\b", listed))
         check("F68 模型按服务商列出", bool(ok3), "服务商 kiro 的模型在工作电脑上显示成 kiro/claude；逐个列出模型时不再多一个 auto"
               if ok3 else f"{listed[-400:]!r}")
-    finally:
-        s.close()
-    # the fallback is a GPT model pi knows to think, not offered to the client (expose off): it still gets the level
-    toml2 = ('\n[providers.kiro]\nbase_url = "http://127.0.0.1:9100"\napi = "anthropic"\napi_key_env = "DEEPSEEK_API_KEY"\n'
-             'fallback = "gptfb"\ncooldown = 30\n\n[models.claude]\nprovider = "kiro"\nmodel = "claude-opus-5-5"\n'
-             'context_window = 200000\nmax_tokens = 8000\n\n[models.gptfb]\nbase_url = "http://127.0.0.1:9100/v1"\n'
-             'api_key_env = "DEEPSEEK_API_KEY"\ndrop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\nmodel = "gpt-6.1-sol"\ncontext_window = 200000\nmax_tokens = 8000\n'
-             '\n[routing]\ndefault = "claude"\n')
-    s = Stack(root / "fb", work, "agent", extra_toml=toml2)
-    try:
-        c1, o1 = s.ferry("--thinking", "high", "-p", "LIMITTEST: think about it")
-        c2, o2 = s.ferry("--thinking", "high", "-p", "LIMITTEST: once more")
-        gpt_calls = [u for u in jsonl(s.upstream) if u.get("model") == "gpt-6.1-sol"]
-        claude_calls = [u for u in jsonl(s.upstream) if u.get("model") == "claude-opus-5-5"]
-        ok = (c1 == 0 and c2 == 0 and "LIMIT: answered" in o1 and "LIMIT: answered" in o2 and len(claude_calls) == 1
-              and len(gpt_calls) >= 3 and all(u.get("reasoning_effort") == "high" for u in gpt_calls))
-        check("F126 限流后的回退模型也带思考", ok, "Claude 账号 429，回退模型是 OpenAI 接口的 GPT（模型列表里不给客户端看）："
-              "回退模型收到的请求带着用户设的思考档位（reasoning_effort=high），不会没有思考"
-              if ok else f"c={c1},{c2} claude={len(claude_calls)} gpt={[u.get('reasoning_effort') for u in gpt_calls]} o1={o1[-300:]!r}")
     finally:
         s.close()
 
@@ -2711,182 +2683,6 @@ def check_phone_console(root: Path, work: Path) -> None:
         s.close()
 
 
-def check_feishu(root: Path, work: Path) -> None:
-    """The Feishu bot, against a fake Feishu API: binding with the admin page's code (strangers ignored), an approval
-    card answered with its buttons, and a text message that steers a working session."""
-    s = Stack(root, work, "agent", server_env={"FERRY_FEISHU_API": "http://127.0.0.1:9100/feishu"})
-    settings = s.data / "feishu.json"
-    n = [0]
-
-    def post(body: dict) -> tuple[int, dict | str]:
-        return s.http("POST", "/feishu/event", body)
-
-    def head(kind: str, token: str = "fs-verify") -> dict:
-        n[0] += 1
-        return {"event_id": f"fs-ev-{n[0]}", "token": token, "event_type": kind, "app_id": "cli_selftest"}
-
-    def say(text: str, who: str = "ou_owner") -> tuple[int, dict | str]:
-        msg = {"message_id": f"om_in{n[0]}", "chat_type": "p2p", "message_type": "text", "content": json.dumps({"text": text})}
-        return post({"schema": "2.0", "header": head("im.message.receive_v1"),
-                     "event": {"sender": {"sender_id": {"open_id": who}, "sender_type": "user"}, "message": msg}})
-
-    def click(value: dict) -> dict:
-        code, r = post({"schema": "2.0", "header": head("card.action.trigger"),
-                        "event": {"operator": {"open_id": "ou_owner"}, "action": {"tag": "button", "value": value}}})
-        return r if isinstance(r, dict) else {}
-
-    def sent() -> list[dict]:
-        for _ in range(3):
-            try:
-                return [u for u in jsonl(s.upstream) if "msg_type" in u and "receive_id" in u]
-            except ValueError:  # a line being written
-                time.sleep(0.3)
-        return []
-
-    def texts() -> list[str]:
-        return [json.loads(u["content"]).get("text", "") for u in sent() if u["msg_type"] == "text"]
-
-    def cards() -> list[str]:
-        return [u["content"] for u in sent() if u["msg_type"] == "interactive"]
-
-    def model_saw(text: str) -> bool:
-        for _ in range(3):
-            try:
-                return any(m.get("role") == "user" and text in json.dumps(m.get("content"), ensure_ascii=False)
-                           for b in jsonl(s.upstream) for m in (b.get("messages") or []) if isinstance(m, dict))
-            except ValueError:
-                time.sleep(0.3)
-        return False
-
-    pid = 0
-    old = s.home / "temp"  # the fake model's PHONEAPPROVAL deletes this one (Ferry's temp folder: asks even in full access)
-    try:
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps({"on": True, "app_id": "cli_selftest", "app_secret": "fs-secret", "token": "fs-verify",
-                                        "code": "424242", "code_exp": int(time.time()) + 600}), encoding="utf-8")
-        _, challenge = post({"type": "url_verification", "challenge": "fs-challenge", "token": "fs-verify"})
-        bad, _ = post({"type": "url_verification", "challenge": "x", "token": "wrong"})
-        say("状态", who="ou_stranger")
-        say("123456", who="ou_stranger")
-        time.sleep(1)
-        ignored = not sent()
-        say("424242", who="ou_owner")
-        end = time.time() + 10
-        while time.time() < end and not any("绑定好了" in t for t in texts()):
-            time.sleep(0.3)
-        bound = json.loads(settings.read_text(encoding="utf-8")).get("owner") == "ou_owner"
-        welcomed = any("绑定好了" in t for t in texts()) and all(u["receive_id"] == "ou_owner" for u in sent())
-        say("424242", who="ou_stranger")
-        say("状态", who="ou_stranger")
-        time.sleep(1)
-        still = json.loads(settings.read_text(encoding="utf-8")).get("owner") == "ou_owner" and len(sent()) == 1
-        ok = challenge == {"challenge": "fs-challenge"} and bad == 401 and ignored and bound and welcomed and still
-        check("F122 飞书只听绑定的人", ok, "飞书的地址验证要对得上 Verification Token；绑定前谁发消息都不理；主人发管理页的绑定码后"
-              "绑定成功、收到一条说明；绑定码用过就失效，别人再发什么都不理" if ok
-              else f"challenge={challenge} bad={bad} ignored={ignored} bound={bound} welcomed={welcomed} still={still} sent={sent()}")
-
-        if WINDOWS:
-            print("  SKIP  F120 飞书上批准、F121 飞书上插话（Windows 上没有伪终端，Linux 上检查）")
-            return
-        import pty
-        import select
-        old.mkdir(parents=True, exist_ok=True)
-        s.home.mkdir(parents=True, exist_ok=True)
-        (s.home / "config.json").write_text(json.dumps({"phoneApprovalSeconds": 1}), encoding="utf-8")
-        env = {**s.env, "FERRY_SERVER": s.base, "FERRY_TOKEN": TOKEN, "TERM": "xterm-256color", "COLUMNS": "140", "LINES": "40"}
-        pid, fd = pty.fork()
-        if pid == 0:
-            os.chdir(work)
-            os.execvpe(NODE, [NODE, str(ROOT / "client" / "bin" / "ferry.mjs")], env)
-        seen = b""
-        plain = lambda b: re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|[\r]", "",  # noqa: E731
-                                 b.decode("utf-8", "replace"))
-
-        def wait_for(text: str, secs: float, since: int = 0) -> bool:
-            nonlocal seen
-            end = time.time() + secs
-            while time.time() < end:
-                r, _, _ = select.select([fd], [], [], 0.2)
-                if r:
-                    try:
-                        seen += os.read(fd, 65536)
-                    except OSError:
-                        return False
-                if text in plain(seen[since:]):
-                    return True
-            return False
-
-        def typed(text: bytes) -> None:
-            os.write(fd, text)
-            time.sleep(0.4)
-            os.write(fd, b"\r")
-
-        def card_with(text: str, secs: float) -> str:
-            end = time.time() + secs
-            while time.time() < end:
-                hit = [c for c in cards() if text in c]
-                if hit:
-                    return hit[-1]
-                wait_for("\0", 0.3)
-            return ""
-
-        started = wait_for("shift+tab", 60)
-        typed(f"PHONEAPPROVAL:{old.as_posix()} remove the old folder".encode())
-        asked = wait_for("Allow bash?", 30)
-        card = card_with(f"rm -rf {old.as_posix()}", 20)
-        values = re.findall(r'"value": (\{[^{}]*\})', card)
-        once = next((json.loads(v) for v in values if '"a": "once"' in v), {})
-        first = click(once) if once else {}
-        second = "再点一次确认" in json.dumps(first, ensure_ascii=False)
-        done_card = click({**once, "c": 1}) if once else {}
-        answered = "允许了这一次" in json.dumps(done_card, ensure_ascii=False) and "在飞书上答的" in json.dumps(done_card, ensure_ascii=False)
-        noticed = wait_for("Answered on the phone: Allow once", 20)
-        ran = wait_for("PHONEAPPROVED: removed-by-phone", 30) and not old.exists()
-        ok = started and asked and bool(card) and second and answered and noticed and ran
-        check("F120 飞书上批准", ok, "终端里等批准时，飞书收到一张卡片，写着命令，有允许、拒绝按钮；有风险的点“允许这一次”后卡片"
-              "要再确认一次；确认后卡片变成已处理，终端的确认框关掉，命令照常执行" if ok
-              else f"started={started} asked={asked} card={card[:300]!r} second={second} answered={answered} "
-                   f"noticed={noticed} ran={ran} {plain(seen)[-500:]!r}")
-
-        wait_for("\0", 1)
-        mark = len(seen)
-        typed(b"/goal PHONECONSOLE keep the console busy")
-        working, end = "", time.time() + 40
-        while time.time() < end and not working:
-            before = len(cards())
-            say("状态")
-            wait_for("\0", 3)
-            working = next((c for c in cards()[before:] if "在干活" in c and "PHONECONSOLE" in c), "")
-        say("PHONESTEER use the short names")
-        steered = wait_for("PHONESTEERSEEN PHONESTEER use the short names", 30, mark)
-        end = time.time() + 10
-        while time.time() < end and not any("已发出插话" in t for t in texts()):
-            wait_for("\0", 0.3)
-        replied = any("已发出插话" in t for t in texts())
-        ok = bool(working) and steered and replied and model_saw("(from your phone) PHONESTEER use the short names")
-        check("F121 飞书上插话", ok, "/goal 跑着时，在飞书发“状态”收到这个会话的卡片（在干活、目标）；直接发一句话，"
-              "它作为插话在下一步到了模型（开头写着 from your phone），飞书回一句已发出插话" if ok
-              else f"working={bool(working)} steered={steered} replied={replied} texts={texts()[-3:]} {plain(seen[mark:])[-500:]!r}")
-    finally:
-        if pid:  # keep reading while ferry quits: on macOS a full terminal buffer blocks its writes
-            for _ in range(2):
-                os.write(fd, b"\x03")
-                wait_for("\0", 0.3)
-            try:
-                os.kill(pid, signal.SIGTERM)
-                for _ in range(50):
-                    if os.waitpid(pid, os.WNOHANG)[0]:
-                        break
-                    wait_for("\0", 0.1)
-                else:
-                    os.kill(pid, signal.SIGKILL)
-                    os.waitpid(pid, 0)
-            except (ProcessLookupError, ChildProcessError):
-                pass
-        s.close()
-        shutil.rmtree(old, ignore_errors=True)
-
-
 def check_keepalive(root: Path, work: Path) -> None:
     """The server sends keep-alive comments while the model has not answered (a busy relay, a cool-down), so a tunnel
     that ends silent requests (Cloudflare 524 after ~100 s) does not cut the call; an error afterwards still reaches the agent."""
@@ -2904,20 +2700,20 @@ def check_keepalive(root: Path, work: Path) -> None:
               if ok else f"c={c1},{c2},{c3} committed={len(committed)} o1={o1[-200:]!r} o2={o2[-200:]!r} o3={o3[-300:]!r}")
     finally:
         s.close()
-    # a relay that accepts the request and then sends nothing: after stall_seconds the request goes to the fallback
-    toml = ('\n[providers.slow]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\nfallback = "main"\n'
+    # a relay that accepts the request and then sends nothing: after stall_seconds the server asks the same model again
+    toml = ('\n[providers.slow]\nbase_url = "http://127.0.0.1:9100/v1"\napi_key_env = "DEEPSEEK_API_KEY"\n'
             'stall_seconds = 1\ndrop_params = ["store"]\nrename_params = { max_completion_tokens = "max_tokens" }\n\n[models.slowm]\nprovider = "slow"\nmodel = "stall-model"\n\n[routing]\ndefault = "slowm"\n')
     s = Stack(root / "stall", work, "agent", extra_toml=toml)
     try:
         c1, o1 = s.ferry("-p", "say hello")
         c2, o2 = s.ferry("-p", "say hello again")
-        stalled = [u for u in jsonl(s.upstream) if u.get("model") == "stall-model"]
+        asked = [u for u in jsonl(s.upstream) if u.get("model") == "stall-model"]
         audit = jsonl(s.data / "audit.jsonl")
         rows = [a for a in audit if a.get("event") == "chat" and a.get("status") == 504 and "stalled" in str(a.get("error"))]
-        ok = c1 == 0 and c2 == 0 and "OK" in o1 and "OK" in o2 and len(stalled) == 1 and len(rows) == 1
-        check("F128 上游接了请求又不出声就改问备用模型", ok, "中转收下请求后一个字节都不发：1 秒后服务端放弃它，同一次请求改由备用模型回答，"
-              "调用记录写 504（卡住），不是成功；账号冷却期间后面的请求直接问备用模型"
-              if ok else f"c={c1},{c2} stalled={len(stalled)} rows={len(rows)} o1={o1[-200:]!r} o2={o2[-200:]!r}")
+        ok = c1 == 0 and c2 == 0 and "OK" in o1 and "OK" in o2 and len(asked) == 3 and len(rows) == 1
+        check("F128 上游接了请求又不出声就再问同一个模型", ok, "中转第一次收下请求后一个字节都不发：1 秒后服务端放弃这一次，"
+              "同一次请求再问同一个模型并得到回答，调用记录写 504（卡住）而不是成功；后面的请求照常"
+              if ok else f"c={c1},{c2} asked={len(asked)} rows={len(rows)} o1={o1[-200:]!r} o2={o2[-200:]!r}")
     finally:
         s.close()
 
@@ -2936,7 +2732,7 @@ STEPS = [
     (check_diy, "diy"), (check_claude_goal_jobs, "claude"), (check_v018, "v018"), (check_office_legacy, "oldoffice"), (check_word_tracked, "wordtracked"),
     (check_install_update, "install"), (check_search_502, "search502"), (check_upload_delete, "updel"),
     (check_upload_size, "upsize"), (check_side, "side"), (check_server_models_only, "srvmodels"),
-    (check_watchdog, "watchdog"), (check_phone_remote, "remote"), (check_phone_console, "console"), (check_feishu, "feishu"),
+    (check_watchdog, "watchdog"), (check_phone_remote, "remote"), (check_phone_console, "console"),
     (check_watch_loop, "watchloop"), (check_keepalive, "keepalive"),
 ]
 

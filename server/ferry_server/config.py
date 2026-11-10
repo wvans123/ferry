@@ -15,7 +15,7 @@ DEFAULT_RULES = """- Reply in the same language the user writes in.
 
 # Seconds a streaming answer may send nothing before it counts as stalled. Long enough for a model that thinks
 # without streaming its thoughts (a relay that drops them, GPT reasoning) on a big context; much less than httpx's 600 s.
-STALL_DEFAULT = 300
+STALL_DEFAULT = 120
 
 
 @dataclass
@@ -68,7 +68,6 @@ class Provider:
     rpm: int = 0             # calls started per minute at most; more wait (0 = no limit)
     cooldown: int = 60       # after "too many requests" (429): seconds this account is left alone (Retry-After wins)
     stall_seconds: int = STALL_DEFAULT  # a streaming answer that sends nothing for this long is dropped and asked again (0 = off)
-    fallback: str = ""       # model that answers while this account cools down ("" = wait); another API form: the client asks it
     share: bool = False      # pool its models with same-named models of other sharing providers (default: kept apart)
 
     @property
@@ -151,7 +150,7 @@ def load(path: str | os.PathLike) -> Config:
         cfg.users[token] = u["name"]
     if not cfg.users:
         raise SystemExit("no [[users]] configured")
-    if raw.get("providers"):  # accounts shared by models, as in models.toml (limits, cool-down, fallback)
+    if raw.get("providers"):  # accounts shared by models, as in models.toml (limits, cool-down)
         cfg.providers, cfg.models = parse_models(raw, {})
     else:
         for mid, m in raw.get("models", {}).items():
@@ -341,6 +340,8 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
     providers: dict[str, Provider] = {}
     for pid, p in raw.get("providers", {}).items():
         pre = BY_ID.get(p.get("preset", ""), {})
+        if p.get("fallback"):  # removed: only same-named models of sharing providers take over (share = true)
+            print(f"provider {pid}: 'fallback' is no longer used and is ignored", flush=True)
         base = p.get("base_url") or pre.get("base_url", "")
         if not base:
             raise SystemExit(f"provider {pid}: base_url is empty")
@@ -351,7 +352,7 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
             no_key=bool(p.get("no_key", pre.get("no_key", False))), key=secrets_.get(pid, ""),
             api=p.get("api") or pre.get("api", "openai"), max_concurrent=int(p.get("max_concurrent", 0) or 0),
             rpm=int(p.get("rpm", 0) or 0), cooldown=int(p.get("cooldown", 60) or 60),
-            stall_seconds=max(0, int(p["stall_seconds"]) if p.get("stall_seconds") is not None else STALL_DEFAULT), fallback=str(p.get("fallback", "") or ""),
+            stall_seconds=max(0, int(p["stall_seconds"]) if p.get("stall_seconds") is not None else STALL_DEFAULT),
             share=bool(p.get("share", False)))  # "separate" (0.29, now the default) is ignored
     models: dict[str, ModelConfig] = {}
     for mid, m in raw.get("models", {}).items():
@@ -445,7 +446,7 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
     out.append(f"expose = {_toml_value(bool(routing.get('expose', True)))}")
     for p in providers:
         out += ["", f"[providers.{_toml_key(p['id'])}]"]
-        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "fallback", "share"):
+        for k in ("name", "preset", "api", "base_url", "api_key_env", "drop_params", "rename_params", "no_key", "max_concurrent", "rpm", "cooldown", "share"):
             if p.get(k) not in (None, "", [], {}, False):
                 out.append(f"{k} = {_toml_value(p[k])}")
         if p.get("stall_seconds") is not None and int(p["stall_seconds"]) != STALL_DEFAULT:  # 0 (off) must be written too

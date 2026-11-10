@@ -156,7 +156,7 @@ export function createCommands(cfg, deps) {
 			lastStop = null;
 		});
 
-		// the server says a model's account is cooling down after "too many requests" (and who answers meanwhile)
+		// the server says a model's account is cooling down after "too many requests" (requests wait on the server)
 		pi.on("session_start", (_e, ctx) => {
 			if (!ctx.hasUI) return;
 			// a request that meets the company gateway mid-work: say so while ferry waits for the confirmation
@@ -165,8 +165,7 @@ export function createCommands(cfg, deps) {
 			cfg.onRoute = (notes) => {
 				const n = notes?.[0];
 				const named = cfg.showModel !== false; // showModel = false: no model names on the screen
-				ctx.ui.setStatus("ferry-route", n ? `${named ? n.model : "the model"} is rate-limited: ${n.seconds}s to go, ` +
-					(n.fallback ? `${named ? n.fallback : "another model"} answers meanwhile` : "requests wait on the server") : undefined);
+				ctx.ui.setStatus("ferry-route", n ? `${named ? n.model : "the model"} is rate-limited: ${n.seconds}s to go, requests wait on the server` : undefined);
 			};
 		});
 

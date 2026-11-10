@@ -98,10 +98,27 @@ def test_old_deepseek_sizes_are_raised_but_chosen_ones_kept():
 def test_stall_seconds_default_and_zero_survive_the_models_file(tmp_path, monkeypatch):
     from ferry_server.config import load_default, render_models_toml
     monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
-    for sec, want in ((None, 300), (0, 0), (45, 45), (300, 300), (120, 120)):
+    for sec, want in ((None, 120), (0, 0), (45, 45), (300, 300), (120, 120)):
         p = {"id": "x", "base_url": "http://x/v1", "api_key_env": "K", "no_key": True}
         if sec is not None:
             p["stall_seconds"] = sec
         text = render_models_toml([p], [{"id": "m", "provider": "x", "model": "m"}], {"default": "m"})
         (tmp_path / "models.toml").write_text(text, encoding="utf-8")
         assert load_default().providers["x"].stall_seconds == want
+
+
+def test_old_settings_for_removed_features_load_without_an_error(tmp_path, monkeypatch, capsys):
+    """A config written before the Feishu bot and the provider fallback were removed still loads; the keys are ignored."""
+    from ferry_server.config import load_default
+    for k in KEYS:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
+    monkeypatch.setenv("KEY_A", "ka")
+    (tmp_path / "server.toml").write_text('bark_url = "https://bark.example/x"\nfeishu_on = true\n\n[feishu]\napp_id = "cli_x"\n', encoding="utf-8")
+    (tmp_path / "feishu.json").write_text('{"app_id": "cli_x", "owner": "ou_1"}', encoding="utf-8")
+    (tmp_path / "models.toml").write_text(
+        '[providers.a]\nbase_url = "https://a.example.com/v1"\napi_key_env = "KEY_A"\nfallback = "gpt-b"\n\n'
+        '[models.gpt]\nprovider = "a"\nmodel = "gpt-6.1-sol"\n\n[models.gpt-b]\nprovider = "a"\nmodel = "gpt-6.1-sol-b"\n', encoding="utf-8")
+    cfg = load_default()
+    assert cfg.bark_url == "https://bark.example/x" and list(cfg.models) == ["gpt", "gpt-b"]
+    assert not hasattr(cfg.providers["a"], "fallback") and "'fallback' is no longer used" in capsys.readouterr().out

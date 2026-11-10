@@ -602,10 +602,6 @@ def decide_agent(msgs):
         out = [text_of(t) for t in tools]
         return ("text", f"PLANMODE entered={'plan mode is on' in out[0]} refused={'Plan mode is on' in out[1]} "
                         f"left={'plan mode is off' in out[2]} wrote={'Successfully wrote' in out[3]}")
-    if "LIMITTEST" in first:  # answered by the fallback (an OpenAI-style model) while Claude's account cools down
-        if not tools:
-            return ("tool", "bash", {"command": "echo fallback-step"})
-        return ("text", "LIMIT: answered by the fallback after " + text_of(tools[-1]).strip()[:40])
     if "TODOTEST" in first:
         if not tools:
             return ("tool", "todo", {"todos": [{"content": "step one", "status": "completed"},
@@ -683,15 +679,6 @@ def anthropic_to_openai(body):
 
 class H(BaseHTTPRequestHandler):
     def anthropic(self, body, raw):
-        if "LIMITTEST" in json.dumps(body.get("messages", [])):  # this Claude account is rate-limited
-            data = json.dumps({"type": "error", "error": {"type": "rate_limit_error", "message": "Too many requests"}}).encode()
-            self.send_response(429)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Retry-After", "30")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
         problems = anthropic_problems(body, self.headers)
         if problems:
             return self.send_json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "; ".join(problems)}})
@@ -791,11 +778,6 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(200, {"object": "list", "data": [{"id": "fake-small"}, {"id": "fake-large"}]})
         self.send_json(404, {"error": {"message": "not found"}})
 
-    def do_PATCH(self):  # the Feishu bot updates a card it sent
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        log({"feishu_patch": self.path.rsplit("/", 1)[-1], **body})
-        self.send_json(200, {"code": 0, "data": {}})
-
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
         body = json.loads(raw)
@@ -830,18 +812,14 @@ class H(BaseHTTPRequestHandler):
             return
         if self.path.endswith("/bark"):  # a phone notification (Bark)
             return self.send_json(200, {"code": 200, "message": "success"})
-        if self.path.endswith("/feishu/open-apis/auth/v3/tenant_access_token/internal"):  # Feishu's open API
-            return self.send_json(200, {"code": 0, "msg": "ok", "tenant_access_token": "t-fake", "expire": 7200})
-        if self.path.startswith("/feishu/open-apis/im/v1/messages?"):  # a message from the Feishu bot
-            state["feishu"] = state.get("feishu", 0) + 1
-            return self.send_json(200, {"code": 0, "data": {"message_id": f"om_fake{state['feishu']}"}})
         if self.path.endswith("/v1/messages"):
             return self.anthropic(body, raw)
         bad = [k for k in REJECT if k in body]
         if bad:
             return self.send_json(400, {"error": {"message": f"unsupported parameter: {bad[0]}"}})
         asked = json.dumps(body.get("messages", []))
-        if body.get("model") == "stall-model" and body.get("stream"):  # a relay that accepts the request and goes silent
+        if body.get("model") == "stall-model" and body.get("stream") and not state.get("stalled"):  # a relay that accepts the request and goes silent (once)
+            state["stalled"] = True
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()

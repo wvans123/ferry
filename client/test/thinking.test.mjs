@@ -59,11 +59,11 @@ async function askGpt(entry, level) {
 	}
 }
 
-test("a fallback the client does not list still thinks once the server names its model, at the nearest level it has", async () => {
+test("a model the client does not list still thinks once the server names its model, at the nearest level it has", async () => {
 	const listed = { id: "gpt", model: "gpt-6.1-sol", api: "openai", contextWindow: 400000 };
 	const high = await askGpt(listed, "high");
 	assert.equal(high.reasoning_effort, "high");
-	// what the client used to build for an unlisted fallback: no upstream name, so no thinking
+	// what the client used to build for an unlisted model: no upstream name, so no thinking
 	assert.equal((await askGpt({ id: "gpt", api: "openai", contextWindow: 400000 }, "high")).reasoning_effort, undefined);
 	// a level the model does not have (Claude's "xhigh" or "minimal") moves to the nearest one instead of dropping thinking
 	const top = await askGpt(listed, "xhigh");

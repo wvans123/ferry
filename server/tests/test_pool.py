@@ -375,36 +375,7 @@ def test_a_provider_that_keeps_failing_ends_in_one_clear_answer_the_client_does_
     assert not pi_retry.search(f"424 {msg}"), pi_retry.search(f"424 {msg}")
 
 
-def test_too_many_requests_cools_the_account_down_and_the_fallback_answers(tmp_path, monkeypatch):
-    seen = []
-
-    def handler(req: httpx.Request):
-        seen.append(req.url.host)
-        if req.url.host == "b.example.com":
-            return httpx.Response(429, json={"error": {"message": "Too many requests"}}, headers={"retry-after": "1"})
-        return answer(req.url.host)
-
-    cfg, app = make(tmp_path, monkeypatch, handler)
-    token = (tmp_path / "token").read_text().strip()
-    hdr = {"Authorization": f"Bearer {token}"}
-    cfg.providers["b"].fallback = "gpt"  # "other" (deepseek-flash on b) falls back to gpt on a
-
-    async def ask():
-        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-            r = await c.post("/v1/chat/completions", headers=hdr, json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
-            ack = (await c.post("/v1/ferry/commit", params={"conv": "x", "base": 0, "base_hash": ""}, headers=hdr,
-                                content=json.dumps({"append": [json.dumps({"role": "user", "content": "x"})], "tools": None}))).json()
-            r2 = await c.post("/v1/chat/completions", headers=hdr, json={"model": "other", "messages": [{"role": "user", "content": "again"}]})
-            return r, ack, r2
-
-    r, ack, r2 = asyncio.run(ask())
-    assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "a.example.com"
-    notes = {o["model"]: o for o in ack["cooling"]}
-    assert notes["other"]["fallback"] == "gpt" and notes["other"]["seconds"] >= 0  # the client can say so
-    assert r2.json()["choices"][0]["message"]["content"] == "a.example.com" and seen == ["b.example.com", "a.example.com", "a.example.com"]
-
-
-def test_without_a_fallback_the_request_waits_out_the_cool_down(tmp_path, monkeypatch):
+def test_too_many_requests_cools_the_account_down_and_the_request_waits_for_it(tmp_path, monkeypatch):
     calls = []
 
     def handler(req: httpx.Request):
@@ -413,6 +384,57 @@ def test_without_a_fallback_the_request_waits_out_the_cool_down(tmp_path, monkey
 
     cfg, app = make(tmp_path, monkeypatch, handler)
     token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    async def ask():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            waiting = asyncio.create_task(c.post("/v1/chat/completions", headers=hdr,
+                                                 json={"model": "other", "messages": [{"role": "user", "content": "hi"}]}))
+            await asyncio.sleep(0.4)  # the first answer was a 429: the account cools down, the request waits on the server
+            ack = (await c.post("/v1/ferry/commit", params={"conv": "x", "base": 0, "base_hash": ""}, headers=hdr,
+                                content=json.dumps({"append": [json.dumps({"role": "user", "content": "x"})], "tools": None}))).json()
+            return await waiting, ack
+
+    r, ack = asyncio.run(ask())
+    assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "later" and len(calls) == 2
+    note = {o["model"]: o for o in ack["cooling"]}["other"]
+    assert note["seconds"] >= 0 and set(note) == {"model", "seconds"}  # the status line says so; nobody answers meanwhile
+
+
+def test_a_cooling_account_hands_the_request_to_the_other_sharing_provider(tmp_path, monkeypatch):
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req.url.host)
+        if req.url.host == "a.example.com":
+            return httpx.Response(429, json={"error": {"message": "Too many requests"}}, headers={"retry-after": "30"})
+        return answer(req.url.host)
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    token = (tmp_path / "token").read_text().strip()
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    async def ask():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return [await c.post("/v1/chat/completions", headers=hdr, json={"model": "gpt", "messages": [{"role": "user", "content": t}]})
+                    for t in ("one", "two")]
+
+    one, two = asyncio.run(ask())
+    # gpt (provider a) and gpt-b (provider b) are the same model and both share: b's copy answers, then a is left alone
+    assert one.json()["choices"][0]["message"]["content"] == "b.example.com"
+    assert two.json()["choices"][0]["message"]["content"] == "b.example.com" and seen == ["a.example.com", "b.example.com", "b.example.com"]
+
+
+def test_a_provider_that_keeps_answering_429_ends_in_the_gave_up_answer(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append(1)
+        return httpx.Response(429, json={}, headers={"retry-after": "1"})
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    monkeypatch.setattr(app_mod, "RETRY_WAIT_S", 2.5)
+    token = (tmp_path / "token").read_text().strip()
 
     async def ask():
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
@@ -420,7 +442,7 @@ def test_without_a_fallback_the_request_waits_out_the_cool_down(tmp_path, monkey
                                 json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
 
     r = asyncio.run(ask())
-    assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "later" and len(calls) == 2
+    assert r.status_code == 424 and r.json()["error"]["code"] == "ferry_gave_up" and len(calls) >= 2
 
 
 CLAUDE = """
@@ -428,7 +450,6 @@ CLAUDE = """
 base_url = "https://c.example.com"
 api_key_env = "KEY_A"
 api = "anthropic"
-fallback = "gpt"
 
 [models.kiro]
 provider = "c"
@@ -436,40 +457,7 @@ model = "claude-opus-5.5"
 """
 
 
-def test_a_fallback_of_the_other_api_is_asked_by_the_client(tmp_path, monkeypatch):
-    calls = []
-
-    def handler(req: httpx.Request):
-        calls.append(req.url.host)
-        if len(calls) == 1:
-            return httpx.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}},
-                                  headers={"retry-after": "1"})
-        return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant", "model": "claude",
-                                         "content": [{"type": "text", "text": "later"}], "stop_reason": "end_turn",
-                                         "usage": {"input_tokens": 5, "output_tokens": 1}})
-
-    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
-    token = (tmp_path / "token").read_text().strip()
-    hdr = {"Authorization": f"Bearer {token}", "x-ferry-reroute": "1"}
-    body = {"model": "kiro", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]}
-
-    async def ask(h):
-        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-            r = await c.post("/anthropic/v1/messages", headers=h, json=body)
-            ack = (await c.post("/v1/ferry/commit", params={"conv": "y", "base": 0, "base_hash": ""}, headers=h,
-                                content=json.dumps({"append": [json.dumps({"role": "user", "content": "x"})], "tools": None}))).json()
-            r2 = await c.post("/anthropic/v1/messages", headers=h, json=body)
-            return r, ack, r2
-
-    r, ack, r2 = asyncio.run(ask(hdr))
-    assert r.status_code == 422 and "ferry-reroute:gpt@openai" in r.text  # gpt speaks OpenAI's API: the client asks it
-    assert "[model=gpt-6.1-sol]" in r.text  # its upstream name: the client needs it to ask with thinking
-    kiro = {o["model"]: o for o in ack["cooling"]}["kiro"]
-    assert kiro["fallback"] == "gpt" and kiro["switch"] is True and kiro["fallbackModel"] == "gpt-6.1-sol"
-    assert r2.status_code == 422 and calls == ["c.example.com"]  # while it cools down: not asked at all
-
-
-def test_an_older_client_waits_out_the_cool_down_instead(tmp_path, monkeypatch):
+def test_the_messages_api_waits_out_the_cool_down_too(tmp_path, monkeypatch):
     calls = []
 
     def handler(req: httpx.Request):
@@ -485,7 +473,7 @@ def test_an_older_client_waits_out_the_cool_down_instead(tmp_path, monkeypatch):
 
     async def ask():
         async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-            return await c.post("/anthropic/v1/messages", headers={"Authorization": f"Bearer {token}"},
+            return await c.post("/anthropic/v1/messages", headers={"Authorization": f"Bearer {token}", "x-ferry-reroute": "1"},
                                 json={"model": "kiro", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]})
 
     r = asyncio.run(ask())
@@ -511,74 +499,3 @@ def test_a_model_switched_to_the_other_api_tells_the_client_to_resend_in_its_for
     assert new.status_code == 422 and new.json()["error"]["message"].startswith("ferry-reroute:other@anthropic ")
     assert old.status_code == 400 and "ferry update" in old.json()["error"]["message"]
     assert back.status_code == 422 and back.json()["error"]["message"].startswith("ferry-reroute:gpt@openai ")
-
-
-def test_thinking_asked_of_the_main_model_reaches_a_fallback_on_the_same_api(tmp_path, monkeypatch):
-    """The fallback answers the same request body, so the level the user chose travels along: Chat Completions
-    reasoning_effort, the Responses API's reasoning.effort, Claude's thinking and effort."""
-    seen = []
-
-    def handler(req: httpx.Request):
-        body = json.loads(req.content)
-        seen.append((req.url.host, req.url.path, body))
-        if req.url.host in ("b.example.com", "d.example.com"):
-            return httpx.Response(429, json={"error": {"message": "Too many requests"}}, headers={"retry-after": "1"})
-        if req.url.host == "e.example.com":
-            return httpx.Response(200, json={"id": "m", "type": "message", "role": "assistant", "model": "claude",
-                                             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
-                                             "usage": {"input_tokens": 5, "output_tokens": 1}})
-        if req.url.path.endswith("/responses"):
-            return httpx.Response(200, json={"id": "r", "status": "completed", "output": [
-                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
-                "usage": {"input_tokens": 5, "output_tokens": 1}})
-        return answer("ok")
-
-    extra = """
-[providers.r]
-base_url = "https://r.example.com/v1"
-api_key_env = "KEY_A"
-api = "openai-responses"
-
-[models.resp]
-provider = "r"
-model = "gpt-6.1-sol"
-
-[providers.d]
-base_url = "https://d.example.com"
-api_key_env = "KEY_A"
-api = "anthropic"
-fallback = "haiku"
-
-[models.opus]
-provider = "d"
-model = "claude-opus-5-5"
-
-[providers.e]
-base_url = "https://e.example.com"
-api_key_env = "KEY_A"
-api = "anthropic"
-
-[models.haiku]
-provider = "e"
-model = "claude-haiku-5"
-"""
-    cfg, app = make(tmp_path, monkeypatch, handler, extra)
-    token = (tmp_path / "token").read_text().strip()
-    hdr = {"Authorization": f"Bearer {token}"}
-    cfg.providers["b"].fallback = "resp"  # "other" on b falls back to resp (Responses API on r)
-    msgs = [{"role": "user", "content": "hi"}]
-
-    async def go():
-        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-            a = await c.post("/v1/chat/completions", headers=hdr, json={"model": "other", "reasoning_effort": "high", "messages": msgs})
-            b = await c.post("/anthropic/v1/messages", headers=hdr, json={
-                "model": "opus", "max_tokens": 100, "thinking": {"type": "adaptive"}, "output_config": {"effort": "high"},
-                "messages": msgs})
-            return a, b
-
-    a, b = asyncio.run(go())
-    assert a.status_code == 200 and b.status_code == 200
-    resp = next(x for x in seen if x[0] == "r.example.com")
-    assert resp[1].endswith("/responses") and resp[2]["reasoning"] == {"effort": "high"}
-    haiku = next(x for x in seen if x[0] == "e.example.com")
-    assert haiku[2]["thinking"] == {"type": "adaptive"} and haiku[2]["output_config"] == {"effort": "high"}
