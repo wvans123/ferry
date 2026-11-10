@@ -293,13 +293,17 @@ def check_goal_todo(root: Path, work: Path) -> None:
         ok = c1 == 0 and "rejected=True accepted=True" in o1
         check("F97 /goal 按标准验收", ok, "报告完成时只给了第 1 条标准的证据：被退回，说明第 2 条缺证据；"
               "补上每条的证据后才算完成" if ok else o1[-400:])
+        c3, o3 = s.ferry("-p", "/goal GOALREVIEW write rev.txt")
+        ok = c3 == 0 and "sent_back=True accepted=True" in o3 and (work / "rev.txt").exists()
+        check("F129 /goal 完成要独立复核", ok, "agent 第一次报告完成：另起的复核 agent 只看到目标、标准和证据，判为不通过，结果带着它的意见退回；"
+              "改后再报，复核通过，目标才算完成" if ok else o3[-400:])
         c2, o2 = s.ferry("-p", "TODOSTALE: work without updating the list")
         ok = c2 == 0 and "STALE reminded after=12 item=True count=1" in o2
         check("F96 待办不动时提醒", ok, "待办清单有一项进行中，agent 连续调用 12 次工具都没更新清单：模型收到一条隐藏提醒，"
               "写明哪一项还标着进行中" if ok else o2[-400:])
     finally:
         s.close()
-        for n in ("crit-a.txt", "crit-b.txt"):
+        for n in ("crit-a.txt", "crit-b.txt", "rev.txt"):
             (work / n).unlink(missing_ok=True)
 
 

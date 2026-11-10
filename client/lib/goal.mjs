@@ -10,11 +10,21 @@
 // While pursuing, every time the agent stops, Ferry sends it on ("continue toward the goal") unless it has reported
 // the goal achieved or unmet, the budget is used up, or the turn limit is reached. Esc pauses the goal.
 //
+// A run that ends with a model or network error does not end the goal: it is sent on again after 30 s, 2 min and 5 min
+// (cfg.goalRetryMs / deps.retryMs shorten the waits for tests; the wait is a timer, not a blocked hook, so Esc, typing
+// and /goal pause stay free). A run that ends without error resets the count. After the third failed retry the goal is
+// paused with a note and the phone is told once; /goal resume (or the phone console) continues it the next day.
+//
 // "Done" is agreed first: unless the objective already says how to check it, the agent asks you once (ask_user) and
 // records the completion criteria (goal_update status "criteria"); without a terminal it writes its own, marked as
 // assumed. What you say while the goal runs is kept as a short list of changes. Criteria and changes ride in every
 // continue message and in a note after a summary, so they survive compaction. An "achieved" report needs evidence for
-// every criterion; it is sent back at most twice.
+// every criterion; it is sent back at most twice. A report that passes is then checked by the built-in review
+// subagent, which has seen nothing of the work (cfg.runSubagent, set by subagent.mjs): it reads the files and runs
+// read-only commands against each criterion and answers VERDICT: pass or fail. A fail sends the agent back with the
+// findings (at most 2 rounds per goal; later reports are accepted with the open findings written in the note). With
+// subagents off (or goalReview = false), or when the reviewer cannot run, the report is accepted as before and the note
+// says it was not independently reviewed.
 import { unwrap } from "./text.mjs";
 import { steerState } from "./steer.mjs";
 import { PHONE_MARK } from "./remote.mjs";
@@ -27,6 +37,8 @@ const ENTRY = "ferry-goal";
 const MAX_CRITERIA = 10;
 const MAX_CHANGES = 10;
 const MAX_REJECTIONS = 2;
+const MAX_REVIEWS = 2;
+const RETRY_MS = [30_000, 120_000, 300_000]; // waits before the 1st, 2nd and 3rd retry after an error
 const cut = (s, n) => {
 	const t = String(s ?? "").replace(/\s+/g, " ").trim();
 	return t.length > n ? `${t.slice(0, n)}…` : t;
@@ -68,6 +80,37 @@ export function changesText(goal) {
 		`criteria, it wins):\n${goal.changes.map((c) => `- ${c.text}`).join("\n")}`;
 }
 
+/** The first line of an error message, cut short. */
+const firstLine = (s) => cut(String(s ?? "").split("\n").find((l) => l.trim()) ?? "", 200);
+
+/** What the reviewer gets: only the objective, criteria, the user's changes, the agent's evidence and the folder (exported for tests). */
+export function reviewPrompt(goal, checks, evidence, cwd) {
+	const claimed = (goal.criteria?.length ? goal.criteria.map((c, i) => {
+		const e = checks.filter((k) => Number(k.criterion) === i + 1).map((k) => k.evidence).join("; ");
+		return `${i + 1}. ${c}\n   Evidence the agent claims: ${e || "(none given)"}`;
+	}) : ["(no criteria were recorded: check the objective itself)"]).join("\n") + (evidence ? `\nGeneral evidence: ${evidence}` : "");
+	return [`You are reviewing a goal that another agent says it has achieved. You have seen none of its work. Do not trust its ` +
+		`evidence: check every criterion for real, by reading the files and running read-only commands (nothing that changes anything).`,
+	`Objective:\n${goal.objective}`,
+	criteriaText(goal) || "Completion criteria: none recorded.",
+	changesText(goal),
+	`Evidence per criterion, as claimed by the agent:\n${claimed}`,
+	`Working folder: ${cwd}`,
+	"Answer in this form:\nFirst line: `VERDICT: pass` (every criterion really met) or `VERDICT: fail`.\n" +
+		"Then one line per criterion: its number, met or not met, and why (what you looked at).\n" +
+		"Then, if any criterion does not actually cover the objective (something the objective needs that no criterion checks), " +
+		"one line starting with `Gap:` for each."].filter(Boolean).join("\n\n");
+}
+
+/** { pass, findings } from the reviewer's answer, or null when it gave no verdict (exported for tests). */
+export function parseVerdict(text) {
+	const lines = String(text ?? "").split("\n");
+	const i = lines.findIndex((l) => l.trim());
+	const m = i < 0 ? null : /^\W*VERDICT:\s*(pass|fail)/i.exec(lines[i].trim());
+	if (!m) return null;
+	return { pass: m[1].toLowerCase() === "pass", findings: lines.slice(i + 1).join("\n").trim().slice(0, 3000) };
+}
+
 function guide(goal, hasUI) {
 	const criteria = criteriaText(goal);
 	const first = criteria ? `${criteria}\n\n`
@@ -88,7 +131,8 @@ ${goal.objective}
   count something as done because it looks plausible.
 - If you have the advisor tool, call it once before you report the goal achieved (with the work saved), and deal with what it finds.
 - When every criterion is met and checked, call goal_update with status "achieved", a short summary and checks: one
-  entry per criterion (its number) with the evidence.
+  entry per criterion (its number) with the evidence. An independent reviewer who has seen none of your work will
+  then check each criterion for real; if it finds something, fix it and report again.
 - If you cannot go on without the user (a decision, access, missing information) or it turns out impossible, call
   goal_update with status "unmet" and say exactly what is needed.
 - Otherwise keep going: you will be prompted to continue after each turn. Do not stop to ask whether to continue.`);
@@ -100,11 +144,21 @@ export function goalState(goal) {
 		changesText(goal)].filter(Boolean).join("\n");
 }
 
-export function createGoal(cfg) {
+export function createGoal(cfg, deps = {}) {
 	return (pi) => {
 		let goal = null; // { objective, status, startedAt, budget, turns, note, reported, criteria, criteriaAssumed, changes, rejections }
 		let nextBudget = null; // /goal budget before a goal is set
 		let ui = null;
+		const waits = deps.retryMs ?? cfg.goalRetryMs ?? (process.env.FERRY_GOAL_RETRY_MS ? process.env.FERRY_GOAL_RETRY_MS.split(",").map(Number) : RETRY_MS); // the env var is for the self-test
+		let failures = 0; // runs in a row that ended with an error
+		let retryTimer = null;
+		let retryInfo = ""; // shown in the status line while a retry is waiting
+		let lastCtx = null;
+		const clearRetry = () => {
+			clearTimeout(retryTimer);
+			retryTimer = null;
+			retryInfo = "";
+		};
 		// the goal line for the phone console (console.mjs)
 		cfg.goalNow = () => (goal ? { objective: cut(goal.objective, 400), status: goal.status, turns: goal.turns } : null);
 		const save = () => {
@@ -119,7 +173,7 @@ export function createGoal(cfg) {
 			const used = tokensSince(ctx.sessionManager.getBranch(), goal.startedAt);
 			const icon = { pursuing: "◎", paused: "‖", achieved: "✓", unmet: "!", budget: "$" }[goal.status] ?? "◎";
 			ui.setStatus("ferry-goal", `${icon} goal ${goal.status} · ${mins((goal.status === "pursuing" ? Date.now() : goal.endedAt ?? Date.now()) - goal.startedAt)} · ` +
-				`${fmt(used)}${goal.budget ? `/${fmt(goal.budget)}` : ""} tokens · ${goal.turns} turns`);
+				`${fmt(used)}${goal.budget ? `/${fmt(goal.budget)}` : ""} tokens · ${goal.turns} turns${retryInfo}`);
 		};
 		const describe = (ctx) => {
 			if (!goal) return "No goal. Set one with: /goal <what should be true when it is done>";
@@ -133,6 +187,8 @@ export function createGoal(cfg) {
 
 		pi.on("session_start", (_e, ctx) => {
 			if (ctx.hasUI) ui = ctx.ui;
+			clearRetry();
+			failures = 0;
 			goal = null;
 			for (const e of ctx.sessionManager.getBranch()) {
 				if (e.type === "custom" && e.customType === ENTRY) goal = e.data ?? null;
@@ -144,6 +200,7 @@ export function createGoal(cfg) {
 
 		// The section changes only when a goal starts, ends or gets its criteria: a changed system prompt is a new
 		// first message for the server copy (sync.mjs). Changes the user makes go in recorded messages instead.
+		pi.on("session_shutdown", () => clearRetry());
 		pi.on("before_agent_start", (event, ctx) => {
 			if (goal && (goal.status === "pursuing" || goal.status === "paused")) event.systemPromptOptions.sections.ferry_goal = guide(goal, !!ctx?.hasUI);
 			else delete event.systemPromptOptions.sections.ferry_goal;
@@ -193,9 +250,17 @@ export function createGoal(cfg) {
 						"\nCheck each of them for real (read the file, run the command or test). Then call goal_update with status " +
 						'"achieved" again, with checks for every criterion; or "unmet" if one cannot be met.');
 				}
+				let review = { note: "", open: "" };
+				if (params.status === "achieved") {
+					const r = await reviewGoal(params, checks, _signal, ctx);
+					if (r.back) return reply(r.back);
+					review = r;
+					if (goal?.status !== "pursuing") return reply("The goal was paused or cleared while it was being checked.");
+				}
 				goal.status = params.status;
 				const proof = [...checks.map((c) => `${c.criterion}: ${c.evidence}`), ...(params.evidence ? [params.evidence] : [])].join("; ");
-				goal.note = `${summary}${proof ? ` (evidence: ${proof})` : ""}${missing.length ? ` (no evidence for criteria ${missing.join(", ")})` : ""}`.slice(0, 1000);
+				goal.note = `${summary}${proof ? ` (evidence: ${proof})` : ""}${missing.length ? ` (no evidence for criteria ${missing.join(", ")})` : ""}`.slice(0, 1000) +
+					(review.note ? ` [${review.note}]` : "");
 				goal.reported = true;
 				save();
 				status(ctx);
@@ -203,20 +268,95 @@ export function createGoal(cfg) {
 					params.status === "achieved" ? "info" : "warning");
 				cfg.phone?.(params.status === "achieved" ? "Goal achieved" : "Goal needs you", summary.slice(0, 120),
 					params.status === "achieved" ? "goal" : "approval");
-				return reply(`Goal marked ${params.status}. Now give the user a short final report.`);
+				return reply(`Goal marked ${params.status}. Now give the user a short final report.` +
+					(review.open ? ` Say in it which findings of the independent reviewer are still open:\n${review.open}` : ""));
 			},
 		});
+
+		// Runs the review subagent for an "achieved" report. { back } = text for the agent (not accepted), else { note, open }.
+		async function reviewGoal(params, checks, signal, ctx) {
+			const unreviewed = (why) => ({ note: `not independently reviewed: ${why}` });
+			if (cfg.goalReview === false) return unreviewed("goalReview is off");
+			if (typeof cfg.runSubagent !== "function") return unreviewed("subagents are off");
+			const rounds = goal.reviews ?? 0;
+			if (rounds >= MAX_REVIEWS) {
+				return { note: `review rounds used up; open findings from the last round: ${cut(goal.findings, 500)}`, open: goal.findings ?? "" };
+			}
+			let verdict;
+			try {
+				const text = await cfg.runSubagent({ agent: "review", description: "check the goal", ctx, signal, tools: ["bash"],
+					prompt: reviewPrompt(goal, checks, params.evidence, ctx?.cwd ?? process.cwd()) });
+				verdict = parseVerdict(text);
+				if (!verdict) return unreviewed("the reviewer gave no VERDICT line");
+			} catch (e) {
+				if (signal?.aborted) throw e;
+				return unreviewed(`the reviewer failed (${firstLine(e?.message ?? e)})`);
+			}
+			goal.reviews = rounds + 1;
+			if (verdict.pass) return { note: "independently reviewed: pass" };
+			goal.findings = verdict.findings;
+			save();
+			return { back: "Not accepted: an independent reviewer who has seen none of your work checked the criteria and found " +
+				`problems (review ${goal.reviews} of ${MAX_REVIEWS}):\n${verdict.findings}\n` +
+				'Fix what it found (or, if a finding is wrong, be ready to show why), check again, then call goal_update with status "achieved" again.' };
+		}
+
+		// A run ended with an error: send the goal on after a growing wait; after the last retry pause it and tell the phone.
+		function retryLater(event, ctx) {
+			lastCtx = ctx;
+			const err = lastError(event, ctx);
+			if (failures >= waits.length) {
+				const why = `${waits.length} retries after an error did not help: ${err}`;
+				failures = 0;
+				goal.status = "paused";
+				goal.note = `paused: ${why}`.slice(0, 1000);
+				save();
+				status(ctx);
+				cfg.phone?.("Goal paused", `${why}. /goal resume continues it.`.slice(0, 160), "goal");
+				return;
+			}
+			const n = failures + 1;
+			const ms = Number(waits[failures]) || 0;
+			failures = n;
+			clearRetry();
+			retryInfo = ` · retry ${n}/${waits.length} in ${mins(ms)}`;
+			status(ctx);
+			retryTimer = setTimeout(() => {
+				retryTimer = null;
+				retryInfo = "";
+				if (!goal || goal.status !== "pursuing") return;
+				if (lastCtx?.isIdle?.() === false) return; // something is running already: its end brings us back here
+				status(lastCtx);
+				pi.sendMessage({ customType: "ferry-goal-continue", display: false, content: `The last request failed (${err}); this is ` +
+					`retry ${n} of ${waits.length}. Carry on toward the goal from where you were. Objective: ${goal.objective}\n${goalState(goal)}` },
+				{ triggerTurn: true });
+			}, ms);
+			retryTimer.unref?.();
+		}
+		function lastError(event, ctx) {
+			const msgs = [...(ctx.sessionManager?.getBranch?.() ?? []).filter((e) => e.type === "message").map((e) => e.message),
+				...(event.context?.contextMessages ?? [])];
+			const m = msgs.reverse().find((x) => x?.role === "assistant" && x.errorMessage);
+			return firstLine(m?.errorMessage) || "model or network error";
+		}
 
 		pi.on("agent_before_settle", (event, ctx) => {
 			if (!goal || goal.status !== "pursuing") return undefined;
 			if (event.outcome === "aborted" && steerState.redirecting) return undefined; // interrupted with a new message: keep going
 			if (event.outcome === "aborted") { // Esc
+				clearRetry();
+				failures = 0;
 				goal.status = "paused";
 				save();
 				status(ctx);
 				return undefined;
 			}
-			if (event.outcome === "error") return undefined; // a model or network error: keep the goal, let the user retry
+			if (event.outcome === "error") { // a model or network error: try again later, up to waits.length times
+				retryLater(event, ctx);
+				return undefined;
+			}
+			failures = 0;
+			clearRetry();
 			goal.turns++;
 			const used = tokensSince(ctx.sessionManager.getBranch(), goal.startedAt);
 			const maxTurns = cfg.goalMaxTurns ?? 100;
@@ -248,6 +388,11 @@ export function createGoal(cfg) {
 		pi.on("agent_settled", (_e, ctx) => status(ctx));
 		pi.on("input", (event, ctx) => {
 			const text = String(event.text ?? "");
+			if (retryTimer) { // someone is here: their message starts the next run
+				clearRetry();
+				failures = 0;
+				status(ctx);
+			}
 			if (goal && goal.status !== "pursuing" && goal.status !== "paused" && !goal.quiet && !text.startsWith("/goal")) {
 				goal.quiet = true;
 				status(ctx);
@@ -270,11 +415,14 @@ export function createGoal(cfg) {
 					if (!goal) return ctx.ui.notify("No goal set.", "warning");
 					if (word === "clear") {
 						goal = null;
+						clearRetry();
 						pi.appendEntry(ENTRY, null);
 						status(ctx);
 						return ctx.ui.notify("Goal cleared.", "info");
 					}
 					goal.status = word === "pause" ? "paused" : "pursuing";
+					clearRetry();
+					failures = 0;
 					save();
 					status(ctx);
 					// still working (paused, then resumed before the run ended): it simply goes on
@@ -303,6 +451,8 @@ export function createGoal(cfg) {
 				let objective = a;
 				const file = resolve(ctx.cwd ?? process.cwd(), a.replace(/^@/, ""));
 				if (!/\s/.test(a) && existsSync(file) && statSync(file).isFile()) objective = `${readFileSync(file, "utf8").trim()}\n(from ${a})`;
+				clearRetry();
+				failures = 0;
 				goal = { objective, status: "pursuing", startedAt: Date.now(), budget: nextBudget ?? parseTokens(cfg.goalBudget ?? "0") ?? 0, turns: 0, note: "" };
 				save();
 				status(ctx);
