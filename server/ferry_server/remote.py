@@ -8,16 +8,15 @@ was answered in the terminal (DELETE). Once the item has waited phoneApprovalSec
 with the server secret, names one item, lasts LINK_S and answers once. /m/ is the only path open without a Ferry
 token; it shows that one item and takes its answer, nothing else.
 
-Items live in memory and go after ITEM_S. The inbox does not care where an answer comes from: another channel (the
-Feishu bot, feishu.py) calls Inbox.answer() the same way, and hears through Inbox.watchers when an item is pushed or
-done (answered anywhere, taken back, expired).
+Items live in memory and go after ITEM_S. The inbox does not care where an answer comes from: any channel calls
+Inbox.answer().
 
 The phone console: each running ferry with a terminal is a session in the inbox. It uploads a small status
 (PUT /v1/ferry/console/<sid>: working or idle, the /goal line, the to-do list, the last steps) and long-polls for
 commands (GET .../commands?wait=25). /m/<token> with a console token (id "c_<sid>", CONSOLE_S, renewed by every
 refresh, revoked by /phone off or when ferry exits) shows that one session and queues commands for it: steer, pause,
 resume, task. Inbox.controls() says which commands the session's state allows and Inbox.command() queues one; the page
-here, later the Feishu bot, call those two.
+here calls those two.
 """
 from __future__ import annotations
 
@@ -109,11 +108,6 @@ class Inbox:
         self.clock = clock
         self.items: dict[str, dict] = {}
         self.sessions: dict[str, dict] = {}
-        self.watchers: list = []  # fn(what, item): "push" when its notification goes out, "done" when it stops waiting
-
-    def tell(self, what: str, it: dict) -> None:
-        for fn in self.watchers:
-            fn(what, it)
 
     def purge(self) -> None:
         now = self.clock()
@@ -121,7 +115,6 @@ class Inbox:
             it = self.items.pop(k)
             if it["state"] == "waiting":
                 it["state"] = "expired"
-                self.tell("done", it)
             it["event"].set()
         for k in [k for k, s in self.sessions.items() if now - s["seen"] > SESSION_S]:
             self.sessions.pop(k)["event"].set()
@@ -258,7 +251,6 @@ class Inbox:
             return False
         it["state"] = "cancelled"
         it["event"].set()
-        self.tell("done", it)
         return True
 
     def answer(self, it: dict, ans: dict, via: str) -> str:
@@ -277,7 +269,6 @@ class Inbox:
             out = {"answers": [_s(a, 2000) for a in answers]}
         it.update(state="answered", answer={**out, "via": via})
         it["event"].set()
-        self.tell("done", it)
         return ""
 
 
@@ -589,7 +580,6 @@ def mount(app: FastAPI, cfg: Config, audit, clock=time.time):
         if it["pushed"]:
             return {"ok": True, "link": bool(it["nonce"])}
         it["pushed"] = True
-        inbox.tell("push", it)
         url = link(cfg, it, clock()) if cfg.public_url else ""
         title, line = push_line(it)
         ok, err = await notify.send(cfg, title, line, "approval", link=url)

@@ -31,7 +31,6 @@ from starlette.background import BackgroundTask
 from . import PROTOCOL, __version__
 from .config import STALL_DEFAULT, Config, provider_labels, refresh_models
 from .devices import Devices
-from . import feishu
 from . import globalmem
 from . import memreview
 from . import remote
@@ -442,8 +441,6 @@ def create_app(cfg: Config) -> FastAPI:
             return await call_next(request)  # the admin page has its own, local-only sign-in
         if request.url.path.startswith("/m/"):
             return await call_next(request)  # the phone page: a signed one-item link instead of a token (remote.py)
-        if request.url.path.startswith("/feishu/"):
-            return await call_next(request)  # Feishu's events: the app's verification token instead (feishu.py)
         if request.method == "GET" and request.url.path in ("/", "/favicon.ico", "/robots.txt"):
             # a browser lands here, e.g. after the company gateway's confirmation page: not an error, not logged
             if request.url.path != "/":
@@ -531,7 +528,7 @@ def create_app(cfg: Config) -> FastAPI:
         return {"models": listed, "defaultModel": cfg.default_model, "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
                 + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])
-                + (["remote"] if remote.ready(cfg) or feishu.ready(cfg) else [])}
+                + (["remote"] if remote.ready(cfg) else [])}
 
     @app.post("/v1/ferry/image")
     async def image(request: Request):
@@ -653,13 +650,12 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/v1/ferry/notify")
     async def notify(request: Request):
         """The client asks for a phone notification (goal finished, long request done, approval waiting)."""
-        from .notify import everywhere
+        from .notify import send
         b = json.loads(await request.body() or b"{}")
         # the session's phone console opens when the push is tapped (remote.py)
         sid = str(b.get("session") or "")
         link = request.app.state.console_link(request.state.user or "", sid)
-        ok, err = await everywhere(request.app, cfg, str(b.get("title") or "Ferry"), str(b.get("body") or ""),
-                                   str(b.get("kind") or ""), link=link, user=request.state.user or "", session=sid)
+        ok, err = await send(cfg, str(b.get("title") or "Ferry"), str(b.get("body") or ""), str(b.get("kind") or ""), link=link)
         write(audit_log, event="notify", user=request.state.user, kind=str(b.get("kind") or ""), ok=ok, link=bool(link))
         return {"ok": ok, **({"error": err} if err else {})}
 
@@ -1249,6 +1245,5 @@ def create_app(cfg: Config) -> FastAPI:
     side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)
     memreview.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     console_link = remote.mount(app, cfg, lambda **row: write(audit_log, **row))
-    feishu.mount(app, cfg, lambda **row: write(audit_log, **row))
     watchdog.mount(app, cfg, lambda **row: write(audit_log, **row), console_link)
     return app

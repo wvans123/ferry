@@ -27,7 +27,6 @@ import httpx
 from . import PROTOCOL, __version__
 from . import presets as presets_mod
 from .config import (STALL_DEFAULT, Config, apply_models_file, load_secrets, render_models_toml, save_secrets, save_settings)
-from . import feishu
 from . import globalmem
 from . import report as reports
 from . import search as web_search
@@ -144,7 +143,6 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             "session_store": cfg.session_store, "max_upstream_bytes": cfg.max_upstream_bytes,
             "record_details": cfg.record_details, "max_concurrent": cfg.max_concurrent,
             "shared_memory": cfg.shared_memory,
-            "feishu": feishu.status(cfg, getattr(app.state, "feishu", None)),
             "bark": bool(cfg.bark_url), "bark_hint": (cfg.bark_url[:22] + "…") if cfg.bark_url else "", "github_repo": cfg.github_repo, "github_token": bool(reports.github_token(cfg)),
             "search_engine": cfg.search_engine, "search_sources": [web_search.label(s) for s in web_search.sources(cfg)],
             "search_keys": {n: bool(web_search.engine_key(cfg, n)) for n in web_search.ENGINES},
@@ -270,7 +268,6 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             cfg.max_concurrent = max(1, min(50, int(b["max_concurrent"] or 6)))
         if "bark_url" in b:
             cfg.bark_url = str(b["bark_url"]).strip().rstrip("/")
-        feishu.apply(cfg, b)
         if "github_repo" in b and re.fullmatch(r"[\w.-]+/[\w.-]+", str(b["github_repo"]).strip()):
             cfg.github_repo = str(b["github_repo"]).strip()
         if "github_token" in b:
@@ -295,26 +292,6 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         from .notify import send
         ok, err = await send(cfg, "Ferry", "测试通知：手机能收到就说明设置好了。", "test")
         return {"ok": ok, "error": err}
-
-    @app.post("/admin/api/feishu/code")
-    async def feishu_code(request: Request):
-        """A one-time code: whoever sends it to the bot in Feishu becomes the only user it listens to."""
-        if not allowed(request, True):
-            return denied()
-        return {"code": feishu.new_code(cfg), "expires": feishu.CODE_S}
-
-    @app.post("/admin/api/feishu/test")
-    async def feishu_test(request: Request):
-        if not allowed(request, True):
-            return denied()
-        bot = getattr(app.state, "feishu", None)
-        if not bot or not feishu.settings(cfg)["owner"]:
-            return {"ok": False, "error": "还没有绑定飞书账号"}
-        try:
-            await bot.say("测试消息：飞书能收到就说明设置好了。")
-        except feishu.Failed as e:
-            return {"ok": False, "error": str(e)}
-        return {"ok": True, "error": ""}
 
     @app.get("/admin/api/reports")
     async def list_reports(request: Request):
