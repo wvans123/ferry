@@ -161,6 +161,28 @@ def decide_criteria(msgs, system):
                     f"rejected={'no evidence for criteria 2' in reports[0]} accepted={'Goal marked achieved' in reports[-1]}")
 
 
+def decide_goalreview(msgs, system):
+    """A /goal run whose "achieved" report is checked by the review subagent: it fails the first claim, passes the fixed one."""
+    if "<ferry_subagent>" in system:  # the reviewer, in its own conversation
+        prompt = text_of(next(m for m in msgs if m.get("role") == "user"))
+        if "FIXED" in prompt:
+            return ("text", "VERDICT: pass\n1. met: rev.txt exists and says R")
+        return ("text", "VERDICT: fail\n1. not met: REVFINDING rev.txt does not say R yet")
+    names = [tc["function"]["name"] for m in msgs if m.get("role") == "assistant" for tc in (m.get("tool_calls") or [])]
+    results = [text_of(m) for m in msgs if m.get("role") == "tool"]
+    if "goal_update" not in names:
+        return ("tool", "goal_update", {"status": "criteria", "criteria": ["rev.txt says R"]})
+    if "write" not in names:
+        return ("tool", "write", {"path": "rev.txt", "content": "R\n"})
+    reports = [r for r in results if r.startswith("Not accepted") or r.startswith("Goal marked")]
+    if not reports:
+        return ("tool", "goal_update", {"status": "achieved", "summary": "written", "checks": [{"criterion": 1, "evidence": "FIRST claim: rev.txt exists"}]})
+    if reports[-1].startswith("Not accepted"):
+        return ("tool", "goal_update", {"status": "achieved", "summary": "fixed", "checks": [{"criterion": 1, "evidence": "FIXED claim: rev.txt says R"}]})
+    return ("text", f"REV REPORT sent_back={reports[0].startswith('Not accepted: an independent reviewer') and 'REVFINDING' in reports[0]} "
+                    f"accepted={'Goal marked achieved' in reports[-1]}")
+
+
 def decide_team(wake, tools):
     """One heartbeat of a Paperclip team member, by the task it was woken for."""
     issue = (re.search(r'"issueId":"([0-9a-f-]{36})"', wake) or re.search(r"issueId[\":\s]+([0-9a-f-]{36})", wake))
@@ -241,6 +263,8 @@ def decide_agent(msgs):
         return ("tool", "bash", {"command": "sleep 2; echo CONSOLEWORK"})
     if any("GOALTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
         return decide_goal(msgs)
+    if any("GOALREVIEW" in text_of(m) for m in msgs if m.get("role") == "user"):
+        return decide_goalreview(msgs, system)
     if any("CRITTEST" in text_of(m) for m in msgs if m.get("role") == "user"):
         return decide_criteria(msgs, system)
     if "<ferry_subagent>" in system:  # a subagent's own conversation
