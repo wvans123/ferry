@@ -15,7 +15,7 @@ DEFAULT_RULES = """- Reply in the same language the user writes in.
 
 # Seconds a streaming answer may send nothing before it counts as stalled. Long enough for a model that thinks
 # without streaming its thoughts (a relay that drops them, GPT reasoning) on a big context; much less than httpx's 600 s.
-STALL_DEFAULT = 300
+STALL_DEFAULT = 120
 
 
 @dataclass

@@ -436,7 +436,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         <div class="row"><input type="number" id="fConc" min="0" step="1" style="width:110px" placeholder="不限">
           <span>每分钟最多</span><input type="number" id="fRpm" min="0" step="1" style="width:90px" placeholder="不限"><span>个请求</span></div>
         <div class="row" style="margin-top:8px"><span>被限流（429）后冷却</span><input type="number" id="fCool" min="1" step="1" style="width:80px" placeholder="60"><span>秒，期间请求在服务端排队，冷却完再问</span></div>
-        <div class="row" style="margin-top:8px"><span>回答中途这么久没有字节就当卡住，同一个模型再问一次（和别家同名模型合成一组时也可能换到别家）</span><input type="number" id="fStall" min="0" step="1" style="width:80px" placeholder="300"><span>秒（0 = 不检测）</span></div>
+        <div class="row" style="margin-top:8px"><span>回答中途这么久没有字节就当卡住，同一个模型再问一次（和别家同名模型合成一组时也可能换到别家）</span><input type="number" id="fStall" min="0" step="1" style="width:80px" placeholder="120"><span>秒（0 = 不检测）</span></div>
         <label class="row" style="margin-top:8px"><input type="checkbox" id="fShare"><span>和别家的同名模型合成一组轮流用</span></label>
         <p class="muted" style="font-size:13px;margin:6px 0 0">这个账号同时最多处理几个请求，多出来的在服务端排队。中转（比如 kiro）一忙就报 429/502 时设成 1～2；空着或 0 表示不限。每分钟上限用来把一下子冒出来的请求（比如几个子 agent 同时启动）摊开。被限流后这个账号会冷却一段时间（服务商给了 Retry-After 就按它的）：选了"改用"的模型，冷却期间由它回答（只能选接口格式相同的），冷却完自动换回来，工作电脑底栏会显示；没选就让请求在服务端排队等冷却结束，不把错误甩给电脑。每家的模型默认各自单独列出，工作电脑上显示成"这家的名字/模型"，选哪家就只用哪家。几家确实是同一个模型、想轮流用时，在这几家都勾上"合成一组"：同名模型只列一次，对话在这几家之间分摊。</p>
       </div>
@@ -586,7 +586,7 @@ async function loadProviders() {
   for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => removeProvider(+b.dataset.del);
 }
 function payload(list, routing) {
-  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api, max_concurrent: p.max_concurrent || 0, rpm: p.rpm || 0, cooldown: p.cooldown || 60, stall_seconds: p.stall_seconds ?? 300,
+  return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api, max_concurrent: p.max_concurrent || 0, rpm: p.rpm || 0, cooldown: p.cooldown || 60, stall_seconds: p.stall_seconds ?? 120,
     models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, ...(m.price ? { price: m.price } : {}) })) })),
     routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, image: $("rImage").value, advisor: $("rAdvisor").value, expose: $("rExpose").checked } };
 }
@@ -632,7 +632,7 @@ function fillForm(pre, prov) {
   $("fApi").querySelector('option[value="anthropic"]').hidden = !pre.custom;
   $("fConc").value = prov?.max_concurrent ? prov.max_concurrent : "";
   $("fShare").checked = !!prov?.share;
-  $("fRpm").value = prov?.rpm ? prov.rpm : ""; $("fCool").value = prov?.cooldown && prov.cooldown !== 60 ? prov.cooldown : ""; $("fStall").value = prov && prov.stall_seconds !== undefined && prov.stall_seconds !== 300 ? prov.stall_seconds : "";
+  $("fRpm").value = prov?.rpm ? prov.rpm : ""; $("fCool").value = prov?.cooldown && prov.cooldown !== 60 ? prov.cooldown : ""; $("fStall").value = prov && prov.stall_seconds !== undefined && prov.stall_seconds !== 120 ? prov.stall_seconds : "";
   $("keyWrap").hidden = !!pre.no_key;
   const needKey = !pre.no_key && !(prov && (prov.key_tail || prov.key_source));
   $("keyNeed").hidden = !needKey;
@@ -688,7 +688,7 @@ $("dlgSave").onclick = async () => {
   if (!models.length) return say("dlgMsg", "至少勾选一个模型", false);
   const entry = { id: ED.id, name: $("fName").value.trim() || pre.name, preset: pre.id, base_url: base, api_key_env: ED.api_key_env, key,
     ...(!$("apiWrap").hidden ? { api: $("fApi").value } : {}), max_concurrent: Math.max(0, Math.floor(+$("fConc").value || 0)),
-    rpm: Math.max(0, Math.floor(+$("fRpm").value || 0)), cooldown: Math.max(1, Math.floor(+$("fCool").value || 60)), stall_seconds: $("fStall").value === "" ? 300 : Math.max(0, Math.floor(+$("fStall").value)),
+    rpm: Math.max(0, Math.floor(+$("fRpm").value || 0)), cooldown: Math.max(1, Math.floor(+$("fCool").value || 60)), stall_seconds: $("fStall").value === "" ? 120 : Math.max(0, Math.floor(+$("fStall").value)),
     share: $("fShare").checked,
     models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192,
       ...(m.price ? { price: m.price } : {}) })) };
