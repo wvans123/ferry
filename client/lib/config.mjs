@@ -88,6 +88,7 @@ export const DEFAULTS = {
 	web: "client", // web_fetch / web_search on this computer's network; "off" = no web tools
 	goalBudget: "0", // token budget for /goal, e.g. "2m"; "0" = none (the turn limit still applies)
 	goalMaxTurns: 100, // /goal stops after this many turns and reports progress
+	goalReview: true, // an "achieved" /goal report is checked by an independent review subagent that has seen none of the work
 	updateCheck: true, // once a day, tell you when a newer Ferry is on GitHub
 	notify: true, // a beep / Windows notification when a request took longer than notifyAfterSeconds
 	notifyAfterSeconds: 30,
@@ -140,6 +141,7 @@ export const SETTINGS = {
 	localSites: ["list", "sites read only on this computer, never by the Ferry server (the company's intranet; private addresses and names without a dot already are)"],
 	browser: ["boolean", "let the agent drive the browser on this computer (Edge on Windows): JavaScript pages, logins, clicking, forms"],
 	goalMaxTurns: ["number", "most turns a /goal may take before it stops and reports progress"],
+	goalReview: ["boolean", "an \"achieved\" /goal report is checked first by an independent reviewer (a subagent with no context) that reads the files and runs read-only commands; needs subagents on"],
 	goalBudget: ["string", "token budget for /goal, e.g. 500k or 2m; 0 = none"],
 	notify: ["boolean", "beep and show a Windows notification when a long request is finished"],
 	showModel: ["boolean", "show the model's name in the footer at the bottom right (false: hidden; /model and /status still show it)"],

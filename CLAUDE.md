@@ -97,25 +97,35 @@ reproduced with made-up content becomes a new task in evals/tasks/.
 Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `integrations`
 (docs/ROADMAP.md).
 
-## Where things stand (2026-11-05, end of the cloud session that built 0.25 to 0.31)
+## Where things stand (2026-11-10, release 0.44.2)
 
-- Released: 0.31.0 (server reads public pages, one-window browser login, undici 8.12.3). The long-lived branch
-  `claude/lucid-cori-4u8ucg` is retired; new work starts from main (see "How a change ships").
-- Web, as it is now: search and public pages are done by the server. A search goes to every source at once (Exa's
- free search, DeepSeek with the server's key, Tavily/Brave/Bocha with keys, optionally a model's own search), merged
- by RRF, with passages quoted from the top 3 pages and a 10-minute cache; Bing on the PC only when that finds
- nothing. Measure changes with `evals/search_eval.py` (#41). Intranet and
-  private addresses, `localSites`, files, and pages the server cannot reach are read on the PC; logins and site
-  operation go through agent-browser. Code: server/ferry_server/search.py, client/lib/web.mjs.
-- Browser: agent-browser, headless by default; `ferry browser login <url>` opens an ordinary window (Google refuses
-  automated sign-in), waits for the sign-in, then connects agent-browser; `--headed` on a sign-in page is blocked (#30); private-data commands always ask.
-- Models (0.32): each server provider is its own pi provider, so /model shows `kiro/claude-opus-5.5`; "ferry" holds
-  pooled models (`auto` only when models are not exposed). The client takes models only from the server's list
-  (server-models.mjs): no cached list, no pi catalogs. Same-named models are pooled only between providers with `share = true` (0.29's
-  `separate` is gone). Client lookups go through `findFerryModel` / `FERRY_PROVIDERS` in config.mjs.
-- pi 1.5.0. Note: pi's Claude effort messages are turned off in sync.mjs modelDef (relays dropped them, #9).
-- Not verified on a real machine yet: Google sign-in through `ferry browser login`; the model-native search and
-  DeepSeek Fetch paths against the real APIs (unit tests use mocks). evals/run.py has not been run since 0.26.
+- Released: 0.44.2 (stall time default 300 s). Releases since 0.31: 0.32 to 0.41 (models per provider, server web search,
+  memory distill, Word tracked changes, eval tasks), 0.42 (gateway wait, watchdog), 0.43 (phone approvals and console),
+  0.44.x (background job watch and /loop, delete rule, keep-alive). Per-version record:
+  GOAL.md and the release PRs. Not yet released: whatever is on main after v0.44.2 (check `git log v0.44.2..main`).
+- Models: each server provider is its own pi provider, so /model shows `kiro/claude-opus-5.5`; "ferry" holds pooled
+  models. The client takes models only from the server's list (server-models.mjs). Same-named models are pooled only
+  between providers with `share = true`. Client lookups go through `findFerryModel` / `FERRY_PROVIDERS` in config.mjs.
+  pi 1.5.0; pi's Claude effort messages are turned off in sync.mjs modelDef (relays dropped them, #9).
+- Web: search and public pages are done by the server (all sources at once, merged by RRF, quoted passages, 10-minute
+  cache); intranet and private addresses, `localSites` and files are read on the PC; logins go through agent-browser
+  (`ferry browser login <url>`). Code: server/ferry_server/search.py, client/lib/web.mjs. Measure with `evals/search_eval.py`.
+- Away from the PC: a request that meets the company gateway waits up to `gatewayWaitMinutes` (gateway.mjs); the
+  server watchdog pushes the phone when a run goes quiet for 15 minutes (heartbeat.mjs, watchdog.py); approvals and
+  questions can be answered on a phone page, and the per-session phone console steers the run
+  (remote.mjs, console.mjs). Details in docs/MODULES.md.
+- Agent work: `/goal` with agreed completion criteria, background jobs that can be watched, `/loop`, `/memory distill`,
+  Word edits as tracked changes. In full access, deleting asks only for a whole drive, the home or system folders,
+  Ferry's data folder or the project folder itself; temporary files go to D:\ferry\temp.
+- Server upstream: it keeps the connection alive for Cloudflare (no 524) and, when the upstream accepts a request and
+  then says nothing for 120 s (`stall_seconds` per provider), asks the same model once more, then answers 504. A 429 cools
+  the account down and the request waits on the server; no other model takes over, except same-named models of
+  providers with `share = true`. CI: a feature PR runs only the affected tests; the full
+  run (Linux and Windows, self-test included) happens on main after the merge.
+- Not verified on a real machine yet: the phone page through the real Cloudflare Tunnel (needs `public_url`); the watchdog and gateway wait overnight; Google sign-in through `ferry browser login`;
+  the model-native search and DeepSeek Fetch paths against the real APIs. The last `python evals/run.py` result is
+  0.41.0 (macOS, DeepSeek, 8/8); the nine agent-feature tasks added in #57 and everything since have not been run on the
+  work PC.
 - Candidate next work is listed in docs/ROADMAP.md ("下一步候选").
 
 ## Where earlier context is

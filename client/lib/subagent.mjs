@@ -309,6 +309,37 @@ export function createSubagents(cfg, deps) {
 		const agents = discoverAgents(process.cwd());
 		const keeper = createKeeper();
 		pi.on("session_shutdown", () => keeper.clear());
+		// For other modules (goal.mjs reviews an "achieved" report): one run of a named agent in a fresh session, returning its
+		// report text. tools adds tools to the agent's own list. Counts as one of maxParallel; shown in /tasks while it runs.
+		cfg.runSubagent = async ({ agent: name, prompt, description, ctx, signal, tools }) => {
+			const cwd = ctx?.cwd ?? process.cwd();
+			const found = discoverAgents(cwd).find((a) => a.name === name);
+			if (!found) throw new Error(`No agent named "${name}"`);
+			const agent = tools?.length && found.tools ? { ...found, tools: [...new Set([...found.tools, ...tools])] } : found;
+			const params = { description, prompt };
+			const t = trackSubagent(`${agent.name}: ${description}`);
+			const stop = () => t.job.controller.abort();
+			signal?.addEventListener("abort", stop, { once: true });
+			try {
+				const r = await withSlot(Math.max(1, Number(cfg.maxParallel) || 3), async () => {
+					const session = await openSession({ cfg, deps, agent, label: `#${t.job.id} ${agent.name} (${description})`, ctx, cwd, pi });
+					try {
+						const transcript = createTranscript(transcriptPath(t.job.id, agent.name, description), `Subagent ${t.job.id}: ${agent.name}: ${description}`);
+						return await runSubagent({ session, agent, id: undefined, params, signal: t.job.controller.signal, job: t.job, transcript });
+					} finally {
+						session.dispose();
+					}
+				});
+				const text = r.content[0].text.replace(/\n\n\[[^\n]*subagent:[^\n]*\]$/, "");
+				t.end(text);
+				return text;
+			} catch (e) {
+				t.end(undefined, String(e?.message ?? e));
+				throw e;
+			} finally {
+				signal?.removeEventListener("abort", stop);
+			}
+		};
 		pi.registerTool({
 			name: "task",
 			label: "Subagent",
