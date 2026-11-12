@@ -180,6 +180,8 @@ Shift+Tab 在四种模式之间切换，底栏显示当前模式：
   比较时 Windows 不分大小写，`..`、`~`、`%TEMP%` 这类认识的变量、Git Bash 的 `/c/...` 路径和通配符都会先展开。通配符匹配到上面的地方也算（`rm -rf ~/*` 会问）。通配符直接写在受保护的文件夹里面也问，不管匹配到什么（`rm -rf ~/Documents/*`、`cd ~/Documents && rm -rf *`、`Remove-Item -Recurse C:\Windows\*`），因为这会清空它；项目文件夹、被当作项目的文件夹和临时文件夹里直接写通配符不问（`rm -rf *`）。提示里会写明碰到的是哪一个，比如"deletes C:\Users\me\Documents, a folder directly in your home folder, which Ferry protects even in full access"。
 
   列不出要删什么的写法（`find -delete`、管道、`python -c`、`git clean`、没法跟着走的 `cd`）在全部放行下也直接执行，除非：命令里任何地方写出了上面的地方（绝对路径、`~`、认识的变量、Git Bash 路径，引号里的代码也算），或者前面有 `cd`（不带路径的 `cd`、`cd ~`、`cd /`、`cd C:\`，`Set-Location` 也一样）到了上面的地方或者它的上一级。不认识的变量单独出现不再是问的理由。
+
+  为了少问，Ferry 尽量把要删的东西列出来：`cd` 之后的删除会跟着走，命令别处有管道或 `||` 不影响（`cd` 自己在管道里、挨着 `||`、命令里有后台 `&` 时才跟不了）；命令自己设的变量会读（`T=/d/tmp/x; rm -rf $T`），同一个名字设了两次不同的值就当不认识。列不出时，命令里只有写成完整路径的才算"写出了上面的地方"：单独的 `/`、`\`、正则里的一段（`\|`、`/\n/g`）不算，Windows 上不带盘符的路径也不算；`/` 紧跟在删除命令后面才算（`sh -c 'rm -rf /'`、`find / -delete` 照样问）。
 - 改项目文件夹以外的文件，总要先确认。
 - `.env`、`.ssh` 这类路径永远不碰（`blockedPaths` 可改）。read、write、edit 这类文件工具：路径里任何地方出现这个词就拦（比如 `Project Titan/notes.txt` 含 `titan`）。bash 命令：只看像路径的写法，`.env`、`config/.env`、`~/.ssh/id_rsa`、`secrets/key.pem`、`secrets.json` 这样名字是完整的一段或文件名的才拦；普通文字和代码不拦，比如引号里一段话里的 secrets、`fetch(url, {credentials:'include'})`、heredoc 里的正文。
 - 启动时用哪种模式：`ferry config set permissionMode acceptEdits`。
