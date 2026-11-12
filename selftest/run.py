@@ -116,9 +116,11 @@ class Stack:
         (srv / "ferry-server.toml").write_text(cfg + extra_toml, encoding="utf-8")
         self.config = srv / "ferry-server.toml"
         self.home = root / "ferry-home"
-        if mode.startswith("long:"):  # these check the transport with a really big context: keep every tool output
+        if mode.startswith("long:"):  # these check the transport with a really big context: keep every tool output,
+            # summarise late (requests above 1 MB must happen) and leave the run of single reads alone
             self.home.mkdir(parents=True, exist_ok=True)
-            (self.home / "config.json").write_text(json.dumps({"trimOldOutputs": "0"}), encoding="utf-8")
+            (self.home / "config.json").write_text(json.dumps({"trimOldOutputs": "0", "compactLimit": "400k", "batchNudge": 0}),
+                                                   encoding="utf-8")
         self.env = {**os.environ, "FERRY_SECRET": SECRET, "FERRY_TOKEN_WESLEY": TOKEN, "FERRY_TOKEN_BOB": TOKEN_BOB,
                     "DEEPSEEK_API_KEY": "x", "FERRY_TEST_DROP_EVERY": str(drop_every), "FERRY_HOME": str(self.home),
                     "FERRY_TEST_DROP_BEFORE_CHAT": str(drop_before_chat), "FERRY_AUTO_APPROVE": "1",
@@ -297,6 +299,8 @@ def check_goal_todo(root: Path, work: Path) -> None:
         ok = c3 == 0 and "sent_back=True accepted=True" in o3 and (work / "rev.txt").exists()
         check("F129 /goal 完成要独立复核", ok, "agent 第一次报告完成：另起的复核 agent 只看到目标、标准和证据，判为不通过，结果带着它的意见退回；"
               "改后再报，复核通过，目标才算完成" if ok else o3[-400:])
+        s.home.mkdir(parents=True, exist_ok=True)  # twelve single reads in a row: only the to-do reminder is under test
+        (s.home / "config.json").write_text(json.dumps({"batchNudge": 0}), encoding="utf-8")
         c2, o2 = s.ferry("-p", "TODOSTALE: work without updating the list")
         ok = c2 == 0 and "STALE reminded after=12 item=True count=1" in o2
         check("F96 待办不动时提醒", ok, "待办清单有一项进行中，agent 连续调用 12 次工具都没更新清单：模型收到一条隐藏提醒，"

@@ -381,7 +381,7 @@ export function createHistorySearch() {
 // steps ago, a long command output, and what it wrote itself (the full text of a file it saved, a long script it ran).
 // Once the context passes trimOldOutputs tokens, Ferry replaces those old, long pieces with a one-line note, keeping
 // the latest few. Every such replacement changes the conversation's prefix, so the provider's prompt cache is lost for
-// the next request (about three times its price). So Ferry waits until a whole batch can go at once (TRIM_BATCH_CHARS)
+// the next request (measured on one provider: about three times the price). So Ferry waits until a whole batch can go at once (TRIM_BATCH_CHARS)
 // instead of replacing one piece every few turns.
 // The replacement is stored in the session (pi's context edits), so it stays the same after /resume.
 // Your messages and the agent's answers are never touched; history_search still finds the full text.
@@ -457,7 +457,10 @@ export function createTrimOldOutputs(cfg) {
 		pi.on("turn_end", (_event, ctx) => {
 			const used = ctx.getContextUsage?.()?.tokens ?? 0;
 			if (used < at) return undefined;
-			const { drafts, saved } = trimPlan(ctx.sessionManager.getBranch());
+			// only what the model still gets: entries before the latest summary are gone from the context already
+			const sm = ctx.sessionManager;
+			const entries = sm.buildSessionProjection ? sm.buildSessionProjection().entries.map((p) => p.sourceEntry) : sm.getBranch();
+			const { drafts, saved } = trimPlan(entries);
 			if (!drafts.length || saved < batch) return undefined; // not worth losing the prompt cache for yet
 			if (ctx.hasUI) ctx.ui.setStatus("ferry-trim", `left out ${drafts.length} old tool output(s)`);
 			return { entries: drafts };
@@ -475,7 +478,8 @@ export function createTrimOldOutputs(cfg) {
 /** Replies in a row with one small look-up each, before the agent is reminded (batchNudge; 0 = never). */
 export const LOOKUP_STREAK = 4;
 const LOOKUP_TOOLS = new Set(["read", "grep", "find", "ls", "office_read", "job_output"]);
-const PEEK = /^(sed|grep|rg|ls|dir|cat|head|tail|wc|find|awk|echo|pwd|test|stat|file|du|sleep|type|Get-Content|Get-ChildItem|Select-String)\b/;
+const PEEK = /^(sed|grep|rg|ls|dir|cat|head|tail|wc|find|awk|echo|pwd|test|stat|file|du|sleep|type|Get-Content|Get-ChildItem|Select-String)(?=\s|$)/;
+const NOT_A_PEEK = /;|&&|\|\||>|\s-i\b|\s-delete\b|\s-exec\b/; // several commands in one call (what we ask for), or a write
 
 /** Is this assistant message one small look-up and nothing else? (exported for tests) */
 export function isSingleLookup(message) {
@@ -488,7 +492,7 @@ export function isSingleLookup(message) {
 	const cmd = String(args?.command ?? "").trim()
 		.replace(/^(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/, "")
 		.replace(/^(?:\w+=(?:"[^"]*"|'[^']*'|\S+);\s*)+/, "");
-	return cmd.length < 400 && !cmd.includes("\n") && PEEK.test(cmd);
+	return cmd.length < 400 && !cmd.includes("\n") && PEEK.test(cmd) && !NOT_A_PEEK.test(cmd);
 }
 
 export const LOOKUP_NOTE = (n) => `Your last ${n} replies each made one small look-up. Every reply re-reads the whole ` +

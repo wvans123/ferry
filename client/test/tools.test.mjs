@@ -91,7 +91,9 @@ test("old outputs are replaced a batch at a time, so the prompt cache is lost ra
 		let handler;
 		const status = [];
 		createTrimOldOutputs(cfg)({ on: (name, fn) => { if (name === "turn_end") handler = fn; } });
-		const out = handler?.({}, { getContextUsage: () => ({ tokens }), sessionManager: { getBranch: () => entries }, hasUI: true,
+		const out = handler?.({}, { getContextUsage: () => ({ tokens }), hasUI: true,
+			sessionManager: { getBranch: () => [...(cfg.summarised ?? []), ...entries],
+				buildSessionProjection: () => ({ entries: entries.map((sourceEntry) => ({ sourceEntry })) }) },
 			ui: { setStatus: (_k, t) => status.push(t) } });
 		return { out, status };
 	};
@@ -106,6 +108,16 @@ test("old outputs are replaced a batch at a time, so the prompt cache is lost ra
 	assert.equal(run({}, many, 50_000).out, undefined); // below trimOldOutputs nothing happens
 	assert.equal(run({ trimOldOutputs: "2k" }, few, 5000).out.entries.length, 1); // a small setting keeps a small batch
 	assert.equal(run({ trimOldOutputs: "0" }, many, 500_000).out, undefined); // off
+	// what a summary already took out of the context does not count towards the batch
+	assert.equal(run({ summarised: [result("s0", 90_000)] }, few, 120_000).out, undefined);
+	// several calls in one reply: when one of their results is kept, the reply that made them stays whole
+	const { trimPlan } = await import("../lib/tools.mjs");
+	const long = "x".repeat(5000);
+	const both = { type: "message", id: "a", message: { role: "assistant", content: [
+		{ type: "toolCall", id: "c1", name: "write", arguments: { path: "p", content: long } },
+		{ type: "toolCall", id: "c2", name: "read", arguments: { path: "q" } }] } };
+	const parallel = [result("old", 5000), both, result("p1", 5000), result("p2", 5000), ...Array.from({ length: 5 }, (_, i) => result(`k${i}`, 5000))];
+	assert.deepEqual(trimPlan(parallel).drafts.map((d) => d.targetId), ["old"]); // p2 is kept, so the reply and p1 stay as well
 });
 
 // ---------- a run of single small look-ups is answered with one reminder ----------
@@ -119,6 +131,13 @@ test("replies that each make one small look-up are counted; the agent is reminde
 	assert.equal(isSingleLookup(reply(["read", { path: "a.txt" }])), true);
 	assert.equal(isSingleLookup(reply(["bash", { command: "sleep 30" }])), true);
 	assert.equal(isSingleLookup(reply(["bash", { command: "python build.py" }])), false);
+	assert.equal(isSingleLookup(reply(["bash", { command: "grep -rn foo . | head -20" }])), true);
+	assert.equal(isSingleLookup(reply(["bash", { command: "grep -r foo .; echo ---; sed -n 1,20p a.txt" }])), false); // already batched
+	assert.equal(isSingleLookup(reply(["bash", { command: "ls && rm -rf build" }])), false);
+	assert.equal(isSingleLookup(reply(["bash", { command: "sed -i s/a/b/ main.py" }])), false);
+	assert.equal(isSingleLookup(reply(["bash", { command: "find . -name '*.pyc' -delete" }])), false);
+	assert.equal(isSingleLookup(reply(["bash", { command: "echo hi > a.txt" }])), false);
+	assert.equal(isSingleLookup(reply(["bash", { command: "file-tool --run" }])), false);
 	assert.equal(isSingleLookup(reply(["bash", { command: "cat > a.txt <<'EOF'\nhello\nEOF" }])), false); // it writes
 	assert.equal(isSingleLookup(reply(["read", { path: "a" }], ["read", { path: "b" }])), false); // already together
 	assert.equal(isSingleLookup(reply(["write", { path: "a", content: "b" }])), false);
