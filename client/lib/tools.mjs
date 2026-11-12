@@ -113,7 +113,8 @@ export function createTodo() {
 			label: "Tasks",
 			description: "Keep a task list for work with three or more distinct steps; skip it for smaller requests. Send " +
 				"the whole list every time. Mark an item in_progress right before you start it and completed right after it " +
-				"is done, one at a time, never several at the end; keep exactly one in_progress while working.",
+				"is done, one at a time, never several at the end; keep exactly one in_progress while working. Send the " +
+				"update in the same reply as the next tool call of the work, not in a reply of its own.",
 			promptSnippet: "Plan and track multi-step work as a task list the user can see",
 			parameters: TodoParams,
 			annotations: { readOnlyHint: true, openWorldHint: false },
@@ -376,47 +377,143 @@ export function createHistorySearch() {
 
 // ---------- leave old tool outputs out ----------
 //
-// The longest part of a long conversation is usually tool output the agent has long finished with (a file it read
-// twenty steps ago, a long command output). Once the context passes trimOldOutputs tokens, Ferry replaces old,
-// long tool results with a one-line note, all at once (so the cached prefix changes rarely), keeping the latest few.
+// The longest part of a long conversation is usually material the agent has long finished with: a file it read twenty
+// steps ago, a long command output, and what it wrote itself (the full text of a file it saved, a long script it ran).
+// Once the context passes trimOldOutputs tokens, Ferry replaces those old, long pieces with a one-line note, keeping
+// the latest few. Every such replacement changes the conversation's prefix, so the provider's prompt cache is lost for
+// the next request (about three times its price). So Ferry waits until a whole batch can go at once (TRIM_BATCH_CHARS)
+// instead of replacing one piece every few turns.
 // The replacement is stored in the session (pi's context edits), so it stays the same after /resume.
 // Your messages and the agent's answers are never touched; history_search still finds the full text.
 
 const TRIM_KEEP = 6; // the latest tool results always stay
 const TRIM_MIN_CHARS = 2000;
+export const TRIM_BATCH_CHARS = 80_000; // replace only when at least this much goes at once (about 25k tokens)
 const TRIM_TOOLS = new Set(["read", "bash", "powershell", "grep", "find", "ls", "web_fetch", "web_search", "job_output",
 	"office_read", "history_search", "past_conversations"]);
+// long arguments of the agent's own old calls: tool -> the argument that holds the text
+const TRIM_ARGS = { write: "content", bash: "command", powershell: "command" };
+const ARG_HEAD = 300; // a command keeps its beginning, which says what it was
 
-/** Context-edit drafts for the old, long tool results of a branch (exported for tests). */
-export function trimDrafts(entries, keep = TRIM_KEEP, minChars = TRIM_MIN_CHARS) {
+const kbOf = (text) => Math.max(1, Math.round(Buffer.byteLength(text) / 1024));
+
+/** An old assistant message with its long write / command arguments shortened, or null when there is nothing to cut. */
+function shortenCalls(message, minChars) {
+	let saved = 0;
+	const content = (message.content ?? []).map((c) => {
+		const field = c?.type === "toolCall" ? TRIM_ARGS[c.name] : undefined;
+		const text = field ? c.arguments?.[field] : undefined;
+		if (typeof text !== "string" || text.length < minChars) return c;
+		const note = field === "content"
+			? `[Ferry note, not the file's content: the ${kbOf(text)} KB written here were left out to keep the context small. Read the file if you need it.]`
+			: `${text.slice(0, ARG_HEAD)}\n# [Ferry: the rest of this command (${kbOf(text)} KB) was left out to keep the context small; history_search finds it.]`;
+		saved += text.length - note.length;
+		return { ...c, arguments: { ...c.arguments, [field]: note } };
+	});
+	return saved > 0 ? { content, saved } : null;
+}
+
+/** What can be left out of a branch now: { drafts: context-edit drafts, saved: characters they free } (exported for tests). */
+export function trimPlan(entries, keep = TRIM_KEEP, minChars = TRIM_MIN_CHARS) {
 	const edited = new Set(entries.filter((e) => e.type === "context_edit").map((e) => e.targetId));
 	const results = entries.filter((e) => e.type === "message" && e.message?.role === "toolResult");
-	const old = results.slice(0, Math.max(0, results.length - keep));
-	const drafts = [];
-	for (const e of old) {
-		const m = e.message;
-		if (edited.has(e.id) || !TRIM_TOOLS.has(m.toolName)) continue;
-		const text = (m.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-		if (text.length < minChars) continue;
-		const kb = Math.max(1, Math.round(Buffer.byteLength(text) / 1024));
-		drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: [{ type: "text",
-			text: `[Ferry: this ${m.toolName} output (${kb} KB) was left out to keep the context small; the agent saw it ` +
-				"earlier. Run the tool again, or use history_search, if you need it.]" }] } });
+	let firstKept = results.length > keep ? entries.indexOf(results[results.length - keep]) : 0;
+	// the reply that made the first kept call stays whole too
+	for (let i = firstKept - 1; i >= 0; i--) {
+		if (entries[i].type !== "message") continue;
+		if (entries[i].message?.role === "assistant") firstKept = i;
+		if (entries[i].message?.role !== "toolResult") break;
 	}
-	return drafts;
+	const drafts = [];
+	let saved = 0;
+	for (const e of entries.slice(0, firstKept)) {
+		const m = e.message;
+		if (e.type !== "message" || !m || edited.has(e.id)) continue;
+		if (m.role === "assistant") {
+			const cut = shortenCalls(m, minChars);
+			if (!cut) continue;
+			saved += cut.saved;
+			drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: cut.content } });
+		} else if (m.role === "toolResult" && TRIM_TOOLS.has(m.toolName)) {
+			const text = (m.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+			if (text.length < minChars) continue;
+			const note = `[Ferry: this ${m.toolName} output (${kbOf(text)} KB) was left out to keep the context small; the agent saw it ` +
+				"earlier. Run the tool again, or use history_search, if you need it.]";
+			saved += text.length - note.length;
+			drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: [{ type: "text", text: note }] } });
+		}
+	}
+	return { drafts, saved };
 }
+
+/** Context-edit drafts for the old, long pieces of a branch (exported for tests). */
+export const trimDrafts = (entries, keep, minChars) => trimPlan(entries, keep, minChars).drafts;
 
 export function createTrimOldOutputs(cfg) {
 	return (pi) => {
 		const at = parseTokens(cfg.trimOldOutputs ?? "80k");
 		if (!at) return; // off
+		const batch = Math.min(TRIM_BATCH_CHARS, at); // a small trimOldOutputs (tests) keeps a small batch
 		pi.on("turn_end", (_event, ctx) => {
 			const used = ctx.getContextUsage?.()?.tokens ?? 0;
 			if (used < at) return undefined;
-			const drafts = trimDrafts(ctx.sessionManager.getBranch());
-			if (!drafts.length) return undefined;
+			const { drafts, saved } = trimPlan(ctx.sessionManager.getBranch());
+			if (!drafts.length || saved < batch) return undefined; // not worth losing the prompt cache for yet
 			if (ctx.hasUI) ctx.ui.setStatus("ferry-trim", `left out ${drafts.length} old tool output(s)`);
 			return { entries: drafts };
+		});
+	};
+}
+
+// ---------- fewer round trips ----------
+//
+// Every reply of the model re-reads the whole conversation, so ten look-ups in ten replies cost about ten times ten
+// look-ups in one. The system prompt asks for look-ups to be sent together; when the agent still makes several replies
+// in a row that each hold a single small look-up (a file read, an ls / grep / sed, a short sleep), Ferry reminds it
+// once. The note is a new message at the end, so the cached prefix stays.
+
+/** Replies in a row with one small look-up each, before the agent is reminded (batchNudge; 0 = never). */
+export const LOOKUP_STREAK = 4;
+const LOOKUP_TOOLS = new Set(["read", "grep", "find", "ls", "office_read", "job_output"]);
+const PEEK = /^(sed|grep|rg|ls|dir|cat|head|tail|wc|find|awk|echo|pwd|test|stat|file|du|sleep|type|Get-Content|Get-ChildItem|Select-String)\b/;
+
+/** Is this assistant message one small look-up and nothing else? (exported for tests) */
+export function isSingleLookup(message) {
+	const calls = (message?.content ?? []).filter((c) => c?.type === "toolCall");
+	if (message?.role !== "assistant" || calls.length !== 1) return false;
+	const { name, arguments: args } = calls[0];
+	if (LOOKUP_TOOLS.has(name)) return true;
+	if (name !== "bash" && name !== "powershell") return false;
+	// drop leading "cd <dir> &&" and "VAR=value;" so the command itself is what is judged
+	const cmd = String(args?.command ?? "").trim()
+		.replace(/^(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/, "")
+		.replace(/^(?:\w+=(?:"[^"]*"|'[^']*'|\S+);\s*)+/, "");
+	return cmd.length < 400 && !cmd.includes("\n") && PEEK.test(cmd);
+}
+
+export const LOOKUP_NOTE = (n) => `Your last ${n} replies each made one small look-up. Every reply re-reads the whole ` +
+	"conversation, so this is slow and costly. Decide what you still need to see and ask for all of it in your next reply: " +
+	"several tool calls in the same reply, or one shell command that runs the look-ups one after another (separate them " +
+	"with `; echo ---;`). To wait for something, wait once for as long as it takes, not in short steps. Do not reply to " +
+	"this note; carry on.";
+
+export function createBatchNudge(cfg = {}) {
+	return (pi) => {
+		const streakAt = Number(cfg.batchNudge ?? LOOKUP_STREAK);
+		if (!(streakAt > 0)) return; // off
+		let streak = 0;
+		let sent = 0; // per request: at most 3
+		pi.on("turn_end", (event) => {
+			streak = isSingleLookup(event.message) ? streak + 1 : 0;
+			if (streak < streakAt || sent >= 3) return undefined;
+			sent++;
+			pi.sendMessage({ customType: "ferry-batch-nudge", display: false, content: LOOKUP_NOTE(streak) }, { deliverAs: "steer" });
+			streak = 0;
+			return undefined;
+		});
+		pi.on("agent_settled", () => {
+			streak = 0;
+			sent = 0;
 		});
 	};
 }

@@ -26,6 +26,10 @@ test("the main agent says what it does while it works; both agents batch calls, 
 	assert.doesNotMatch(sub, /# While you work/);
 	for (const p of [main, sub]) {
 		assert.match(p, /make them in the same reply/);
+		assert.match(p, /Every reply you send re-reads the whole conversation/);
+		assert.match(p, /into one command, separated by `; echo ---;`/);
+		assert.match(p, /Send the update together with the next tool call/);
+		assert.match(p, /Do not check on it with job_output or short sleeps/);
 		assert.match(p, /Once you know enough to act, act/);
 		assert.match(p, /belong to the user/);
 		assert.match(p, /The final reply must make sense on its own/);

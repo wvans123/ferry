@@ -99,7 +99,8 @@ export const DEFAULTS = {
 	browserPath: "", // a browser program to use instead of Edge / Chrome
 	browserHeadless: true, // run the browser without a window; the agent shows one for a login (#8, #10)
 	thinking: "medium", // how long Claude / GPT think: low, medium, high, xhigh
-	trimOldOutputs: "80k", // past this many tokens of context, old long tool outputs are left out ("0" = never)
+	trimOldOutputs: "80k", // past this many tokens of context, old long tool outputs and old long write / command texts are left out, a batch at a time ("0" = never)
+	batchNudge: 4, // after this many replies in a row with one small look-up each, remind the agent to ask for several at once (0 = never)
 	maxParallel: 3, // subagents running at the same time (task, task_batch); the rest wait
 	advisor: true, // the advisor tool (a stronger model reviews the work); only when the Ferry server has an advisor model
 	recap: true, // after a long request, one sentence on what was done and what comes next, in the phone notification and the status line
@@ -113,7 +114,7 @@ export const DEFAULTS = {
 	rulesFromParents: false, // also take AGENTS.md / CLAUDE.md from folders above the project (not only the project's own)
 	contextWindow: {}, // per model, set with /context: { "<model id>": tokens }; missing = the server's size
 	compactAt: "90%", // summarise the conversation once the context is this full (before each request to the model, also in the middle of work); "off" = only when it must
-	compactLimit: "400k", // ...or once it holds this many tokens, whichever comes first ("0" = no limit)
+	compactLimit: "200k", // ...or once it holds this many tokens, whichever comes first ("0" = no limit)
 	compactKeep: "20k", // how much of the latest conversation a summary keeps word for word
 	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
@@ -130,7 +131,7 @@ export const SETTINGS = {
 	compactAt: ["string", "summarise the conversation (compaction) once the context is this full; lower = cheaper requests, earlier summaries",
 		["50%", "60%", "70%", "80%", "90%  (default)", "off  only when the model's limit is reached"]],
 	compactLimit: ["string", "summarise once the context holds this many tokens, even if compactAt is not reached yet (a 1M-token model gets slow and dear long before 90%)",
-		["200k", "300k", "400k  (default)", "600k", "0  no limit, compactAt only"]],
+		["150k", "200k  (default)", "300k", "400k", "0  no limit, compactAt only"]],
 	thinking: ["string", "how long Claude and GPT think before answering: more is better on hard work, but slower and costs more",
 		["low", "medium  (default)", "high", "xhigh"]],
 	memory: ["boolean", "remember things across conversations (Markdown files on this computer; /memory shows them)"],
@@ -407,7 +408,7 @@ export function compactThreshold(window, cfg) {
 	const at = String(cfg?.compactAt ?? "90%").trim().toLowerCase();
 	const pct = Number(at.replace("%", ""));
 	if (!(window > 0) || at === "off" || !(pct > 0 && pct < 100)) return 0;
-	const limit = parseTokens(cfg?.compactLimit ?? "400k");
+	const limit = parseTokens(cfg?.compactLimit ?? "200k");
 	return Math.round(Math.min((window * pct) / 100, limit > 0 ? limit : Infinity));
 }
 

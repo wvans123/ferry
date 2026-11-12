@@ -636,7 +636,7 @@ def check_v016(root: Path, work: Path) -> None:
     try:
         s.home.mkdir(parents=True, exist_ok=True)
         cfgf = s.home / "config.json"
-        cfgf.write_text(json.dumps({"trimOldOutputs": "2k", "maxParallel": 2}), encoding="utf-8")
+        cfgf.write_text(json.dumps({"trimOldOutputs": "2k", "maxParallel": 2, "batchNudge": 0}), encoding="utf-8")
         c1, o1 = s.ferry("-p", "TRIMTEST: read the notes again and again")
         last = jsonl(s.upstream)[-1]
         stubs = sum("was left out to keep the context small" in json.dumps(m) for m in last.get("messages", []))
