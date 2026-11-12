@@ -51,7 +51,7 @@ STALE_S = 120          # the page says the computer is silent after this
 COMMAND_S = 10 * 60    # a command the computer has not taken by then is dropped
 MAX_SESSIONS = 10      # sessions per user
 MAX_COMMANDS = 10      # queued commands per session
-STATUS_BYTES = 8192    # largest status upload
+STATUS_BYTES = 16384   # largest status upload (clients send at most 8000)
 COMMANDS = ("steer", "task", "pause", "resume")
 SID = re.compile(r"[0-9a-f]{8,32}")
 
@@ -95,7 +95,7 @@ def _status(b: dict) -> dict:
         "todo": [{"status": _s(t.get("status"), 12), "text": _s(t.get("text"), 200)}
                  for t in todo[:20] if isinstance(t, dict) and _s(t.get("text"), 200)],
         "steps": [_s(x, 200) for x in steps[-10:] if isinstance(x, str) and x.strip()],
-        "reply": _s(b.get("reply"), 400),
+        "reply": _s(b.get("reply"), 4000),
         "last": {"cmd": _s(last.get("cmd"), 10), "result": _s(last.get("result"), 20)} if last.get("cmd") else None,
     }
 
@@ -377,7 +377,7 @@ background:#e5e5ea;color:#1c1c1e}
 textarea,input[type=text]{width:100%;box-sizing:border-box;font:16px system-ui;padding:10px;border:1px solid #c7c7cc;
 border-radius:10px;margin-top:10px}
 label{display:block;padding:12px;border:1px solid #c7c7cc;border-radius:12px;margin-top:8px}
-a{color:#007aff}
+a{color:#007aff}.reply{white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
 """
 
 
@@ -452,7 +452,8 @@ GOAL_TEXT = {"pursuing": "进行中", "paused": "已暂停", "achieved": "已完
 TODO_MARK = {"completed": "✓", "in_progress": "▶"}
 SENT = {"steer": "插话", "task": "新活", "pause": "暂停目标", "resume": "继续目标"}
 RESULT = {"delivered": "插话已送到，agent 下一步会看到", "started": "已经开始干了", "queued": "电脑正忙，排在当前这件事后面",
-          "refused": "没有执行：电脑上关了从手机派活（remoteTasks）", "done": "已照做", "nogoal": "没有执行：现在没有这样的目标"}
+          "refused": "没有执行：电脑上关了从手机派活（remoteTasks）", "done": "已照做", "nogoal": "没有执行：现在没有这样的目标",
+          "command": "已当作命令执行"}
 REFUSED = {"not now": "现在不能这样做，刷新看看最新状态。", "empty": "先写点内容。", "too many": "发得太多了，等电脑取走再发。"}
 
 
@@ -483,16 +484,19 @@ def console_page(s: dict, state: str, controls: list[str], silent: int, items: l
     todo = ("<div class=card><h2>待办</h2>" + "".join(f"<div>{TODO_MARK.get(t['status'], '○')} {e(t['text'])}</div>" for t in st["todo"])
             + "</div>") if st["todo"] else ""
     steps = ""
-    if st["steps"] or st["reply"]:
+    if st["steps"]:
         steps = ("<div class=card><h2>最近几步</h2>" + "".join(f"<div class=small>{e(x)}</div>" for x in st["steps"])
-                 + (f"<p>最新回复：{e(st['reply'])}</p>" if st["reply"] else "") + "</div>")
+                 + "</div>")
+    if st["reply"]:  # its own card, line breaks kept
+        steps += f"<div class=card><h2>最新回复</h2><div class=reply>{e(st['reply'])}</div></div>"
     acts = []
     if "steer" in controls:
-        acts.append("<textarea name=text rows=3 placeholder='插话：agent 下一步就会看到'></textarea>"
+        acts.append("<textarea name=text rows=4 placeholder='插话：agent 下一步就会看到'></textarea>"
                     "<button class=go name=cmd value=steer>发送插话</button>")
     elif "task" in controls:
-        acts.append("<textarea name=text rows=3 placeholder='派新活：写清楚要做什么'></textarea>"
-                    "<button class=go name=cmd value=task>开始干</button>")
+        acts.append("<textarea name=text rows=5 placeholder='派新活：写清楚要做什么。要它一直做到完成，开头写 /goal'></textarea>"
+                    "<button class=go name=cmd value=task>开始干</button>"
+                    "<p class=small>普通消息只做这一件事；以 /goal 开头是长目标，会定完成标准、列待办、做到完成为止。</p>")
     elif state == "idle":
         acts.append("<p class=small>电脑上关了从手机派活（remoteTasks），这里只能看。</p>")
     if "pause" in controls:

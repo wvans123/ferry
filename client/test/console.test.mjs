@@ -69,6 +69,21 @@ test("pause and resume run /goal pause | resume, only for a goal in that state",
 	assert.equal(pi.sent.length, 2);
 });
 
+test("from the phone, /goal, /loop and /compact run as commands; other slash text stays a message", () => {
+	const pi = fakePi();
+	const off = { remoteTasks: false };
+	// a task that is /goal, /loop or /compact runs as that command; any other slash text stays an ordinary message
+	assert.equal(deliver(pi, {}, { cmd: "task", text: " /goal finish the SA2 deck " }, true), "command");
+	assert.deepEqual(pi.sent.at(-1), ["/goal finish the SA2 deck", { expandPromptTemplates: true }]);
+	assert.equal(deliver(pi, {}, { cmd: "steer", text: "/compact" }, true), "command");
+	assert.equal(deliver(pi, {}, { cmd: "task", text: "/goal next one" }, false), "command");
+	assert.deepEqual(pi.sent.at(-1), ["/goal next one", { expandPromptTemplates: true, deliverAs: "followUp" }]);
+	assert.equal(deliver(pi, {}, { cmd: "task", text: "/config set mode bypass" }, true), "started");
+	assert.match(pi.sent.at(-1)[0], /^\(from your phone\) \/config set mode bypass$/);
+	assert.equal(deliver(pi, off, { cmd: "task", text: "/goal x" }, true), "refused");
+	assert.equal(deliver(pi, {}, { cmd: "steer", text: "/goal x" }, false), "delivered", "while it works a steer stays a steer");
+});
+
 test("a task starts an idle session, waits behind a busy one, and is refused when remoteTasks is off", () => {
 	const pi = fakePi();
 	assert.equal(deliver(pi, {}, { cmd: "task", text: "make the slides" }, true), "started");
@@ -92,6 +107,10 @@ test("the status fits in a few KB, newest steps kept; a step is one short line",
 	assert.ok(Buffer.byteLength(JSON.stringify(s)) <= STATUS_BYTES);
 	assert.ok(s.steps.length < 30 && s.steps.at(-1).startsWith("step 29"));
 	assert.equal(big.steps.length, 30, "the original is left alone");
+	// a long reply keeps its line breaks and gives way first, down to 600 characters, before steps and to-dos go
+	const long = fit({ state: "idle", reply: `第一段\n\n${"字".repeat(5000)}`, steps: ["a", "b", "c", "d", "e"], todo: [] });
+	assert.ok(Buffer.byteLength(JSON.stringify(long)) <= STATUS_BYTES);
+	assert.ok(long.reply.startsWith("第一段\n\n字") && long.reply.length >= 600 && long.steps.length === 5);
 	assert.equal(stepLine("bash", { command: "python   build.py\n--all" }), "bash (python build.py --all)");
 	assert.equal(stepLine("todo", { todos: [] }), "todo");
 	assert.ok(stepLine("read", { path: "x".repeat(300) }).length <= 121);
