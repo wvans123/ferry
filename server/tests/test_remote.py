@@ -262,6 +262,11 @@ def test_console_page_shows_the_session(monkeypatch):
     assert "bash (python build.py)" in t and "Drafting section 5.3.1 now." in t
     assert "发送插话" in t and "暂停目标" in t and "开始干" not in t and "继续目标" not in t
     assert page.headers["cache-control"] == "no-store" and "<script" not in t and "http" not in t.split("<body>")[1]
+    # the latest reply has its own card and keeps its line breaks; an idle page says how to send a goal
+    inbox_reply = "第一行\n\n第二行 <b>"
+    assert c.put(f"/v1/ferry/console/{SID}", json={**IDLE, "reply": inbox_reply}).status_code == 200
+    t = c.get(path).text
+    assert "<h2>最新回复</h2><div class=reply>第一行\n\n第二行 &lt;b&gt;</div>" in t and "开头写 /goal" in t
 
 
 def test_controls_follow_the_state(monkeypatch):
@@ -333,7 +338,7 @@ def test_status_upload_is_capped_and_trimmed(monkeypatch):
     assert c.put(f"/v1/ferry/console/{SID}", content=b"{" + b" " * remote.STATUS_BYTES + b"}").status_code == 413
     s = Inbox().report("wesley", "d1", "pc", SID, {**WORKING, "steps": [f"s{i}" for i in range(30)], "reply": "x" * 5000,
                                                     "goal": {"objective": "o", "status": "pursuing", "turns": "lots"}})
-    assert s["status"]["steps"] == [f"s{i}" for i in range(20, 30)] and len(s["status"]["reply"]) == 400
+    assert s["status"]["steps"] == [f"s{i}" for i in range(20, 30)] and len(s["status"]["reply"]) == 4000
     assert s["status"]["goal"]["turns"] == 0
     odd = Inbox().report("wesley", "d1", "pc", SID, {"todo": {"a": 1}, "steps": "abc", "goal": "x", "last": [1]})["status"]
     assert odd["todo"] == [] and odd["steps"] == [] and odd["goal"] is None and odd["last"] is None

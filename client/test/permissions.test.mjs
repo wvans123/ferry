@@ -327,6 +327,27 @@ test("full access: a delete asks only when it hits a protected place", () => {
 		ask(`rm -rf ${fwd(extra)}`, /treated like the project/, { extraDirs: [extra] });
 		assert.equal(act(`rm -rf ${fwd(join(extra, "sub"))}`, { extraDirs: [extra] }), "allow");
 		assert.equal(act(`cd ${fwd(extra)} && find . -delete`, { extraDirs: [extra] }), "allow");
+		// real commands that used to ask (replayed from four days of logs: 125 of 419 deletes asked, almost all for these reasons)
+		// 1. a pipe or || somewhere else in the command no longer hides where a plain cd went
+		assert.deepEqual(P.deleteTargets("cd a; grep -c x f | head -3; rm y.tmp"), ["a/y.tmp"]);
+		assert.deepEqual(P.deleteTargets("cd a\ncat part.tmp >> all.md && rm part.tmp; wc -l all.md || true"), ["a/part.tmp"]);
+		for (const c of ["cd a || rm x", "true || cd a; rm x", "cd a | rm x", "cd a && rm x & echo"]) assert.equal(P.deleteTargets(c), null, c);
+		assert.equal(act(`cd ${fwd(proj)}; cat a.tmp >> b.md && rm a.tmp; grep -n "^## \\|^### x" b.md | head`), "allow");
+		// 2. a lone slash, a backslash escape or a piece of a regex in a command Ferry cannot list is not a path
+		for (const c of [`python -c "import os; os.remove('a.tmp')"; grep -n "^## \\|^### x" b.md`, `python -c "import os,re; re.sub('/', '', 'a/b'); os.remove('a.tmp')"`,
+			`node -e "fs.unlinkSync('a.tmp'); s.replace(/\\n/g, ' ')"`, `find . -name '*.pyc' -delete; echo a / b`]) assert.equal(act(c), "allow", c);
+		ask("sh -c 'rm -rf /'", /root/);
+		ask("find / -name x -delete", /root/);
+		ask("sh -c 'rm -rf /*'", /root/);
+		ask(`python -c "import shutil; shutil.rmtree('${fwd(home)}')"`, /home folder/); // a full path still counts
+		// 3. a variable the command sets itself is read
+		assert.equal(act(`T=${fwd(join(proj, "sub"))}; mkdir -p $T; rm -rf $T`), "allow");
+		assert.equal(act(`T="${fwd(proj)}"; cd "$T" && rm -rf sub/*.tmp`), "allow");
+		ask(`T=${fwd(home)}; rm -rf $T`, /home folder/);
+		ask(`T=${fwd(root)}; rm -rf "$T"/*`, /contains|protects/);
+		ask(`export D=${fwd(proj)}\nrm -rf "$D"`, /the project folder/);
+		ask(`T=${fwd(home)}; T=${fwd(join(proj, "sub"))}; rm -rf $T`, /cannot list and names/); // set twice: unknown, so the home folder it names counts
+		assert.deepEqual([...P.withLocals("A=/x; B=$A/y; C=$(pwd); D=1 cmd; E=/e | cat", {})[Object.getOwnPropertySymbols(P.withLocals("", {}))[0]]], [["A", "/x"], ["B", "/x/y"]]);
 		// the protected list
 		const places = P.protectedPlaces({ cwd: proj, extraDirs: [], tempDir: temp, win: false }).map((p) => p.path);
 		for (const p of [home, join(home, "Documents"), join(home, "work"), proj, temp]) assert.ok(places.includes(p), p);

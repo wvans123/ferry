@@ -53,7 +53,13 @@ const WIN = process.platform === "win32";
 
 /** Split a command line into simple commands at && || ; | and newlines, outside quotes. */
 export function splitCommand(cmd) {
+	return splitWithSeps(cmd).map((p) => p.seg);
+}
+
+/** The same, with what stands before and after each command: [{ seg, before, after }]; "" at either end. */
+export function splitWithSeps(cmd) {
 	const parts = [];
+	const seps = [];
 	let cur = "";
 	let q = "";
 	for (let i = 0; i < cmd.length; i++) {
@@ -71,20 +77,31 @@ export function splitCommand(cmd) {
 		const two = cmd.slice(i, i + 2);
 		if (two === "&&" || two === "||") {
 			parts.push(cur);
+			seps.push(two);
 			cur = "";
 			i++;
 			continue;
 		}
 		if (c === ";" || c === "|" || c === "\n" || (c === "&" && cmd[i + 1] !== ">" && cmd[i - 1] !== ">")) {
 			parts.push(cur);
+			seps.push(c);
 			cur = "";
 			continue;
 		}
 		cur += c;
 	}
 	parts.push(cur);
-	return parts.map((p) => p.trim()).filter(Boolean);
+	const out = [];
+	let before = "";
+	parts.forEach((p, i) => {
+		// an empty piece (";;", a blank line) joins its separators: the stronger one counts
+		const after = seps[i] ?? "";
+		if (p.trim()) out.push({ seg: p.trim(), before, after });
+		before = p.trim() || !SEQ.has(after) ? after : before;
+	});
+	return out;
 }
+const SEQ = new Set(["", ";", "&&", "\n"]); // one command after the other, in the same shell
 
 const words = (seg) => (seg.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((w) => w.replace(/^["']|["']$/g, ""));
 
@@ -225,15 +242,20 @@ const WHY_CMD = "a delete Ferry cannot read (find/xargs, rimraf, a script, git c
 /**
  * The paths a command deletes, as written: { targets } ([] when it deletes nothing), or { why } when it deletes
  * something that cannot be listed. Wildcards and variables stay as written (expandTarget resolves them). A chain
- * `cd dir && rm x` (or `;`) gives the targets relative to dir; any other use of cd cannot be followed.
+ * `cd dir && rm x` (or `;`, or a new line) gives the targets relative to dir; a cd in a pipe, next to || or with more than
+ * one folder cannot be followed.
  */
 export function deleteTargetsEx(cmd) {
 	const out = [];
 	const text = String(cmd ?? "");
 	let base = ""; // the folder a simple cd chain moved to, as written
 	let moved = false; // a cd we cannot follow
-	const only = !/[|&\n]/.test(text.replace(/"[^"]*"|'[^']*'/g, "").replace(/&&/g, " ")); // && and ; only
-	for (const seg of splitCommand(text)) {
+	const segs = splitWithSeps(text);
+	const background = segs.some((x) => x.after === "&");
+	for (const { seg, before: sepBefore, after: sepAfter } of segs) {
+		// a cd changes the folder of what follows only when it runs in this shell and always: not in a pipe, not after ||
+		// or before it, and nothing in the command runs in the background. Pipes and || elsewhere do not matter.
+		const only = SEQ.has(sepBefore) && SEQ.has(sepAfter) && !background;
 		let w = words(seg).filter((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
 		while (/^(sudo|doas|nohup|nice|time|command|exec|env)$/.test(prog(w[0] ?? ""))) w = w.slice(1).filter((x, i, a) => !a.slice(0, i + 1).every((y) => y.startsWith("-")));
 		const c = prog(w[0] ?? "");
@@ -281,8 +303,11 @@ export function deleteTargets(cmd) {
 }
 
 const ENV_OK = ["TEMP", "TMP", "TMPDIR", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "HOME"];
+const LOCALS = Symbol("variables the command sets itself");
+
 /** A known variable's value, or undefined. */
 function envValue(name, env) {
+	if (env[LOCALS]?.has(name)) return env[LOCALS].get(name);
 	const n = name.toUpperCase();
 	if (!ENV_OK.includes(n)) return undefined;
 	const got = Object.entries(env).find(([k]) => k.toUpperCase() === n)?.[1];
@@ -303,6 +328,31 @@ export function expandVars(t, env = process.env) {
 	if (bad || /[%$]/.test(r)) return null;
 	if (/^~(?=$|[\\/])/.test(r)) r = r.replace(/^~/, homedir());
 	return r;
+}
+
+/**
+ * env plus the variables the command sets itself in plain sight (`T=/d/tmp/x; rm -rf $T`), so a delete that uses them can
+ * be listed. Only a command made of assignments alone counts (`T=x rm $T` does not set T for its own arguments), with a
+ * value written out (no $( ) or backticks; other variables in it must be known). A name set twice to different values
+ * stays unknown.
+ */
+export function withLocals(cmd, env = process.env) {
+	const out = { ...env, [LOCALS]: new Map() };
+	const dead = new Set();
+	for (const { seg, before, after } of splitWithSeps(String(cmd ?? ""))) {
+		const w = words(seg.replace(/^export\s+/, ""));
+		if (!w.length || !w.every((x) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(x))) continue;
+		for (const x of w) {
+			const name = x.slice(0, x.indexOf("="));
+			const raw = x.slice(x.indexOf("=") + 1).replace(/^["']|["']$/g, "");
+			const v = /[`]|\$\(/.test(raw) || !SEQ.has(before) || !SEQ.has(after) ? null : expandVars(raw, out);
+			if (v === null || dead.has(name) || (out[LOCALS].has(name) && out[LOCALS].get(name) !== v)) {
+				dead.add(name);
+				out[LOCALS].delete(name);
+			} else out[LOCALS].set(name, v);
+		}
+	}
+	return out;
 }
 
 const GLOB_CAP = 2000;
@@ -510,6 +560,7 @@ const protectedWhy = (what, h) => `${what}${h.self ? "" : ` (it contains ${h.pat
 /** Full access: why a delete still asks (it hits a protected place), or "". A delete Ferry cannot list goes ahead unless
  *  the command names a protected place as a path anywhere, or a cd to one comes first. */
 export function protectedDeleteOf(cmd, cwd, places, env = process.env) {
+	env = withLocals(cmd, env);
 	const r = deleteTargetsEx(cmd);
 	if (!r.why) {
 		let unknown = false;
@@ -571,14 +622,22 @@ function unlistableHit(cmd, cwd, places, env) {
 	}
 	// doubled backslashes (a Python or JSON string) read as single ones
 	const flat = text.replace(PS_VARS, "").replace(/\\{2,}/g, "\\");
+	let afterDelete = false; // the token follows a delete word (or find, rimraf) and its switches: rm -rf /
 	for (const tok of flat.split(/[\s"'`=(),;<>|&]+/)) {
+		const follows = afterDelete;
+		afterDelete = DELETERS.has(prog(tok)) || /^(find|rimraf)$/.test(prog(tok)) || (afterDelete && /^-/.test(tok));
 		if (!tok || switches.has(tok) || cdTokens.has(tok)) continue;
 		const v = expandVars(tok, env);
 		if (v === null) continue; // an unknown variable alone is not a reason to ask
 		const t = gitBashPath(v);
 		const drive = /^[a-z]:[\\/]/i.test(t);
 		if (drive && !WIN) continue;
-		if (!drive && !/^[\\/]/.test(t)) continue; // a relative path or a plain word
+		// Only what is written as a full path counts. Not a relative path or a plain word; not a lone slash or the piece
+		// of a regex or a quoted pattern ("\|", "/\n/g", "/case*.txt" cut from "$D"/case*.txt); on Windows not a path
+		// without a drive either (in Git Bash "/" is not a drive, and "\x" is almost always an escape).
+		// A lone slash, or a wildcard right under it, counts only as the target of a delete word (sh -c 'rm -rf /').
+		const bare = /^[\\/]+[^\\/]*$/.test(t) && (/^[\\/]+$/.test(t) || hasGlob(t));
+		if (!drive && (bare ? !follows : WIN || !/^\/[\w.~-]/.test(t))) continue;
 		const h = protectedHit(resolve(t), places);
 		if (h) return protectedWhy(`deletes something Ferry cannot list and names ${t}`, h);
 	}
@@ -587,6 +646,7 @@ function unlistableHit(cmd, cwd, places, env) {
 
 /** Why a delete still needs the user (which target, or what could not be listed), or "" when it only deletes what this session made. */
 export function unsafeDeleteOf(cmd, cwd, _dirs, session = { start: Infinity, made: new Set() }, env = process.env) {
+	env = withLocals(cmd, env);
 	const r = deleteTargetsEx(cmd);
 	if (r.why) return `deletes something Ferry cannot list: ${r.why}`;
 	for (const t of r.targets) {
