@@ -19,7 +19,7 @@ test("the threshold is compactAt of the window or compactLimit, whichever is sma
 	assert.equal(compactThreshold(1_000_000, cfg({ compactLimit: "0" })), 900_000);
 	assert.equal(compactThreshold(1_000_000, cfg({ compactAt: "50%", compactLimit: "600k" })), 500_000);
 	assert.equal(compactThreshold(1_000_000, cfg({ compactAt: "off" })), 0);
-	assert.equal(DEFAULTS.compactLimit, "400k");
+	assert.equal(DEFAULTS.compactLimit, "200k");
 });
 
 test("pi's margin is window minus threshold, never below pi's own 16384", () => {

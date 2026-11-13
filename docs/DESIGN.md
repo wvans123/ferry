@@ -222,7 +222,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 服务端存不存对话 | 设置项 `session_store`：存磁盘（省流量）、只存内存、完全不存（每轮整段重传，仍按 512KB 分块，单个请求不超过 1MB） | `server/ferry_server/store.py` |
 | 本地安全底线 | 禁止目录、执行前确认都在客户端执行，服务端无法绕过；拦截原因里不含受保护的名字 | `client/lib/guard.mjs` |
 | 可审计 | 访问日志和审计日志只记大小、模型、用量，不记对话内容 | `server/ferry_server/app.py` |
-| 上下文太长 | 命令输出先去掉颜色代码、进度条的重画和连续重复的行；长输出在客户端写文件，只给模型开头结尾；旧的长工具输出超过 `trimOldOutputs` 后换成一行说明；到 `compactAt` 时写摘要（由服务端写，失败会换模型、分段），压缩后能用 `history_search` 找回原文；服务端可以给发给模型的请求设上限（默认不设），超了从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/fit.py`、`prompt.py` |
+| 上下文太长 | 命令输出先去掉颜色代码、进度条的重画和连续重复的行；长输出在客户端写文件，只给模型开头结尾；旧的长工具输出和 agent 自己写过的长内容超过 `trimOldOutputs` 后成批换成一行说明（成批是为了少让缓存失效）；到 `compactAt` 时写摘要（由服务端写，失败会换模型、分段），压缩后能用 `history_search` 找回原文；服务端可以给发给模型的请求设上限（默认不设），超了从最旧的工具输出开始删 | `client/lib/tools.mjs`、`server/ferry_server/fit.py`、`prompt.py` |
 | 记忆放哪 | 客户端：内容本来就是关于这台电脑上的代码和你的习惯；服务端只转发，换服务端不丢记忆。只有目录进系统提示，正文按需读取 | `client/lib/memory.mjs` |
 | 子 agent | 在同一个进程里另起一个 pi 会话（内存里，不存盘），作为一个独立对话同步到服务端；审批对话框借用主窗口 | `client/lib/subagent.mjs` |
 | 权限 | 每次工具调用先过 `decide()`：受保护路径 → 禁止规则 → 模式 → 危险命令 → 询问规则 → 只读命令 → 允许规则；复合命令按 `&&` `;` `|` 拆开逐段判断。几个工具同时要确认时排队一个一个问，前一个回答存下的规则后面的直接用 | `client/lib/permissions.mjs`、`guard.mjs` |

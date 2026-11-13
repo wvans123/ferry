@@ -43,7 +43,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端；新对话开始时从上一段对话提记忆候选、`/memory tidy` 整理、`/memory distill` 从很多段旧对话里找反复出现的事写成记忆、规则或技能，都要你确认 | `client/lib/memory.mjs`、`memreview.mjs`、`distill.mjs`、`server/ferry_server/globalmem.py`、`memreview.py` | `memory`、`memoryReview`；全局记忆在管理页 | F28、F56、F78、F88、F105–F110 |
 | 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删；`task_batch` 里一个文件只让先改它的子 agent 改 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89、F91、F115 |
-| 工具输出 | 待办（12 次工具调用没更新就提醒）、命令输出去噪、长输出存文件、旧输出省略、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs` | F30、F31、F46、F48、F92、F96 |
+| 工具输出 | 待办（12 次工具调用没更新就提醒）、命令输出去噪、长输出存文件、旧输出和旧的长写入成批省略、连续单个小查看的提醒、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs`、`batchNudge` | F30、F31、F46、F48、F92、F96 |
 | /goal | 一直做到完成；先定完成标准，中途改的要求记下，按标准验收；报完成后由没看过过程的 `review` 子 agent 复核（最多两轮，起不来就照旧）；一轮出错后等 30 秒、2 分钟、5 分钟重试，三次不行就暂停并推手机 | `client/lib/goal.mjs`；复核通过 `subagent.mjs` 放在 `cfg.runSubagent` 里的入口 | `goalMaxTurns`、`goalBudget`、`goalReview` | F41、F95、F97、F129 |
 | 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干；`job_start` 带 `watch` 时脚本每打印一行 agent 就收到（Claude Code 的 Monitor）；`/tasks` 和 Running 一行显示子 agent 正在做的步骤，能看过程记录的最后一屏 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86、F125、单元测试 |
 | /loop | 每隔一段时间把一句提示作为 Ferry 的消息送给 agent：空闲就开一轮，忙就等做完，上一次没做完就跳过；只在这个窗口里，24 小时自停 | `client/lib/loop.mjs` | — | F125、单元测试 |

@@ -406,7 +406,7 @@ async function run(args) {
 	const { createBrand } = await import("../lib/brand.mjs");
 	const { createMemory } = await import("../lib/memory.mjs");
 	const { createPrompt } = await import("../lib/prompt.mjs");
-	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations, createTrimOldOutputs, todoText } = await import("../lib/tools.mjs");
+	const { createTodo, createBigOutputs, createHistorySearch, createPastConversations, createTrimOldOutputs, createBatchNudge, todoText } = await import("../lib/tools.mjs");
 	const { createSubagents, discoverAgents } = await import("../lib/subagent.mjs");
 	const { createCommands } = await import("../lib/commands.mjs");
 	const { createCheckpoints } = await import("../lib/checkpoint.mjs");
@@ -477,6 +477,7 @@ async function run(args) {
 			{ name: "ferry-history", factory: createHistorySearch(), hidden: true },
 			{ name: "ferry-past", factory: createPastConversations(), hidden: true },
 			{ name: "ferry-trim", factory: createTrimOldOutputs(cfg), hidden: true },
+			{ name: "ferry-batch-nudge", factory: createBatchNudge(cfg), hidden: true },
 			{ name: "ferry-image", factory: (await import("../lib/image.mjs")).createImage(cfg), hidden: true },
 			{ name: "ferry-office", factory: (await import("../lib/office.mjs")).createOffice(cfg), hidden: true },
 			{ name: "ferry-web", factory: createWeb(cfg), hidden: true },

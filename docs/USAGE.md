@@ -334,8 +334,9 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 
 - 命令输出交给模型前先去噪：去掉颜色代码，进度条只留最后一次的样子，连续相同的行只留一行，后面写上重复了几次。读文件和 Office 的结果不动。
 - 命令输出太长时，全文存到文件，只给模型看开头和结尾，需要时它自己去读。
-- 上下文超过 80k（`trimOldOutputs`）后，很久以前的长工具输出换成一行说明，最近 6 个保留。
-- 上下文用到 90%（`compactAt`）或 40 万 token（`compactLimit`），哪个先到就自动写摘要压缩，最近 20k（`compactKeep`）原样保留。每次请求模型之前都会查，所以一个很长的任务做到一半也会压缩，不用等请求结束。之后需要原文，agent 用 `history_search` 在本地完整记录里找回。
+- 上下文超过 80k（`trimOldOutputs`）后，很久以前的长工具输出换成一行说明，最近 6 个保留。agent 自己写过的长内容（写文件的全文、很长的命令或脚本）也一样处理。每换一次，模型那边的缓存会失效一次，所以攒够一批（约 8 万字符）才一起换。
+- agent 连续 4 次回复都只做一个小查看（读一个文件、一条 `ls`/`grep`/`sed`、短的 `sleep`）时，Ferry 提醒它把要看的东西一次要完（`batchNudge`，0 表示不提醒）。每次回复模型都要把整段对话重读一遍，回复次数少了才省。
+- 上下文用到 90%（`compactAt`）或 20 万 token（`compactLimit`），哪个先到就自动写摘要压缩，最近 20k（`compactKeep`）原样保留。每次请求模型之前都会查，所以一个很长的任务做到一半也会压缩，不用等请求结束。之后需要原文，agent 用 `history_search` 在本地完整记录里找回。
 - 摘要一定会留下：你说过的话（短的原文，长的如实概括）、保密要求和"不要"类的要求（原文）、`/goal` 的目标和进度、产出文件的路径和完成程度、下一步。服务端 `rules/_summary.md` 里还可以再加自己的要求。
 - 压缩之后，agent 收到一条短提示（记在对话里，不显示）：之前建过或改过的文件路径、用过的技能、现在的待办清单（只有路径，没有文件内容），让它先重读再动手，压缩不会把任务状态丢掉。
 - 连续两次写摘要失败，这次请求里就不再自动压缩，底部有提示，开了手机通知也会推一条；你发下一条消息后恢复。想马上试可以用 `/compact`。
@@ -412,14 +413,14 @@ ferry team goal "调研三种方案并写汇报 PPT"     # 给负责人一个目
 | `blockedPaths` | `.env,.ssh,id_rsa,secrets,credentials` | 永远不读、不改、不在命令里出现的路径（文件工具按路径里是否含这个词；命令里按路径的一段或文件名匹配，文字里出现不拦） |
 | `proxy` | 空 | 连服务端用的代理，空表示用 `HTTPS_PROXY` 环境变量 |
 | `compactAt` | `90%` | 上下文用到多少时自动压缩：`50%`～`90%`，或 `off`（只在快超限时压缩，这时 `compactLimit` 也不起作用）。越低每次请求越便宜，也越早丢细节 |
-| `compactLimit` | `400k` | 上下文最多到多少 token 就压缩，和 `compactAt` 哪个先到听哪个。100 万上下文的模型用到 400k 时请求已经又慢又贵。`0` 表示不设上限，只看 `compactAt`。改后下次启动 ferry 生效；`/context` 改了大小会马上按新大小算 |
+| `compactLimit` | `200k` | 上下文最多到多少 token 就压缩，和 `compactAt` 哪个先到听哪个。长任务里每次请求带的上下文平均接近这个数的一半（实测 400k 时平均约 21 万），所以它直接决定每一步的花费；调高（如 `400k`）压缩得少、细节留得多，但更贵更慢。`0` 表示不设上限，只看 `compactAt`。改后下次启动 ferry 生效；`/context` 改了大小会马上按新大小算 |
 | `compactKeep` | `20k` | 压缩时最近多少内容原样保留 |
 | `showModel` | `true` | 屏幕右下角是否显示模型名。设成 `false` 就不显示，也不会换成别的名字；`/model` 和 `/status` 仍然会写出真实的模型 |
 | `keepImages` | `4` | 对话里保留最近几张图片，更早的换成一句说明 |
 | `systemCerts` | `true` | 同时信任这台电脑信任的 HTTPS 证书。公司代理用自己的证书检查 HTTPS 时，靠它让 ferry 和命令都能连上 |
 | `caFile` | 空 | 再加一个证书文件（.pem），比如找 IT 要的公司代理证书；电脑自己的证书不够时才需要 |
 
-很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`maxParallel`（默认 3）、`phoneAfterSeconds`（长任务做完多久算久，默认 300 秒）、`phoneApprovalSeconds`（确认框多久没人点就推到手机，默认 60 秒，每个确认框只推一次）、`gatewayWaitMinutes`（干活中途网关要确认时最多等多久，默认 720 分钟）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
+很少需要改的，用 `ferry config --all` 或 `/config` → More settings 查看：`trimOldOutputs`（默认 80k，0 表示不省略）、`batchNudge`（默认 4，0 表示不提醒）、`maxParallel`（默认 3）、`phoneAfterSeconds`（长任务做完多久算久，默认 300 秒）、`phoneApprovalSeconds`（确认框多久没人点就推到手机，默认 60 秒，每个确认框只推一次）、`gatewayWaitMinutes`（干活中途网关要确认时最多等多久，默认 720 分钟）、`subagents`、`bigOutputBytes`、`notifyAfterSeconds`、`updateCheck`、`browserPath`、`browserHeadless`、`chunkBytes`（单个请求的最大字节数，默认 512 KB；被网关挡下时会自己减半，见下面的报错说明）、`rulesFromParents`。上下文长度用 `/context` 改，存在同一个文件里。
 
 服务端的设置见 [SERVER.md](SERVER.md#服务端设置)。
 
