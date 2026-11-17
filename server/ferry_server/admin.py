@@ -589,8 +589,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
                 had = next((x for x in cfg.models.values() if x.model == name and x.provider == pid), None)
                 known = presets_mod.model_extras(name)
                 models.append({"id": mid, "provider": pid, "model": name, "name": m.get("name", ""),
-                               "context_window": int(m.get("context_window") or 128_000),
-                               "max_tokens": int(m.get("max_tokens") or 8_192),
+                               "context_window": int(m.get("context_window") or known.get("context_window") or 128_000),
+                               "max_tokens": int(m.get("max_tokens") or known.get("max_tokens") or 8_192),
+                               "api": m.get("api") if m.get("api") in ("openai", "anthropic", "openai-responses") else entry["api"],
                                "vision": bool(m["vision"]) if "vision" in m else (had.vision if had else bool(known.get("vision", True))),
                                "price": m["price"] if isinstance(m.get("price"), dict) else (had.price if had and had.price
                                                                                              else known.get("price", {}))})

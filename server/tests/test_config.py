@@ -95,6 +95,19 @@ def test_old_deepseek_sizes_are_raised_but_chosen_ones_kept():
     assert models["c"].context_window == 128_000
 
 
+def test_known_models_get_catalog_output_limit_only_when_not_configured():
+    from ferry_server.config import parse_models
+
+    raw = {"providers": {"relay": {"base_url": "https://relay.example/v1"}},
+           "models": {"claude": {"provider": "relay", "model": "anthropic/claude-opus-5.5"},
+                      "custom": {"provider": "relay", "model": "private-model"},
+                      "limited": {"provider": "relay", "model": "claude-opus-5-5", "max_tokens": 8192}}}
+    _, models = parse_models(raw, {})
+    assert models["claude"].max_tokens == 64_000
+    assert models["custom"].max_tokens == 8_192
+    assert models["limited"].max_tokens == 8_192
+
+
 def test_stall_seconds_default_and_zero_survive_the_models_file(tmp_path, monkeypatch):
     from ferry_server.config import load_default, render_models_toml
     monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))

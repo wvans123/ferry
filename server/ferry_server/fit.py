@@ -75,12 +75,13 @@ class Refused(Exception):
     """The model declined (Claude's stop_reason "refusal", OpenAI's content_filter) or answered nothing."""
 
 
-async def complete(client: httpx.AsyncClient, m: ModelConfig, system: str, prompt: str, max_tokens: int) -> tuple[str, dict]:
+async def complete(client: httpx.AsyncClient, m: ModelConfig, system: str, prompt: str, max_tokens: int,
+                   timeout: float = 600) -> tuple[str, dict]:
     """One non-streamed request to the model in its own API. Returns (text, usage); raises Refused."""
     if m.api == "anthropic":
         body = {"model": m.model, "max_tokens": min(max_tokens, m.max_tokens), "system": system,
                 "messages": [{"role": "user", "content": prompt}]}
-        r = await client.post(anthropic_url(m.base_url), json=body, timeout=600,
+        r = await client.post(anthropic_url(m.base_url), json=body, timeout=timeout,
                               headers={"x-api-key": m.api_key, "anthropic-version": "2023-06-01"})
         r.raise_for_status()
         d = r.json()
@@ -93,11 +94,11 @@ async def complete(client: httpx.AsyncClient, m: ModelConfig, system: str, promp
                          "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}, m)
     if m.api == "openai-responses":
         from .responses import from_responses, responses_url, to_responses
-        r = await client.post(responses_url(m.base_url), json=to_responses(chat), headers=headers, timeout=600)
+        r = await client.post(responses_url(m.base_url), json=to_responses(chat), headers=headers, timeout=timeout)
         r.raise_for_status()
         d = from_responses(r.json())
     else:
-        r = await client.post(chat_url(m.base_url), json=chat, headers=headers, timeout=600)
+        r = await client.post(chat_url(m.base_url), json=chat, headers=headers, timeout=timeout)
         r.raise_for_status()
         d = r.json()
     choice = (d.get("choices") or [{}])[0]

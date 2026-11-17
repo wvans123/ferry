@@ -33,7 +33,7 @@ class ModelConfig:
     name: str = ""                                      # display name (admin page only)
     no_key: bool = False                                # e.g. a local Ollama
     key_value: str = field(default="", repr=False)      # key entered on the admin page (secrets.toml)
-    api: str = "openai"                                 # "openai" (chat completions) or "anthropic" (Messages API)
+    api: str = "openai"                                 # "openai" (Chat), "openai-responses", or "anthropic" (Messages)
     vision: bool = True                                 # takes images; vision = false for a text-only model
     # USD per million tokens: input, output, cache_read, cache_write. Used for the cost in /cost and the usage page.
     price: dict = field(default_factory=dict)
@@ -358,6 +358,9 @@ def parse_models(raw: dict, secrets_: dict[str, str]) -> tuple[dict[str, Provide
     for mid, m in raw.get("models", {}).items():
         m = dict(m)
         m.pop("separate", None)  # 0.29's per-model copy of a provider setting that no longer exists
+        from .presets import model_extras
+        known = model_extras(m.get("model", ""))
+        m.setdefault("max_tokens", known.get("max_tokens", 8_192))
         pid = m.pop("provider", "")
         if pid:
             prov = providers.get(pid)
@@ -453,7 +456,7 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
             out.append(f"stall_seconds = {int(p['stall_seconds'])}")
     for m in models:
         out += ["", f"[models.{_toml_key(m['id'])}]"]
-        for k in ("provider", "model", "name", "context_window", "max_tokens", "vision", "price", "base_url",
+        for k in ("provider", "model", "name", "context_window", "max_tokens", "api", "vision", "price", "base_url",
                   "api_key_env", "drop_params", "rename_params"):
             if m.get(k) not in (None, "", [], {}):
                 out.append(f"{k} = {_toml_value(m[k])}")

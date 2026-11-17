@@ -125,8 +125,10 @@ dialog::backdrop { background: rgba(10, 30, 34, .45); }
 .dlg-body { padding: 14px 22px; max-height: 70vh; overflow: auto; }
 .dlg-foot { padding: 12px 22px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
 .modellist { border: 1px solid var(--line); border-radius: var(--r-sm); max-height: 260px; overflow: auto; margin-top: 8px; }
-.modellist label { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
-.modellist label:last-child { border-bottom: 0; }
+.modellist .modelrow { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.modellist .modelrow:last-child { border-bottom: 0; }
+.modellist .modelname { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.modellist .modelapi { min-width: 190px; }
 .modellist .sug { margin-left: auto; }
 .modellist .sizes { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .modellist .sug + .sizes { margin-left: 8px; }
@@ -450,6 +452,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         <p class="muted" style="font-size:13px;margin:4px 0 0" id="fetchMsg"></p>
         <input type="search" id="fFilter" placeholder="筛选模型" style="margin-top:8px" hidden>
         <div class="modellist" id="fModels"></div>
+        <p class="muted" style="font-size:13px;margin:6px 0 0">接口格式可以按模型分别选。Claude 默认推荐 Anthropic Messages；GPT 和 Codex 默认推荐 OpenAI Responses；其他模型沿用服务商接口。中转必须支持所选接口，点“测试”验证。最大输出按模型单独限制；已知模型使用目录上限，其他模型默认 8k，可按中转实际限制调整。</p>
         <div class="row" style="margin-top:8px"><input type="text" id="fManual" placeholder="列表里没有？直接输入模型名" style="flex:1;min-width:200px"><button class="btn small" id="fAddManual">添加</button></div>
       </div>
     </div>
@@ -578,7 +581,7 @@ async function loadProviders() {
   for (const b of document.querySelectorAll("[data-test]")) b.onclick = async () => {
     const p = P.providers[+b.dataset.test]; b.disabled = true; say("provMsg", `正在测试 ${p.name}……`);
     try { const r = await testModels(p.models.map((m) => m.id)); const bad = r.filter((m) => !m.ok);
-      const native = r.some((m) => m.anthropic) && p.api !== "anthropic"
+      const native = r.some((m) => m.anthropic && p.models.some((x) => x.id === m.id && x.api !== "anthropic"))
         ? `\n这个服务商也支持 Claude 原生接口：编辑 → 接口格式选"Anthropic"，提示词缓存更可靠，花费能少很多。` : "";
       say("provMsg", (bad.length ? bad.map((m) => `${m.id}：${m.error}`).join("\n") : `${p.name}：全部能用`) + native, !bad.length); }
     catch (e) { say("provMsg", e.message, false); }
@@ -587,7 +590,7 @@ async function loadProviders() {
 }
 function payload(list, routing) {
   return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api, max_concurrent: p.max_concurrent || 0, rpm: p.rpm || 0, cooldown: p.cooldown || 60, stall_seconds: p.stall_seconds ?? 120,
-    models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, ...(m.price ? { price: m.price } : {}) })) })),
+    models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, api: m.api || p.api, ...(m.price ? { price: m.price } : {}) })) })),
     routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, image: $("rImage").value, advisor: $("rAdvisor").value, expose: $("rExpose").checked } };
 }
 async function saveAll(list, routing) { P = await api("providers", "PUT", payload(list, routing)); }
@@ -606,7 +609,7 @@ $("testAll").onclick = async () => { $("testAll").disabled = true; say("provMsg"
   $("testAll").disabled = false; };
 
 /* provider editor */
-let ED = null; // { orig index or -1, preset, models: [{model, on, suggested}] }
+let ED = null; // { orig index or -1, preset, models: [{model, on, suggested, api}] }
 function openEditor(prov) {
   $("dlgMsg").textContent = ""; $("fFilter").value = ""; $("fManual").value = "";
   if (!prov) { ED = null; renderPresets(); $("dlgTitle").textContent = "添加服务商"; $("pickStep").hidden = false; $("formStep").hidden = true; $("dlgFoot").hidden = true; }
@@ -622,8 +625,8 @@ function renderPresets() {
 function fillForm(pre, prov) {
   const idx = prov ? P.providers.indexOf(prov) : -1;
   ED = { idx, preset: pre, id: prov?.id || uniqueId(pre.id), api_key_env: prov?.api_key_env || "",
-    models: prov ? prov.models.map((m) => ({ model: m.model, id: m.id, on: true, context_window: m.context_window, max_tokens: m.max_tokens, price: m.price && Object.keys(m.price).length ? m.price : undefined, suggested: !!pre.models.find((x) => x.model === m.model) }))
-      : pre.models.map((m) => ({ ...m, on: true, suggested: true })), keyTail: prov?.key_tail, keySource: prov?.key_source };
+    models: prov ? prov.models.map((m) => ({ model: m.model, id: m.id, on: true, api: m.api || prov.api || "openai", context_window: m.context_window, max_tokens: m.max_tokens, price: m.price && Object.keys(m.price).length ? m.price : undefined, suggested: !!pre.models.find((x) => x.model === m.model) }))
+      : pre.models.map((m) => ({ ...m, on: true, api: apiForModel(m.model, pre.api || "openai"), suggested: true })), keyTail: prov?.key_tail, keySource: prov?.key_source };
   $("dlgTitle").textContent = prov ? `编辑 ${prov.name}` : `添加 ${pre.name}`;
   $("pickStep").hidden = true; $("formStep").hidden = false; $("dlgFoot").hidden = false; $("dlgBack").hidden = !!prov;
   $("fName").value = prov?.name || pre.name; $("fBase").value = prov?.base_url || pre.base_url;
@@ -642,20 +645,34 @@ function fillForm(pre, prov) {
   renderModelList();
 }
 function uniqueId(base) { const ids = new Set((P?.providers || []).map((p) => p.id)); let id = base, i = 2; while (ids.has(id)) id = `${base}-${i++}`; return id; }
+function modelPreset(model) {
+  const norm = (s) => String(s || "").toLowerCase().split("/").pop().replace(/[._\s]+/g, "-");
+  const id = norm(model);
+  for (const p of PRESETS) { const found = p.models.find((m) => norm(m.model) === id); if (found) return found; }
+  return {};
+}
+function apiForModel(model, fallback) {
+  const id = String(model || "").toLowerCase();
+  if (/(^|[/_-])claude([/_-]|$)/.test(id)) return "anthropic";
+  if (/(^|[/_-])codex([/_-]|$)/.test(id) || /(^|[/_-])gpt[-/]/.test(id)) return "openai-responses";
+  return fallback;
+}
 function renderModelList() {
   const f = $("fFilter").value.trim().toLowerCase();
   const rows = ED.models.filter((m) => !f || m.model.toLowerCase().includes(f));
   const preOf = (m) => ED.preset.models.find((x) => x.model === m.model) || {};
   const priceOf = (m) => m.price || preOf(m).price || {};
-  const sizes = (m) => m.on ? `<span class="sizes">上下文 <input type="number" min="16" step="1" data-ctx="${esc(m.model)}" value="${Math.round((m.context_window || preOf(m).context_window || 128000) / 1000)}">k
-      最大输出 <input type="number" min="1" step="1" data-out="${esc(m.model)}" value="${Math.round((m.max_tokens || preOf(m).max_tokens || 8192) / 1000)}">k
+  const sizes = (m) => m.on ? `<span class="sizes">上下文 <input type="number" min="16" step="1" data-ctx="${esc(m.model)}" value="${Math.round((m.context_window || preOf(m).context_window || modelPreset(m.model).context_window || 128000) / 1000)}">k
+      最大输出 <input type="number" min="1" step="1" data-out="${esc(m.model)}" value="${Math.round((m.max_tokens || preOf(m).max_tokens || modelPreset(m.model).max_tokens || 8192) / 1000)}">k
       <span title="每百万 token 的价格（美元），用来算花费；空着就不算">· 每百万 token $ 输入 <input class="price" type="number" min="0" step="any" data-pin="${esc(m.model)}" value="${priceOf(m).input ?? ""}">
       输出 <input class="price" type="number" min="0" step="any" data-pout="${esc(m.model)}" value="${priceOf(m).output ?? ""}">
       缓存 <input class="price" type="number" min="0" step="any" data-pcache="${esc(m.model)}" value="${priceOf(m).cache_read ?? ""}"></span></span>` : "";
-  $("fModels").innerHTML = rows.map((m) => `<label><input type="checkbox" data-m="${esc(m.model)}" ${m.on ? "checked" : ""}> <span class="mono">${esc(m.model)}</span>${m.suggested ? '<span class="tag sug">推荐</span>' : ""}${sizes(m)}</label>`).join("")
+  const apiOptions = (value) => `<option value="openai" ${value === "openai" ? "selected" : ""}>OpenAI Chat</option><option value="openai-responses" ${value === "openai-responses" ? "selected" : ""}>OpenAI Responses</option><option value="anthropic" ${value === "anthropic" ? "selected" : ""}>Anthropic Messages</option>`;
+  $("fModels").innerHTML = rows.map((m) => `<div class="modelrow"><label class="modelname"><input type="checkbox" data-m="${esc(m.model)}" ${m.on ? "checked" : ""}> <span class="mono">${esc(m.model)}</span>${m.suggested ? '<span class="tag sug">推荐</span>' : ""}</label>${m.on ? `<select class="modelapi" aria-label="${esc(m.model)} 接口格式" data-api="${esc(m.model)}">${apiOptions(m.api || apiForModel(m.model, ED.preset.api || "openai"))}</select>` : ""}${sizes(m)}</div>`).join("")
     || '<div class="empty" style="padding:14px">还没有模型。</div>';
   const byName = (n) => ED.models.find((m) => m.model === n);
   for (const c of document.querySelectorAll("#fModels input[data-m]")) c.onchange = () => { byName(c.dataset.m).on = c.checked; renderModelList(); };
+  for (const c of document.querySelectorAll("#fModels select[data-api]")) c.onchange = () => { byName(c.dataset.api).api = c.value; };
   for (const c of document.querySelectorAll("#fModels input[data-ctx]")) c.onchange = () => { byName(c.dataset.ctx).context_window = Math.max(16, +c.value || 128) * 1000; };
   for (const c of document.querySelectorAll("#fModels input[data-out]")) c.onchange = () => { byName(c.dataset.out).max_tokens = Math.max(1, +c.value || 8) * 1000; };
   const setPrice = (name, k, v) => { const m = byName(name); m.price = { ...priceOf(m) }; if (v === "") delete m.price[k]; else m.price[k] = +v; };
@@ -676,7 +693,7 @@ $("fFetch").onclick = async () => {
     $("fetchMsg").textContent = `读到 ${r.models.length} 个模型，勾选要用的。`; renderModelList();
   } catch (e) { $("fetchMsg").textContent = "读取失败：" + e.message + "。也可以在下面直接输入模型名。"; }
 };
-$("fAddManual").onclick = () => { const v = $("fManual").value.trim(); if (!v) return; if (!ED.models.find((m) => m.model === v)) ED.models.unshift({ model: v, on: true, suggested: false }); else ED.models.find((m) => m.model === v).on = true; $("fManual").value = ""; renderModelList(); };
+$("fAddManual").onclick = () => { const v = $("fManual").value.trim(); if (!v) return; if (!ED.models.find((m) => m.model === v)) ED.models.unshift({ model: v, on: true, api: apiForModel(v, ED.preset.api || "openai"), suggested: false }); else ED.models.find((m) => m.model === v).on = true; $("fManual").value = ""; renderModelList(); };
 $("dlgBack").onclick = () => openEditor(null);
 $("dlgClose").onclick = () => $("provDlg").close();
 $("addProv").onclick = () => openEditor(null);
@@ -690,8 +707,8 @@ $("dlgSave").onclick = async () => {
     ...(!$("apiWrap").hidden ? { api: $("fApi").value } : {}), max_concurrent: Math.max(0, Math.floor(+$("fConc").value || 0)),
     rpm: Math.max(0, Math.floor(+$("fRpm").value || 0)), cooldown: Math.max(1, Math.floor(+$("fCool").value || 60)), stall_seconds: $("fStall").value === "" ? 120 : Math.max(0, Math.floor(+$("fStall").value)),
     share: $("fShare").checked,
-    models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || 8192,
-      ...(m.price ? { price: m.price } : {}) })) };
+    models: models.map((m) => ({ id: m.id, model: m.model, context_window: m.context_window || pre.models.find((x) => x.model === m.model)?.context_window || modelPreset(m.model).context_window || 128000, max_tokens: m.max_tokens || pre.models.find((x) => x.model === m.model)?.max_tokens || modelPreset(m.model).max_tokens || 8192,
+      api: m.api || apiForModel(m.model, pre.api || "openai"), ...(m.price ? { price: m.price } : {}) })) };
   const list = P.providers.slice();
   if (ED.idx >= 0) list[ED.idx] = entry; else list.push(entry);
   $("dlgSave").disabled = true; say("dlgMsg", "正在保存……");

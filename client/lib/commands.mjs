@@ -142,7 +142,7 @@ export function createCommands(cfg, deps) {
 				const mins = `after ${Math.round(secs / 60)} min`;
 				if (lastStop?.reason === "error") cfg.phone?.("Stopped", `${mins}: ${String(lastStop.error ?? "an error").slice(0, 160)}`, "stopped");
 				else {
-					// a one-sentence recap of the work (side.mjs; "" when off, failed or slower than 15 s) replaces the plain text;
+					// a one-sentence recap of the work (side.mjs; "" when off, failed or slower than 35 s) replaces the plain text;
 					// not awaited, so the next request is not held up
 					const plain = mins;
 					void (async () => {

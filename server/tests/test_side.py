@@ -82,16 +82,56 @@ def test_endpoint_rebuilds_the_conversation_and_asks_the_right_model(tmp_path, m
             return a, b, n, lost, none, bad
 
     a, b, n, lost, none, bad = asyncio.run(go())
-    assert a["model"] == "strong" and b["model"] == "deepseek" and n["model"] == "cheap"
+    assert a["model"] == "strong" and b["model"] == "deepseek" and n["model"] == "deepseek"
     up = {body["model"]: body["messages"][-1]["content"] for _, body in seen}
     assert "write the patent disclosure" in up["strong-model"] and "stronger, more experienced reviewer" in up["strong-model"]
     assert "is the claim set enough?" in up["strong-model"]
     btw = [body["messages"][-1]["content"] for _, body in seen if body["model"] == "deepseek-flash"]
     assert "side question" in btw[0] and "claim 1 is about X" in btw[0] and "what is claim 1?" in btw[0]
-    assert "under 40 words" in up["cheap-model"]
+    assert any("under 40 words" in body["messages"][-1]["content"] for _, body in seen
+               if body["model"] == "deepseek-flash")
     assert all("tools" not in body for _, body in seen)                # no tools in any side call
     assert lost.status_code == 409 and bad.status_code == 400 and none["text"]
     log = [json.loads(x) for x in (cfg.data_dir / "audit.jsonl").read_text().splitlines()]
     side_rows = [r for r in log if r.get("purpose") in ("advise", "btw", "recap")]
     assert {r["purpose"] for r in side_rows} == {"advise", "btw", "recap"} and side_rows[0]["tokens"]["output"] == 100
     assert side_rows[0]["cost"] > 0                                    # priced like a chat call
+
+
+def test_recap_uses_a_bounded_transcript_and_falls_back_to_cheap_model(tmp_path, monkeypatch):
+    seen = []
+    timeouts = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        seen.append(body)
+        timeouts.append(req.extensions.get("timeout", {}).get("read"))
+        if body["model"] == "deepseek-flash":
+            return httpx.Response(503, json={"error": {"message": "unavailable"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "next"}, "finish_reason": "stop"}]})
+
+    monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setattr(app_mod.httpx, "AsyncClient", lambda **kw: REAL(transport=httpx.MockTransport(handler), **kw))
+    cfg = load_default()
+    cfg.models["deepseek"].context_window = 1_000_000
+    cfg.models["cheap"] = ModelConfig(id="cheap", base_url="http://x.example/v1", model="cheap-model", no_key=True,
+                                      price={"input": 0.1, "output": 0.2})
+    app = app_mod.create_app(cfg)
+    token = (tmp_path / "token").read_text().strip()
+    messages = [json.dumps({"role": "user", "content": f"message {i} " + "detail " * 400}) for i in range(80)]
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            headers = {"Authorization": f"Bearer {token}"}
+            saved = await c.post("/v1/ferry/commit", params={"conv": "large", "base": 0}, headers=headers,
+                                 content=json.dumps({"append": messages}))
+            ref = {"conv": "large", "count": saved.json()["count"], "hash": saved.json()["hash"]}
+            return await c.post("/v1/ferry/side", headers=headers, json={"kind": "recap", "model": "deepseek",
+                                                                           "ferry": ref, "tail": "current work"})
+
+    response = asyncio.run(go())
+    assert response.status_code == 200 and response.json()["model"] == "cheap"
+    assert [body["model"] for body in seen] == ["deepseek-flash", "cheap-model"]
+    assert len(seen[0]["messages"][-1]["content"]) < 60_000
+    assert timeouts == [15.0, 15.0]

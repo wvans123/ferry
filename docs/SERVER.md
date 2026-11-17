@@ -54,6 +54,8 @@ API Key 存在服务端的 `secrets.toml` 里，任何接口都只显示最后 4
 
 每家服务商的模型各自列出。工作电脑的 `/model` 和 `ferry --list-models` 里，模型前面是服务商的名字，比如 `kiro/claude-opus-5.5` 和 `kiro-fuli/claude-opus-5-5`。选哪家就只用哪家，名字一样也不会混在一起。下面说的合成组在 `ferry` 下面。工作电脑能用的模型只认服务端给的列表：拿不到列表时 ferry 停下并说明原因，不拿上次存下的列表或 pi 自带的模型凑合。
 
+一个服务商下的每个模型可以单独选择接口格式：Anthropic Messages、OpenAI Chat Completions 或 OpenAI Responses。新增模型时，Claude 名称默认推荐 Anthropic，GPT/Codex 名称默认推荐 Responses，其他模型沿用服务商的接口；这只是默认建议，中转必须实际支持所选接口。Responses 对支持它的 GPT/Codex 模型通常更适合保留推理项和提示词缓存；不支持 Responses 的中转应改用 Chat Completions。最大输出也可以按模型设置；Ferry 目录中已知模型默认沿用已知上限，未知 relay 模型默认 8k。旧配置继续使用原有接口，保存服务商时才会记录逐模型选择。
+
 几家确实是同一个模型（比如 Claude 既走官方又走一个可靠的中转），想轮流用，就编辑这几家，都勾上"和别家的同名模型合成一组"（`models.toml` 里是 `[providers.x]` 下的 `share = true`）。勾了的几家，同名模型只列一次，管理页上标着"⇄ 2 家"：
 
 - 每个会话固定用一家，这样提示词缓存有效。
