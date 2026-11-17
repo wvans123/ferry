@@ -163,7 +163,7 @@ def test_a_browser_landing_on_the_server_is_not_an_error(tmp_path, monkeypatch):
     assert ov["totals"]["errors"] == 1 and ov["totals"]["requests"] == 1
 
 
-def test_a_custom_relay_can_speak_claudes_own_api(tmp_path, monkeypatch):
+def test_one_provider_can_use_a_different_api_for_each_model(tmp_path, monkeypatch):
     cfg, app = make(tmp_path, monkeypatch)
     key = (tmp_path / "admin-key").read_text().strip()
 
@@ -172,11 +172,22 @@ def test_a_custom_relay_can_speak_claudes_own_api(tmp_path, monkeypatch):
             c.cookies.set("ferry_admin", key)
             r = await c.put("/admin/api/providers", headers={"X-Ferry-Admin": "1"}, json={
                 "providers": [{"id": "kiro", "name": "kiro", "preset": "custom", "base_url": "http://127.0.0.1:8990/v1",
-                               "key": "k", "api": "anthropic", "models": [{"model": "claude-opus-5.5"}]}],
+                               "key": "k", "api": "openai", "models": [
+                                   {"model": "claude-opus-5.5", "api": "anthropic"},
+                                   {"model": "gpt-6.1-sol", "api": "openai-responses"},
+                                   {"model": "deepseek-flash", "api": "openai"}]}],
                 "routing": {"default": "claude-opus-5.5"}})
             assert r.status_code == 200, r.text
             return (await c.get("/admin/api/providers")).json()
 
     p = run(go())
-    assert p["providers"][0]["api"] == "anthropic" and cfg.models["claude-opus-5.5"].api == "anthropic"
+    assert p["providers"][0]["api"] == "openai"
+    assert {name: cfg.models[name].api for name in ("claude-opus-5.5", "gpt-6.1-sol", "deepseek-flash")} == {
+        "claude-opus-5.5": "anthropic", "gpt-6.1-sol": "openai-responses", "deepseek-flash": "openai"}
+    assert {m["model"]: m["api"] for m in p["providers"][0]["models"]} == {
+        "claude-opus-5.5": "anthropic", "gpt-6.1-sol": "openai-responses", "deepseek-flash": "openai"}
     assert cfg.models["claude-opus-5.5"].price["input"] == 4  # the official price, though the relay spells the name its own way
+    assert cfg.models["claude-opus-5.5"].max_tokens == 64_000
+    assert cfg.models["gpt-6.1-sol"].max_tokens == 64_000
+    saved = (tmp_path / "models.toml").read_text()
+    assert 'api = "anthropic"' in saved and 'api = "openai-responses"' in saved

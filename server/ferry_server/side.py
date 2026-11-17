@@ -52,6 +52,7 @@ INSTRUCTION = {
         "current task first, then the one next action. Do not list the steps taken. Use the user's language."),
 }
 MAX_TOKENS = {"advise": 1500, "btw": 2000, "recap": 300}
+RECAP_CONTEXT_TOKENS = 12_000
 
 
 def _price(m: ModelConfig) -> float:
@@ -185,7 +186,7 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit, store, ke
         if kind == "btw" and not question.strip():
             return JSONResponse({"error": "the question is empty"}, 400)
         cur = current_model(cfg, str(b.get("model") or ""))
-        chosen = advisor_model(cfg) if kind == "advise" else cheap_model(cfg, cur) if kind == "recap" else cur
+        chosen = advisor_model(cfg) if kind == "advise" else cur
         if chosen is None:
             return JSONResponse({"error": "no advisor model is set on the Ferry server (admin page: 服务商和模型 → 顾问模型)"}, 404)
         messages: list = []
@@ -198,10 +199,21 @@ def mount(app: FastAPI, cfg: Config, client: httpx.AsyncClient, audit, store, ke
             except KeyError:
                 return JSONResponse({"error": "session not found on the server; the client will resend it"}, 409)
         last: Exception | None = None
-        for m in ([chosen] if chosen.id == cur.id else [chosen, cur]):  # the chosen model, then the conversation's own
-            convo = transcript(messages, str(b.get("tail") or ""), max(2000, int(limit_of(m) * 0.6) - 4000))
+        candidates = [chosen]
+        if kind == "recap":
+            fallback = cheap_model(cfg, cur)
+            if fallback.id != cur.id:
+                candidates.append(fallback)
+        elif chosen.id != cur.id:
+            candidates.append(cur)
+        for m in candidates:
+            budget = max(2000, int(limit_of(m) * 0.6) - 4000)
+            if kind == "recap":
+                budget = min(budget, RECAP_CONTEXT_TOKENS)
+            convo = transcript(messages, str(b.get("tail") or ""), budget)
             try:
-                text, usage = await complete(client, m, SYSTEM[kind], prompt_for(kind, convo, question), MAX_TOKENS[kind])
+                text, usage = await complete(client, m, SYSTEM[kind], prompt_for(kind, convo, question), MAX_TOKENS[kind],
+                                             timeout=15 if kind == "recap" else 600)
             except (Refused, httpx.HTTPError) as e:
                 last = e
                 continue

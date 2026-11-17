@@ -136,12 +136,12 @@ def norm(name: str) -> str:
 
 
 def model_extras(model: str) -> dict:
-    """vision and price of a model name any preset knows (however the provider spells it), else {}."""
+    """Known size, output cap, vision and price for a model name, however the provider spells it."""
     want = norm(model)
     for p in PRESETS:
         for m in p["models"]:
-            if norm(m[0]) == want and len(m) > 3:
-                return dict(m[3])
+            if norm(m[0]) == want:
+                return {"context_window": m[1], "max_tokens": m[2], **(dict(m[3]) if len(m) > 3 else {})}
     return {}
 
 

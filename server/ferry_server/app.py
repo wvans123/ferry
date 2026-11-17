@@ -88,8 +88,12 @@ async def pass_sse(lines, usage_out: dict, state: dict | None = None):
                 continue
             if isinstance(chunk, dict) and chunk.get("usage"):
                 usage_out.update(chunk["usage"])
+            if state is not None and isinstance(chunk, dict):
+                state["last_event"] = chunk.get("type") or "chat.completion.chunk"
             if state is not None and isinstance(chunk, dict) and any(isinstance(c, dict) and c.get("finish_reason")
                                                                      for c in chunk.get("choices") or []):
+                state["finish_reason"] = next(c["finish_reason"] for c in chunk["choices"]
+                                               if isinstance(c, dict) and c.get("finish_reason"))
                 state["done"] = True
         yield f"data: {data}\n\n".encode("utf-8")
 
@@ -914,6 +918,10 @@ def create_app(cfg: Config) -> FastAPI:
                                 yield b
                             if not seen.get("done"):
                                 status, err = 504, "the upstream stream ended without a finish"
+                                yield sse_error("openai", 504, json.dumps({"error": {
+                                    "type": "ferry_stream_incomplete",
+                                    "message": f"upstream stream ended before completion for {model.id} (HTTP 504); try again",
+                                }}).encode())
                         except (asyncio.CancelledError, GeneratorExit):  # the client went away: drop the upstream too
                             status, err = 499, "client disconnected"
                             raise
@@ -930,7 +938,8 @@ def create_app(cfg: Config) -> FastAPI:
                                 pass
                             live.pool.end(model.id)
                             tokens = normalize(usage)
-                            write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000), usage=usage,
+                            write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000),
+                                  last_event=seen.get("last_event", ""), finish_reason=seen.get("finish_reason", ""), usage=usage,
                                   tokens=tokens, cost=usage_cost(tokens, model.price), **({"error": err} if err else {}))
                             done()
 
@@ -1106,15 +1115,22 @@ def create_app(cfg: Config) -> FastAPI:
                     live.pool.served(conv, model.id)
                     live.fits[model.id] = max(live.fits.get(model.id, 0), tokens_est)
                     seen = AnthropicSSEUsage()
+                    stream_state = {"last_event": ""}
 
                     async def relay(upstream=upstream, model=model, audit=audit, seen=seen, raw=raw, first=first, stall=stall):
                         status, err = 200, ""
                         try:
                             async for line in chain(first, raw):
+                                if line.startswith("event:"):
+                                    stream_state["last_event"] = line[6:].strip()
                                 seen.feed(line)
                                 yield (line + "\n").encode("utf-8")
                             if not seen.stopped:
                                 status, err = 504, "the upstream stream ended without message_stop"
+                                yield sse_error("anthropic", 504, json.dumps({"error": {
+                                    "type": "ferry_stream_incomplete",
+                                    "message": f"upstream stream ended before message_stop for {model.id} (HTTP 504); try again",
+                                }}).encode())
                         except (asyncio.CancelledError, GeneratorExit):  # the client went away: drop the upstream too
                             status, err = 499, "client disconnected"
                             raise
@@ -1131,7 +1147,8 @@ def create_app(cfg: Config) -> FastAPI:
                                 pass
                             live.pool.end(model.id)
                             tokens = normalize(seen.usage)
-                            write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000), usage=seen.usage,
+                            write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000),
+                                  last_event=stream_state["last_event"], usage=seen.usage,
                                   tokens=tokens, cost=usage_cost(tokens, model.price), **({"error": err} if err else {}))
                             done()
 

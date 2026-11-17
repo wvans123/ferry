@@ -71,6 +71,29 @@ def test_a_fast_answer_is_the_same_as_before(tmp_path, monkeypatch):
     assert r.status_code == 200 and ": ferry waiting" not in r.text and '"later"' in r.text
 
 
+def test_openai_eof_without_finish_is_a_retryable_error_event(tmp_path, monkeypatch):
+    partial = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+    cfg, app = make(tmp_path, monkeypatch, lambda req: httpx.Response(200, content=partial))
+    r = ask(app, (tmp_path / "token").read_text().strip(), "openai")
+    assert r.status_code == 200 and '"partial"' in r.text
+    error = json.loads(events(r.text)[-1][1])["error"]
+    assert error["type"] == "ferry_stream_incomplete"
+    assert "upstream stream ended before completion" in error["message"] and "504" in error["message"]
+    assert audit_rows(cfg)[-1]["status"] == 504
+
+
+def test_anthropic_eof_without_message_stop_is_a_retryable_error_event(tmp_path, monkeypatch):
+    partial = b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":5}}}\n\n'
+    cfg, app = make(tmp_path, monkeypatch, lambda req: httpx.Response(200, content=partial), CLAUDE)
+    r = ask(app, (tmp_path / "token").read_text().strip(), "anthropic")
+    assert r.status_code == 200 and "message_start" in r.text
+    ev, data = events(r.text)[-1]
+    error = json.loads(data)
+    assert ev == "error" and error["error"]["type"] == "ferry_stream_incomplete"
+    assert "message_stop" in error["error"]["message"] and "504" in error["error"]["message"]
+    assert audit_rows(cfg)[-1]["status"] == 504
+
+
 def test_a_fast_error_keeps_its_status_code(tmp_path, monkeypatch):
     cfg, app = make(tmp_path, monkeypatch, lambda req: httpx.Response(401, json={"error": {"message": "bad key"}}))
     r = ask(app, (tmp_path / "token").read_text().strip(), "openai")
@@ -246,6 +269,29 @@ class Silent(httpx.AsyncByteStream):
 def audit_rows(cfg):
     path = cfg.data_dir / "audit.jsonl"
     return [json.loads(l) for l in path.read_text().splitlines() if '"event": "chat"' in l or '"event":"chat"' in l]
+
+
+def test_a_mid_stream_disconnect_records_the_last_upstream_event(tmp_path, monkeypatch):
+    class ResetAfterText(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+            raise httpx.ReadError("connection reset by peer")
+
+        async def aclose(self):
+            pass
+
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(200, stream=ResetAfterText())
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    r = ask(app, (tmp_path / "token").read_text().strip(), "openai")
+    rows = audit_rows(cfg)
+    assert r.status_code == 200 and "partial" in r.text and "upstream stream failed" in r.text
+    assert len(calls) == 1  # Ferry never replays a request after it has sent response data
+    assert rows[-1]["last_event"] == "chat.completion.chunk" and "connection reset" in rows[-1]["error"]
 
 
 def test_a_stall_before_any_data_goes_to_the_other_pool_member(tmp_path, monkeypatch):

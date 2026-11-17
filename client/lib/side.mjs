@@ -9,7 +9,7 @@ import { Type } from "typebox";
 import { serverHeaders } from "./config.mjs";
 
 const TAIL_CHARS = 6000;
-const RECAP_MS = 15000;
+const RECAP_MS = 35000;
 
 /** The assistant's newest text when it is newer than the server's copy (the server has not seen it yet). */
 export function tailOf(ctx, since) {
