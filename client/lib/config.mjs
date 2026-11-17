@@ -66,10 +66,16 @@ export function cleanOldFiles(dir, keep = []) {
 const CONFIG = join(FERRY_HOME, "config.json");
 const MODELS_CACHE = join(FERRY_HOME, "models-cache.json");
 
+export const MAX_CHUNK_BYTES = 512 * 1024;
+export function chunkSize(value) {
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? Math.min(MAX_CHUNK_BYTES, Math.max(8 * 1024, Math.floor(n))) : MAX_CHUNK_BYTES;
+}
+
 export const DEFAULTS = {
 	server: "",
 	token: "",
-	chunkBytes: 512 * 1024,
+	chunkBytes: MAX_CHUNK_BYTES,
 	// Paths the agent may never read, change or run commands on (substring match, case-insensitive)
 	blockedPaths: [".env", ".ssh", "id_rsa", "secrets", "credentials"],
 	// Permission mode at start: default (ask before edits and commands), acceptEdits, plan (read-only), bypass.
@@ -162,7 +168,7 @@ export const ADVANCED_SETTINGS = {
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window (default); false: always show it, so you see what the agent does"],
-	chunkBytes: ["number", "largest single request body sent to the server, in bytes (a bigger commit goes up in parts; gets smaller by itself when the network stops a request)"],
+	chunkBytes: ["number", "largest conversation upload body, in bytes (8 KiB to 512 KiB; larger content goes up in parts; gets smaller when the network stops a request)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs and old long write / command texts are left out, a batch at a time; 0 = never"],
 	batchNudge: ["number", "after this many replies in a row with one small look-up each, the agent is reminded to ask for several at once (0 = never)"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
@@ -293,6 +299,7 @@ export function readLocalServer() {
  */
 export function loadConfig() {
 	const cfg = existsSync(CONFIG) ? { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG, "utf8")) } : { ...DEFAULTS };
+	cfg.chunkBytes = chunkSize(cfg.chunkBytes);
 	if (process.env.FERRY_SERVER) cfg.server = process.env.FERRY_SERVER;
 	if (process.env.FERRY_TOKEN) cfg.token = process.env.FERRY_TOKEN;
 	cfg.server = cfg.server.replace(/\/+$/, "");
@@ -311,6 +318,7 @@ export function saveConfig(patch) {
 	mkdirSync(FERRY_HOME, { recursive: true });
 	const cur = existsSync(CONFIG) ? JSON.parse(readFileSync(CONFIG, "utf8")) : {};
 	const next = { ...cur, ...patch };
+	if (next.chunkBytes !== undefined) next.chunkBytes = chunkSize(next.chunkBytes);
 	for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
 	writeFileSync(CONFIG, JSON.stringify(next, null, 2), { encoding: "utf8", mode: 0o600 });
 	return CONFIG;

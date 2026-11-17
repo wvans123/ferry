@@ -14,6 +14,12 @@ OPENAI_SSE = (b'data: {"choices":[{"index":0,"delta":{"content":"later"}}]}\n\n'
               b'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1}}\n\ndata: [DONE]\n\n')
 CLAUDE_SSE = (b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":5}}}\n\n'
               b'event: message_stop\ndata: {"type":"message_stop"}\n\n')
+CLAUDE_LENGTH_SSE = (b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":5}}}\n\n'
+                     b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},'
+                     b'"usage":{"output_tokens":100}}\n\n'
+                     b'event: message_stop\ndata: {"type":"message_stop"}\n\n')
+CLAUDE_ERROR_SSE = (b'event: error\ndata: {"type":"error","error":{"type":"upstream_error",'
+                    b'"message":"Upstream access forbidden, please contact administrator"}}\n\n')
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +98,168 @@ def test_anthropic_eof_without_message_stop_is_a_retryable_error_event(tmp_path,
     assert ev == "error" and error["error"]["type"] == "ferry_stream_incomplete"
     assert "message_stop" in error["error"]["message"] and "504" in error["error"]["message"]
     assert audit_rows(cfg)[-1]["status"] == 504
+
+
+def test_anthropic_audit_records_output_limit_stop_reason_and_effective_cap(tmp_path, monkeypatch):
+    cfg, app = make(tmp_path, monkeypatch, lambda req: httpx.Response(200, content=CLAUDE_LENGTH_SSE), CLAUDE)
+    r = ask(app, (tmp_path / "token").read_text().strip(), "anthropic")
+    assert r.status_code == 200
+    row = audit_rows(cfg)[-1]
+    assert row["stop_reason"] == "max_tokens" and row["max_tokens"] == 100
+
+
+def test_anthropic_error_event_inside_http_200_is_audited_as_upstream_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0)
+    cfg, app = make(tmp_path, monkeypatch, lambda req: httpx.Response(200, content=CLAUDE_ERROR_SSE), CLAUDE)
+    r = ask(app, (tmp_path / "token").read_text().strip(), "anthropic")
+    assert r.status_code == 403 and "Upstream access forbidden" in r.text
+    assert "ferry_stream_incomplete" not in r.text
+    row = audit_rows(cfg)[-1]
+    assert len(audit_rows(cfg)) == 2
+    assert row["retry_count"] == 1 and row["attempt"] == 2
+    assert row["status"] == 403 and row["upstream_http_status"] == 200
+    assert "Upstream access forbidden" in row["upstream_error"]
+
+
+@pytest.mark.parametrize("kind", ["openai", "anthropic", "responses"])
+def test_opening_sse_forbidden_retries_before_output_and_keeps_success(tmp_path, monkeypatch, kind):
+    calls = []
+    success = CLAUDE_SSE if kind == "anthropic" else OPENAI_SSE
+    if kind == "responses":
+        success = (b'data: {"type":"response.output_text.delta","delta":"later"}\n\n'
+                   b'data: {"type":"response.completed","response":{}}\n\n')
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(200, content=b": upstream heartbeat\n\n" + CLAUDE_ERROR_SSE if len(calls) == 1 else success)
+
+    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
+    if kind == "responses":
+        cfg.models["other"].api = "openai-responses"
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0)
+    r = ask(app, (tmp_path / "token").read_text().strip(), kind)
+    assert r.status_code == 200 and len(calls) == 2
+    assert "forbidden" not in r.text and "ferry_stream_incomplete" not in r.text
+    assert [row["status"] for row in audit_rows(cfg)] == [403, 200]
+    if kind == "anthropic":
+        assert r.content == CLAUDE_SSE
+    elif kind == "openai":
+        assert r.content == OPENAI_SSE
+    else:
+        assert "later" in r.text and "[DONE]" in r.text
+
+
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+@pytest.mark.parametrize("error,status,attempts", [
+    ({"type": "authentication_error", "message": "invalid api key"}, 401, 1),
+    ({"type": "permission_error", "message": "account disabled"}, 403, 1),
+    ({"type": "upstream_error", "message": "Upstream access forbidden"}, 403, 2),
+    ({"type": "overloaded_error", "message": "busy"}, 424, 4),
+    ({"code": "context_length_exceeded", "message": "prompt is too long"}, 400, 1),
+])
+def test_opening_sse_error_policy(tmp_path, monkeypatch, kind, error, status, attempts):
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        body = 'event: error\ndata: ' + json.dumps({"type": "error", "error": error}) + '\n\n'
+        return httpx.Response(200, text=body)
+
+    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0)
+    r = ask(app, (tmp_path / "token").read_text().strip(), kind)
+    assert r.status_code == status and len(calls) == attempts
+    if status == 424:
+        assert r.json()["error"]["upstream_status"] == 529
+    assert all(row["status"] != 200 for row in audit_rows(cfg))
+    rows = audit_rows(cfg)
+    assert [row["retry_count"] for row in rows] == list(range(attempts))
+    assert all(row["upstream_http_status"] == 200 for row in rows)
+
+
+@pytest.mark.parametrize("kind", ["openai", "anthropic", "responses"])
+def test_midstream_error_preserves_classification_and_redacts_credentials(tmp_path, monkeypatch, kind):
+    calls = []
+    error = {"type": "permission_error", "code": "access_denied",
+             "message": "permission denied; Bearer private-value api_key=private-key sk-private123456",
+             "request": {"messages": "private conversation"}}
+    if kind == "anthropic":
+        content = CLAUDE_SSE.split(b'event: message_stop')[0]
+        event = {"type": "error", "error": error}
+    elif kind == "responses":
+        content = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+        event = {"type": "response.failed", "response": {"error": error}}
+    else:
+        content = OPENAI_SSE.split(b'\n\n')[0] + b'\n\n'
+        event = {"error": error}
+    content += ("data: " + json.dumps(event) + "\n\n").encode()
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(200, content=content)
+
+    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
+    if kind == "responses":
+        cfg.models["other"].api = "openai-responses"
+    r = ask(app, (tmp_path / "token").read_text().strip(), kind)
+    row = audit_rows(cfg)[-1]
+    assert r.status_code == 200 and len(calls) == 1
+    assert row["status"] == 403 and row["upstream_http_status"] == 200
+    assert "ferry_stream_incomplete" not in r.text and "permission_error" in r.text
+    for secret in ("private-value", "private-key", "sk-private123456", "private conversation"):
+        assert secret not in r.text and secret not in json.dumps(row)
+
+
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+@pytest.mark.parametrize("status,error,attempts,expected", [
+    (503, {"type": "authentication_error", "message": "invalid api key"}, 1, 503),
+    (403, {"message": "Upstream access forbidden"}, 2, 403),
+    (400, {"code": "context_length_exceeded", "message": "prompt is too long"}, 1, 400),
+    (502, {"message": "busy"}, 4, 424),
+])
+def test_http_error_policy_and_diagnostics(tmp_path, monkeypatch, kind, status, error, attempts, expected):
+    cfg, app = make(tmp_path, monkeypatch, lambda req: httpx.Response(status, json={"error": error}), CLAUDE)
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0)
+    r = ask(app, (tmp_path / "token").read_text().strip(), kind)
+    rows = audit_rows(cfg)
+    assert r.status_code == expected and len(rows) == attempts
+    assert [row["retry_count"] for row in rows] == list(range(attempts))
+    assert all(row["upstream_http_status"] == status and row["estimated_tokens"] > 0 for row in rows)
+
+
+def test_error_diagnostics_only_copy_known_fields():
+    body = json.dumps({"request": {"messages": "private text"}, "api_key": "private-key"}).encode()
+    assert "private" not in app_mod.upstream_error_summary(body)
+    safe = json.loads(app_mod.safe_error_body(403, body))["error"]
+    assert safe["upstream_status"] == 403 and "private" not in json.dumps(safe)
+    body = json.dumps({"error": {"message": 'gateway rejected {"api_key": "private-key", "token": "private-token"}'}}).encode()
+    assert "private" not in app_mod.upstream_error_summary(body)
+
+
+def test_error_after_anthropic_output_is_logged_without_replaying_the_request(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(200, content=CLAUDE_SSE.split(b'event: message_stop')[0] + CLAUDE_ERROR_SSE)
+
+    cfg, app = make(tmp_path, monkeypatch, handler, CLAUDE)
+    r = ask(app, (tmp_path / "token").read_text().strip(), "anthropic")
+    assert r.status_code == 200 and len(calls) == 1 and "ferry_stream_incomplete" not in r.text
+    row = audit_rows(cfg)[-1]
+    assert row["status"] == 403 and row["last_event"] == "error"
+
+
+def test_opening_event_handles_split_lines_multiline_data_and_keeps_pings():
+    async def go():
+        async def lines():
+            for line in [": heartbeat", "", 'data: {"type":"ping"}', "", "event: error",
+                         'data: {"error":', 'data: {"message":"Upstream access forbidden"}}', ""]:
+                yield line
+        first, failure = await app_mod.opening_event(lines())
+        assert first[:4] == [": heartbeat", "", 'data: {"type":"ping"}', ""]
+        assert failure[0] == 403
+    asyncio.run(go())
 
 
 def test_a_fast_error_keeps_its_status_code(tmp_path, monkeypatch):

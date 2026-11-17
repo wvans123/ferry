@@ -22,17 +22,26 @@ export function restrictModelRuntime(ModelRuntime, models) {
 	const rows = models.map((m) => typeof m === "string" ? { provider: "ferry", id: m } : { provider: m.provider || "ferry", id: m.id });
 	const ids = new Set(rows.map((m) => `${m.provider}/${m.id}`));
 	const providers = new Set(rows.map((m) => m.provider));
+	const legacy = new Map(rows.filter((m) => m.provider !== "ferry").map((m) => [m.id, m.provider]));
 	if (typeof ModelRuntime?.create !== "function" || typeof ModelRuntime.prototype?.recomposeProvider !== "function") {
 		throw new Error("Cannot enforce Ferry-only models with this Pi runtime; refusing to start");
 	}
 	if (ModelRuntime[ISOLATION]) {
 		ModelRuntime[ISOLATION].ids = ids;
 		ModelRuntime[ISOLATION].providers = providers;
+		ModelRuntime[ISOLATION].legacy = legacy;
 		return;
 	}
-	const state = { ids, providers };
+	const state = { ids, providers, legacy };
 	const create = ModelRuntime.create;
 	const recompose = ModelRuntime.prototype.recomposeProvider;
+	const getModel = ModelRuntime.prototype.getModel;
+	if (getModel) ModelRuntime.prototype.getModel = function (provider, id) {
+		// Older sessions recorded ferry/<id> before models were grouped under their actual server provider.
+		// Return the canonical model, so Pi restores its real provider without adding selectable aliases.
+		return getModel.call(this, provider, id) ?? (provider === "ferry" && state.legacy.has(id)
+			? getModel.call(this, state.legacy.get(id), id) : undefined);
+	};
 	ModelRuntime.create = async function (options = {}) {
 		const runtime = await create.call(this, { ...options, modelsPath: null, modelsStore: undefined,
 			modelsStorePath: undefined, allowModelNetwork: false });

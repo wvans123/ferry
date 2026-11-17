@@ -40,6 +40,8 @@ class AnthropicSSEUsage:
     def __init__(self) -> None:
         self.usage: dict = {}
         self.stopped = False  # message_stop came: the stream ended as it should
+        self.stop_reason = ""
+        self.error = ""
 
     def feed(self, line: str) -> None:
         if not line.startswith("data:"):
@@ -50,7 +52,12 @@ class AnthropicSSEUsage:
             return
         if ev.get("type") == "message_stop":
             self.stopped = True
+        elif ev.get("type") == "error":
+            self.error = json.dumps(ev, ensure_ascii=False)
         elif ev.get("type") == "message_start":
             self.usage.update(ev.get("message", {}).get("usage") or {})
         elif ev.get("type") == "message_delta":
             self.usage.update({k: v for k, v in (ev.get("usage") or {}).items() if v is not None})
+            delta = ev.get("delta") or {}
+            if delta.get("stop_reason") is not None:
+                self.stop_reason = str(delta["stop_reason"])

@@ -375,6 +375,78 @@ def test_a_provider_that_keeps_failing_ends_in_one_clear_answer_the_client_does_
     assert not pi_retry.search(f"424 {msg}"), pi_retry.search(f"424 {msg}")
 
 
+def test_ambiguous_forbidden_is_retried_once_but_auth_failure_is_not(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(403, json={"error": {"message": "Upstream access forbidden, please contact administrator"}})
+        return answer("recovered")
+
+    cfg, app = make(tmp_path, monkeypatch, handler)
+    monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0)
+    token = (tmp_path / "token").read_text().strip()
+
+    async def go(app, token):
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
+
+    r = asyncio.run(go(app, token))
+    assert r.status_code == 200 and len(calls) == 2
+    logged = [json.loads(line) for line in (cfg.data_dir / "audit.jsonl").read_text().splitlines()]
+    assert any(row.get("event") == "upstream_wait" and row.get("status") == 403 for row in logged)
+    failure = next(row for row in logged if row.get("event") == "chat" and row.get("status") == 403)
+    assert failure["estimated_tokens"] > 0 and failure["upstream_bytes"] > 0
+    assert failure["upstream_error"].startswith("Upstream access forbidden")
+
+
+
+def test_explicit_auth_failure_is_not_retried(tmp_path, monkeypatch):
+    calls = []
+
+    def bad_key(req: httpx.Request):
+        calls.append(1)
+        return httpx.Response(403, json={"error": {"type": "authentication_error", "message": "invalid api key"}})
+
+    cfg, app = make(tmp_path, monkeypatch, bad_key)
+    token = (tmp_path / "token").read_text().strip()
+
+    async def go():
+        async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                json={"model": "other", "messages": [{"role": "user", "content": "hi"}]})
+
+    r = asyncio.run(go())
+    assert r.status_code == 403 and len(calls) == 1
+
+
+def test_shared_model_retries_ambiguous_forbidden_once_without_hiding_auth_or_context_errors(tmp_path, monkeypatch):
+    for error, expected, attempts in [
+        ({"message": "Upstream access forbidden"}, 403, 2),
+        ({"type": "authentication_error", "message": "invalid api key"}, 403, 1),
+        ({"code": "context_length_exceeded", "message": "prompt is too long"}, 400, 1),
+    ]:
+        calls = []
+
+        def handler(req):
+            calls.append(req.url.host)
+            return httpx.Response(403, json={"error": error})
+
+        cfg, app = make(tmp_path, monkeypatch, handler)
+        monkeypatch.setattr(app_mod, "retry_delay", lambda headers, attempt: 0)
+        token = (tmp_path / "token").read_text().strip()
+
+        async def go():
+            async with REAL(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+                return await c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+                                    json={"model": "gpt", "messages": [{"role": "user", "content": "hi"}]})
+
+        r = asyncio.run(go())
+        assert r.status_code == expected and calls == ["a.example.com"] * attempts
+
+
 def test_too_many_requests_cools_the_account_down_and_the_request_waits_for_it(tmp_path, monkeypatch):
     calls = []
 

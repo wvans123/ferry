@@ -24,6 +24,7 @@ function runtimeClass() {
 			this.models.setProvider(provider); return provider;
 		}
 		stream(model) { return model; }
+		getModel(provider, id) { return this.providers.get(provider)?.getModels().find((m) => m.id === id); }
 		complete(model) { return model; }
 	};
 }
@@ -47,6 +48,22 @@ test("reapplying policy replaces the allowlist without stacking patches", async 
 	const runtime = await Runtime.create(); runtime.recomposeProvider("ferry");
 	assert.deepEqual(runtime.models.getProvider("ferry").getModels().map((m) => m.id), ["unapproved"]);
 	assert.throws(() => runtime.stream({ provider: "ferry", id: "owned" }));
+});
+
+test("old ferry model references restore the canonical server provider without adding aliases", async () => {
+	const Runtime = runtimeClass();
+	restrictModelRuntime(Runtime, [{ provider: "custom", id: "owned" }]);
+	const runtime = await Runtime.create();
+	runtime.recomposeProvider("custom");
+	const restored = runtime.getModel("ferry", "owned");
+	assert.deepEqual(restored, { provider: "custom", id: "owned" });
+	assert.equal(runtime.stream(restored), restored);
+	assert.equal(runtime.getModel("ferry", "removed"), undefined);
+	assert.equal(runtime.getModel("unrelated", "owned"), undefined);
+	assert.equal(runtime.models.getProvider("ferry"), undefined);
+	restrictModelRuntime(Runtime, [{ provider: "next", id: "owned" }]);
+	runtime.recomposeProvider("next");
+	assert.equal(runtime.getModel("ferry", "owned").provider, "next");
 });
 test("unsupported engines do not silently disable isolation", () => {
 	assert.throws(() => restrictModelRuntime(class {}, ["owned"]), /refusing to start/);

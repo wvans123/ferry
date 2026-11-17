@@ -161,6 +161,5 @@ async def chat_lines(lines: AsyncIterator[str], model: str = "") -> AsyncIterato
             return
         elif kind in ("response.failed", "error"):
             err = (ev.get("response") or {}).get("error") or ev.get("error") or ev
-            msg = err.get("message") if isinstance(err, dict) else str(err)
-            yield "data: " + json.dumps({"error": {"message": msg or "the model failed"}})
+            yield "data: " + json.dumps({"error": err if isinstance(err, dict) else {"message": str(err)}})
             return

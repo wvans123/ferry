@@ -28,6 +28,13 @@ test("real Pi runtime exposes exactly the server list despite official credentia
 		assert.deepEqual(runtime.getAvailableSnapshot().map((m) => m.id).sort(), ["owned-a", "owned-b"]);
 		assert.equal(runtime.getProvider("anthropic"), undefined);
 		assert.equal(runtime.getModel("ferry", "stale-model"), undefined);
+		const canonical = runtime.getModel("ferry", "owned-b");
+		assert.equal(canonical.provider, "kiro");
+		const index = import.meta.resolve("@earendil-works/pi-coding-agent");
+		const { restoreModelFromSession } = await import(new URL("./core/model-resolver.js", index).href);
+		const restored = await restoreModelFromSession("ferry", "owned-b", runtime.getModel("ferry", "owned-a"), false, runtime);
+		assert.equal(restored.fallbackMessage, undefined);
+		assert.deepEqual(restored.model, canonical);
 		assert.throws(() => runtime.stream({ provider: "ferry", id: "owned-b" }, { messages: [] }), /approved model list/);
 		assert.throws(() => runtime.stream({ provider: "anthropic", id: "claude-opus-5-5" }, { messages: [] }), /approved model list/);
 		assert.throws(() => runtime.stream({ provider: "ferry", id: "stale-model" }, { messages: [] }), /approved model list/);

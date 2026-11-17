@@ -9,7 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { anthropicMessagesApi, createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
-import { FERRY_HOME, FERRY_PROVIDERS, PROTOCOL, providerOf, serverHeaders } from "./config.mjs";
+import { FERRY_HOME, FERRY_PROVIDERS, PROTOCOL, chunkSize, providerOf, serverHeaders } from "./config.mjs";
 import { gatewayPage, openGatewayPage, waitAtGateway, whoAnswered } from "./gateway.mjs";
 import { createUploader, imageStats } from "./upload.mjs";
 
@@ -172,7 +172,7 @@ export function createSyncProvider(cfg, models, opts = {}) {
 	}
 
 	// the part size now: it only gets smaller, when the network stops a request (upload.mjs)
-	const sizes = { chunk: Number(cfg.chunkBytes) || 512 * 1024 };
+	const sizes = { chunk: chunkSize(cfg.chunkBytes) };
 	const uploader = createUploader(sizes, {
 		post,
 		log: logBlocked,

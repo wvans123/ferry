@@ -488,7 +488,7 @@ function bytes(n) { if (!n) return "0"; const u = ["B", "KB", "MB", "GB"]; let i
 function hhmm(ts, sec = true) { return new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", ...(sec ? { second: "2-digit" } : {}) }); }
 function when(ts) { const d = new Date(ts * 1000), t = new Date(); return (d.toDateString() === t.toDateString() ? "" : (d.getMonth() + 1) + "/" + d.getDate() + " ") + hhmm(ts); }
 function secs(ms) { return ms == null ? "–" : (ms / 1000).toFixed(1) + " 秒"; }
-function result(a) { return a.status === 200 ? '<span class="tag good">成功</span>' : `<span class="tag bad"${a.error ? ` title="${esc(a.error)}"` : ""}>${a.status === 499 ? "客户端断开" : a.error && a.status === 504 ? "卡住 504" : "HTTP " + a.status}</span>`; }
+function result(a) { const error = a.upstream_error || a.error; return a.status === 200 ? '<span class="tag good">成功</span>' : `<span class="tag bad"${error ? ` title="${esc(error)}"` : ""}>${a.status === 499 ? "客户端断开" : a.status === 504 && !a.upstream_error ? "流中断 504" : "HTTP " + a.status}</span>`; }
 function purpose(p) { const side = { advise: "顾问", btw: "旁问", recap: "回顾" }[p]; if (side) return `<span class="tag lamp">${side}</span>`; return p === "summary" ? '<span class="tag lamp">写摘要</span>' : p === "subagent" ? '<span class="tag">子 agent</span>' : '<span class="tag">干活</span>'; }
 
 function systemView(text) {
@@ -794,7 +794,11 @@ async function openCall(a) {
   let html = `<dl class="kv"><dt>时间</dt><dd>${new Date(a.ts * 1000).toLocaleString("zh-CN")}</dd><dt>项目</dt><dd>${esc(a.project || "–")}</dd><dt>模型</dt><dd>${esc(a.model)}</dd>
     <dt>用途</dt><dd>${purpose(a.purpose)}</dd><dt>消息数</dt><dd>${a.messages ?? "–"}</dd><dt>发给模型</dt><dd>${bytes(a.upstream_bytes)}</dd>
     <dt>token</dt><dd>输入 ${u.prompt_tokens ?? "–"}，输出 ${u.completion_tokens ?? "–"}</dd>
+    <dt>输出上限</dt><dd>${a.max_tokens ?? "–"}</dd><dt>停止原因</dt><dd>${esc(a.stop_reason || a.finish_reason || "–")}</dd>
+    <dt>估算输入 token</dt><dd>${a.estimated_tokens ?? "–"}</dd><dt>累计重试</dt><dd>${a.retry_count ?? "–"}</dd>
+    <dt>第几次尝试</dt><dd>${a.attempt ?? 1}</dd><dt>上游 HTTP 状态</dt><dd>${a.upstream_http_status ?? "–"}</dd>
     <dt>删掉的旧输出</dt><dd>${a.trimmed || 0} 段</dd><dt>耗时</dt><dd>${secs(a.ms)}</dd><dt>结果</dt><dd>${result(a)}</dd></dl>`;
+  if (a.upstream_error || a.error) html += `<h3 style="margin:18px 0 6px;font-size:15px">上游错误</h3><div class="preview">${esc(a.upstream_error || a.error)}</div>`;
   if (a.has_details) {
     const d = await api("calls/" + a.id);
     html += `<h3 style="margin:18px 0 6px;font-size:15px">系统提示</h3>${systemView(d.system)}

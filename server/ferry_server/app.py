@@ -17,6 +17,7 @@ import asyncio
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from urllib.parse import unquote
@@ -57,6 +58,117 @@ def _text(content) -> str:
     return ""
 
 
+def upstream_error_summary(body: bytes) -> str:
+    """A short, content-free diagnostic for provider errors; never copy request or credential fields to the audit log."""
+    text = body.decode("utf-8", "replace").strip()
+    try:
+        value = json.loads(text)
+        error = value.get("error") if isinstance(value, dict) else None
+        if isinstance(error, dict):
+            text = " ".join(str(error.get(k) or "") for k in ("type", "code", "message"))
+        elif isinstance(error, str):
+            text = error
+        elif isinstance(value, dict):
+            text = " ".join(str(value.get(k) or "") for k in ("type", "code", "message")) or "unrecognised upstream error"
+        else:
+            text = "unrecognised upstream error"
+    except (ValueError, TypeError):
+        pass
+    text = re.sub(r"(?i)\b(bearer\s+)[^\s,;\"']+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)\b(sk-[a-z0-9_-]{8,})\b", "[redacted]", text)
+    text = re.sub(r'''(?i)(\b(?:api[_-]?key|(?:access[_-]?)?token|authorization|secret)["']?\s*[=:]\s*["']?)[^\s,;"'}]+''',
+                  r"\1[redacted]", text)
+    return re.sub(r"\s+", " ", text).strip()[:500]
+
+
+def error_class(status: int, body: bytes) -> str:
+    """Do not infer context overflow from a generic forbidden response or from request size alone."""
+    text = upstream_error_summary(body).lower()
+    if any(t in text for t in ("authentication_error", "invalid api key", "invalid_api_key", "invalid key",
+                               "account disabled", "account_disabled", "permission_error", "permission denied",
+                               "insufficient permission", "not authorized", "unauthorized", "access_denied")) or status == 401:
+        return "auth"
+    if status == 413 or any(t in text for t in ("context_length_exceeded", "context_too_large", "prompt is too long",
+                                               "maximum context length", "request_too_large", "request too large",
+                                               "too many tokens", "input is too long")):
+        return "context"
+    if status == 403:
+        return "ambiguous_forbidden"
+    return "transient" if status in TRANSIENT_STATUSES or 500 <= status <= 599 else "request"
+
+
+def stream_error(value: dict) -> tuple[int, bytes] | None:
+    """An SSE error has no HTTP failure status. Prefer an explicit status; otherwise infer from its type/message."""
+    response = value.get("response")
+    error = value.get("error") or (response.get("error") if isinstance(response, dict) else None)
+    if not error and value.get("type") != "error":
+        return None
+    error = error or value
+    if not isinstance(error, dict):
+        error = {"message": str(error)}
+    body = json.dumps({"error": error}, ensure_ascii=False).encode()
+    for source in (error, value):
+        for key in ("status", "status_code", "http_status"):
+            try:
+                status = int(source.get(key, 0))
+            except (ValueError, TypeError):
+                continue
+            if 400 <= status <= 599:
+                return status, body
+    text = upstream_error_summary(body).lower()
+    category = error_class(502, body)
+    status = (401 if category == "auth" and "permission" not in text else 403 if category == "auth" else
+              400 if category == "context" else 403 if "forbidden" in text else
+              429 if any(t in text for t in ("rate_limit", "rate limit", "too many requests")) else
+              529 if "overloaded" in text else 502)
+    return status, body
+
+
+def safe_error_body(status: int, body: bytes) -> bytes:
+    """Keep only diagnostic fields, including a redacted message, in errors returned to the client."""
+    try:
+        error = json.loads(body).get("error")
+    except (ValueError, AttributeError):
+        error = None
+    fields = {k: error[k] for k in ("type", "code") if isinstance(error, dict) and isinstance(error.get(k), str)}
+    message = error.get("message") if isinstance(error, dict) else error
+    fields.update(message=upstream_error_summary(json.dumps({"error": message}).encode()) if message
+                  else upstream_error_summary(body), upstream_status=status)
+    return json.dumps({"error": fields}, ensure_ascii=False).encode()
+
+
+async def opening_event(lines):
+    """Buffer the opening SSE event before committing output, so an immediate error can be retried safely.
+
+    Leading comments/pings are retained. Bound buffering for nonstandard streams; never replay after real output.
+    """
+    buffered, data = [], []
+    size = 0
+    async for line in lines:
+        buffered.append(line)
+        size += len(line)
+        if line.startswith("data:"):
+            data.append(line[5:].lstrip())
+        if not line and data:
+            try:
+                value = json.loads("\n".join(data))
+            except ValueError:
+                return buffered, None
+            if isinstance(value, dict):
+                error = stream_error(value)
+                if error:
+                    return buffered, error
+                if value.get("type") == "ping":
+                    data = []
+                    continue
+            return buffered, None
+        if size >= 64 * 1024 or len(buffered) >= 256:
+            return buffered, None
+    if not buffered:
+        raise StopAsyncIteration
+    return buffered, None
+
+
 def details_of(call_id: str, payload: dict, project: str, model: str, purpose: str, size: int) -> dict:
     """What the model is about to receive, after the server rules. Kept in memory only."""
     msgs = payload.get("messages", [])
@@ -90,6 +202,12 @@ async def pass_sse(lines, usage_out: dict, state: dict | None = None):
                 usage_out.update(chunk["usage"])
             if state is not None and isinstance(chunk, dict):
                 state["last_event"] = chunk.get("type") or "chat.completion.chunk"
+                failure = stream_error(chunk)
+                if failure:
+                    state["error"] = chunk
+                    status, body = failure
+                    yield sse_error("openai", status, safe_error_body(status, body))
+                    return
             if state is not None and isinstance(chunk, dict) and any(isinstance(c, dict) and c.get("finish_reason")
                                                                      for c in chunk.get("choices") or []):
                 state["finish_reason"] = next(c["finish_reason"] for c in chunk["choices"]
@@ -120,7 +238,8 @@ async def with_stall(lines, seconds: float):
 
 async def chain(first, rest):
     if first is not None:
-        yield first
+        for line in first:
+            yield line
     async for x in rest:
         yield x
 
@@ -326,15 +445,16 @@ def create_app(cfg: Config) -> FastAPI:
         return float(getattr(prov, "stall_seconds", STALL_DEFAULT))
 
     async def ask_again(model, started: float, again: int, status: int | None = None, headers=None, secs: float = 0,
-                        big: bool = False, stalled: bool = False) -> int | None:
+                        big: bool = False, stalled: bool = False, error_body: bytes = b"") -> int | None:
         """The only (or last) provider failed. Returns the new repeat count when it should be asked once more, after
         waiting as it asks (Retry-After) or a little, or None to hand the error on (gave_up). status is None when the
         call never got an answer. A 429 waits out its cool-down (secs) in pool.enter(), so there is nothing to sleep
         here. A stall is asked once more even past the time budget: the keep-alive holds the client meanwhile."""
-        if status == 429 and secs and time.time() - started + secs < RETRY_WAIT_S:
-            return again
-        if status is not None and status not in TRANSIENT_STATUSES:
+        category = error_class(status, error_body) if status is not None else "transient"
+        if again >= 3 or category in ("auth", "context", "request") or (category == "ambiguous_forbidden" and again):
             return None
+        if status == 429 and secs and time.time() - started + secs < RETRY_WAIT_S:
+            return again + 1
         d = retry_delay(headers, again)
         if (big and again) or (time.time() - started + d >= RETRY_WAIT_S and not (stalled and again == 0)):
             return None
@@ -352,14 +472,15 @@ def create_app(cfg: Config) -> FastAPI:
         status = last_err[0]
         if b"upstream stalled" in last_err[1]:  # worded so the client's engine asks again (see stall_text)
             return Response(last_err[1], status_code=504, media_type="application/json")
-        if status not in TRANSIENT_STATUSES and status != 502:
-            return Response(last_err[1], status_code=status, media_type=last_err[2])
+        if error_class(status, last_err[1]) != "transient":
+            return Response(safe_error_body(status, last_err[1]), status_code=status, media_type="application/json")
         why = "kept refusing (HTTP 4xx, its usage limit)" if status == 429 else "kept failing (HTTP 5xx)"
         msg = (f"Ferry gave up: {model.id} did not answer. Its provider {why} for {int(time.time() - started)} s, and the "
                "Ferry server already asked again several times. Send your message once more in a while, or pick "
                "another model with /model. The server's call records have the details.")
-        body = ({"type": "error", "error": {"type": "ferry_gave_up", "message": msg}} if kind == "anthropic"
-                else {"error": {"message": msg, "type": "ferry_gave_up", "code": "ferry_gave_up"}})
+        error = {"type": "ferry_gave_up", "code": "ferry_gave_up", "message": msg,
+                 "upstream_status": status, "upstream_error": upstream_error_summary(last_err[1])}
+        body = {"type": "error", "error": error} if kind == "anthropic" else {"error": error}
         return JSONResponse(body, status_code=424)
 
     def cooling_notes() -> list[dict]:
@@ -818,7 +939,9 @@ def create_app(cfg: Config) -> FastAPI:
                         live.details.append(details_of(call_id, payload, project, model.id, purpose, len(body)))
                     audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
                                  purpose=purpose, messages=len(payload.get("messages", [])), upstream_bytes=len(body),
-                                 trimmed=trimmed, **({"attempt": n + 1} if n else {}))
+                                 trimmed=trimmed, max_tokens=sent.get("max_tokens", sent.get("max_completion_tokens", sent.get("max_output_tokens"))),
+                                 estimated_tokens=tokens_est, retry_count=again,
+                                 **({"attempt": n + 1} if n else {}))
                     headers = {"Content-Type": "application/json"}
                     if model.api_key:
                         headers["Authorization"] = f"Bearer {model.api_key}"
@@ -830,6 +953,7 @@ def create_app(cfg: Config) -> FastAPI:
                     holding.append(model.id)
                     stall = stall_of(model)
                     raw = first = None
+                    failure = None
                     try:
                         if not payload.get("stream"):
                             r = await client.post(url, content=body, headers=headers)
@@ -841,7 +965,7 @@ def create_app(cfg: Config) -> FastAPI:
                                 raise Stalled(f"stalled after {stall:g} s without response headers") from None
                             if r.status_code == 200:  # the first line must come too (a relay that accepts and then goes silent)
                                 raw = with_stall(r.aiter_lines(), stall)
-                                first = await raw.__anext__()
+                                first, failure = await opening_event(raw)
                     except (httpx.HTTPError, StopAsyncIteration) as e:
                         if isinstance(e, StopAsyncIteration):  # a 200 with an empty body
                             e = httpx.RemoteProtocolError("the stream ended without data")
@@ -863,36 +987,40 @@ def create_app(cfg: Config) -> FastAPI:
                             tries.append((model, marks))
                             continue
                         break
-                    if r.status_code != 200:
-                        err = await r.aread()
+                    if failure or r.status_code != 200:
+                        status, err = failure or (r.status_code, await r.aread())
                         await r.aclose()
                         holding.clear()
                         live.pool.end(model.id)
-                        write(audit_log, **audit, status=r.status_code, ms=int((time.time() - started) * 1000))
-                        last_err = (r.status_code, err, r.headers.get("content-type", "application/json"))
-                        if marks and r.status_code in (400, 422):  # this relay does not take cache markers: never again
+                        write(audit_log, **audit, status=status, upstream_http_status=r.status_code, ms=int((time.time() - started) * 1000),
+                              upstream_error=upstream_error_summary(err))
+                        last_err = (status, err, "application/json" if failure else r.headers.get("content-type", "application/json"))
+                        if not failure and marks and status in (400, 422) and error_class(status, err) != "context":  # this relay does not take cache markers: never again
                             live.no_marks.add(model.id)
                             refused_marks = True
                             write(audit_log, event="cache_marks_refused", model=model.id)
                             continue
-                        secs = limited(model, r.headers) if r.status_code == 429 else 0  # cool down; the request waits for it
-                        if more and r.status_code in RETRY_STATUSES:
-                            live.pool.failed(model.id, r.status_code)
+                        secs = limited(model, r.headers) if status == 429 else 0  # cool down; the request waits for it
+                        category = error_class(status, err)
+                        if more and category == "transient" and (status in RETRY_STATUSES or 500 <= status <= 599):
+                            live.pool.failed(model.id, status)
                             continue
-                        big = too_big(model, r.status_code, tokens_est)
-                        if not more:
+                        big = category == "context" or (category not in ("auth", "ambiguous_forbidden") and too_big(model, status, tokens_est))
+                        if not more or category == "ambiguous_forbidden":
                             # the only (or last) provider is busy: wait as it asks (Retry-After) or a little, then once more,
                             # instead of handing the error to the client, which would ask again at once
-                            again_n = await ask_again(model, started, again, r.status_code, r.headers, secs, big)
+                            again_n = await ask_again(model, started, again, status, r.headers, secs, big,
+                                                      error_body=err)
                             if again_n is not None:
                                 again = again_n
-                                tries.append((model, marks))
+                                tries.insert(n + 1, (model, marks))
                                 continue
-                        if not more and big:  # refused because it is too big: the client summarises its history and goes on
+                        if big and (not more or category == "context"):  # refused because it is too big: the client summarises its history and goes on
                             learn_limit(model, tokens_est)
                             done()
                             return JSONResponse({"error": {"message": overflow_message(tokens_est, limit_of(model), model.id),
-                                                           "type": "invalid_request_error", "code": "context_length_exceeded"}},
+                                                           "type": "invalid_request_error", "code": "context_length_exceeded",
+                                                           "upstream_status": status, "upstream_error": upstream_error_summary(err)}},
                                                 status_code=400)
                         break
                     live.pool.served(conv, model.id)
@@ -916,7 +1044,10 @@ def create_app(cfg: Config) -> FastAPI:
                                 lines = chat_lines(lines, model.model)
                             async for b in pass_sse(lines, usage, seen):
                                 yield b
-                            if not seen.get("done"):
+                            if seen.get("error"):
+                                status, body = stream_error(seen["error"])
+                                err = upstream_error_summary(body)
+                            elif not seen.get("done"):
                                 status, err = 504, "the upstream stream ended without a finish"
                                 yield sse_error("openai", 504, json.dumps({"error": {
                                     "type": "ferry_stream_incomplete",
@@ -939,8 +1070,11 @@ def create_app(cfg: Config) -> FastAPI:
                             live.pool.end(model.id)
                             tokens = normalize(usage)
                             write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000),
+                                  upstream_http_status=upstream.status_code,
                                   last_event=seen.get("last_event", ""), finish_reason=seen.get("finish_reason", ""), usage=usage,
-                                  tokens=tokens, cost=usage_cost(tokens, model.price), **({"error": err} if err else {}))
+                                  tokens=tokens, cost=usage_cost(tokens, model.price),
+                                  **({"upstream_error": err} if seen.get("error") else {}),
+                                  **({"error": err} if err and not seen.get("error") else {}))
                             done()
 
                     holding.clear()
@@ -1015,7 +1149,7 @@ def create_app(cfg: Config) -> FastAPI:
             write(audit_log, event="chat", user=request.state.user, project=project, model=model.id, status=400, overflow=tokens_est)
             return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
                                  "message": f"prompt is too long: {tokens_est} tokens > {model.context_window} maximum "
-                                            "(the history will be summarised)"}}, status_code=400)
+                                            "(the history will be summarised)", "code": "context_length_exceeded"}}, status_code=400)
         async def serve(tries, model):
             ticket = None
             holding: list[str] = []  # the model whose slot this request holds until pool.end
@@ -1045,6 +1179,7 @@ def create_app(cfg: Config) -> FastAPI:
                     body = json.dumps(one, ensure_ascii=False).encode("utf-8")
                     audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id, purpose=purpose,
                                  messages=len(one.get("messages", [])), upstream_bytes=len(body), trimmed=0,
+                                 max_tokens=one.get("max_tokens"), estimated_tokens=tokens_est, retry_count=again,
                                  **({"attempt": n + 1} if n else {}))
                     headers = {"Content-Type": "application/json", "x-api-key": model.api_key,
                                "anthropic-version": request.headers.get("anthropic-version", "2023-06-01")}
@@ -1055,6 +1190,7 @@ def create_app(cfg: Config) -> FastAPI:
                     holding.append(model.id)
                     stall = stall_of(model)
                     raw = first = None
+                    failure = None
                     try:
                         try:
                             upstream = await asyncio.wait_for(client.send(client.build_request(
@@ -1064,7 +1200,7 @@ def create_app(cfg: Config) -> FastAPI:
                         r = upstream
                         if upstream.status_code == 200:
                             raw = with_stall(upstream.aiter_lines(), stall)
-                            first = await raw.__anext__()
+                            first, failure = await opening_event(raw)
                     except (httpx.HTTPError, StopAsyncIteration) as e:
                         if isinstance(e, StopAsyncIteration):
                             e = httpx.RemoteProtocolError("the stream ended without data")
@@ -1087,30 +1223,34 @@ def create_app(cfg: Config) -> FastAPI:
                             tries.append(model)
                             continue
                         break
-                    if upstream.status_code != 200:
-                        err = await upstream.aread()
+                    if failure or upstream.status_code != 200:
+                        status, err = failure or (upstream.status_code, await upstream.aread())
                         await upstream.aclose()
                         holding.clear()
                         live.pool.end(model.id)
-                        write(audit_log, **audit, status=upstream.status_code, ms=int((time.time() - started) * 1000))
-                        last_err = (upstream.status_code, err, upstream.headers.get("content-type", "application/json"))
-                        secs = limited(model, upstream.headers) if upstream.status_code == 429 else 0
-                        if more and upstream.status_code in RETRY_STATUSES:
-                            live.pool.failed(model.id, upstream.status_code)
+                        write(audit_log, **audit, status=status, upstream_http_status=upstream.status_code, ms=int((time.time() - started) * 1000),
+                              upstream_error=upstream_error_summary(err))
+                        last_err = (status, err, "application/json" if failure else upstream.headers.get("content-type", "application/json"))
+                        secs = limited(model, upstream.headers) if status == 429 else 0
+                        category = error_class(status, err)
+                        if more and category == "transient" and (status in RETRY_STATUSES or 500 <= status <= 599):
+                            live.pool.failed(model.id, status)
                             continue
-                        big = too_big(model, upstream.status_code, tokens_est)
-                        if not more:
-                            again_n = await ask_again(model, started, again, upstream.status_code, upstream.headers, secs, big)
+                        big = category == "context" or (category not in ("auth", "ambiguous_forbidden") and too_big(model, status, tokens_est))
+                        if not more or category == "ambiguous_forbidden":
+                            again_n = await ask_again(model, started, again, status, upstream.headers, secs, big,
+                                                      error_body=err)
                             if again_n is not None:
                                 again = again_n
-                                tries.append(model)
+                                tries.insert(n + 1, model)
                                 continue
-                        if not more and big:
+                        if big and (not more or category == "context"):
                             learn_limit(model, tokens_est)
                             done()
                             return JSONResponse({"type": "error", "error": {"type": "invalid_request_error",
                                                  "message": f"prompt is too long: {tokens_est} tokens > {limit_of(model)} maximum "
-                                                            "(the history will be summarised)"}}, status_code=400)
+                                                            "(the history will be summarised)", "code": "context_length_exceeded",
+                                                 "upstream_status": status, "upstream_error": upstream_error_summary(err)}}, status_code=400)
                         break
                     live.pool.served(conv, model.id)
                     live.fits[model.id] = max(live.fits.get(model.id, 0), tokens_est)
@@ -1124,8 +1264,15 @@ def create_app(cfg: Config) -> FastAPI:
                                 if line.startswith("event:"):
                                     stream_state["last_event"] = line[6:].strip()
                                 seen.feed(line)
+                                if seen.error:
+                                    status, body = stream_error(json.loads(seen.error))
+                                    yield sse_error("anthropic", status, safe_error_body(status, body))
+                                    break
                                 yield (line + "\n").encode("utf-8")
-                            if not seen.stopped:
+                            if seen.error:
+                                status, body = stream_error(json.loads(seen.error))
+                                err = upstream_error_summary(body)
+                            elif not seen.stopped:
                                 status, err = 504, "the upstream stream ended without message_stop"
                                 yield sse_error("anthropic", 504, json.dumps({"error": {
                                     "type": "ferry_stream_incomplete",
@@ -1148,8 +1295,11 @@ def create_app(cfg: Config) -> FastAPI:
                             live.pool.end(model.id)
                             tokens = normalize(seen.usage)
                             write(audit_log, **audit, status=status, ms=int((time.time() - started) * 1000),
-                                  last_event=stream_state["last_event"], usage=seen.usage,
-                                  tokens=tokens, cost=usage_cost(tokens, model.price), **({"error": err} if err else {}))
+                                  upstream_http_status=upstream.status_code,
+                                  last_event=stream_state["last_event"], stop_reason=seen.stop_reason, usage=seen.usage,
+                                  tokens=tokens, cost=usage_cost(tokens, model.price),
+                                  **({"upstream_error": err} if seen.error else {}),
+                                  **({"error": err} if err and not seen.error else {}))
                             done()
 
                     holding.clear()

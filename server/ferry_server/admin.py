@@ -206,7 +206,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
             totals["tokens_out"] += usage.get("completion_tokens", 0) or 0
             totals["trimmed"] += a.get("trimmed", 0) or 0
             recent.append({k: a.get(k) for k in ("ts", "user", "project", "model", "purpose", "messages",
-                                                 "upstream_bytes", "trimmed", "status", "ms", "usage", "error")})
+                                                 "upstream_bytes", "trimmed", "status", "ms", "usage", "error",
+                                                 "upstream_error", "stop_reason", "max_tokens", "estimated_tokens",
+                                                 "upstream_http_status", "retry_count", "attempt")})
         series = [{"t": start + i * width, **buckets.get(i, {"in": 0, "up": 0, "requests": 0, "chats": 0})}
                   for i in range(int(minutes * 60 // width) + 1)]
         return {"width": width, "series": series, "totals": totals, "recent": recent[-40:][::-1]}
@@ -668,7 +670,9 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         rows = [a for a in _tail_jsonl(audit_log) if a.get("event") == "chat"][-max(1, min(limit, 1000)):][::-1]
         have = {d["id"] for d in live.details}
         out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
-                                      "trimmed", "status", "ms", "usage", "error")} for a in rows]
+                                      "trimmed", "status", "ms", "usage", "error", "upstream_error", "last_event",
+                                      "finish_reason", "stop_reason", "max_tokens", "estimated_tokens",
+                                      "upstream_http_status", "retry_count", "attempt")} for a in rows]
         for o in out:
             o["has_details"] = o.get("id") in have
         return {"calls": out, "record_details": cfg.record_details}

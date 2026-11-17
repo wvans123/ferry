@@ -5,6 +5,7 @@
 // parts first, then a tiny commit names them. When a request is stopped, Ferry halves the part size for the rest of the
 // session and sends it again (the server keeps parts by number, so a smaller part simply takes the place of a bigger one).
 import { randomUUID } from "node:crypto";
+import { chunkSize } from "./config.mjs";
 
 export const MIN_CHUNK = 8 * 1024;
 export const MAX_TRIES = 3; // retries after the first attempt
@@ -60,6 +61,7 @@ export const shrunk = (chunk, sent = chunk) => Math.max(MIN_CHUNK, Math.floor(Ma
  *   gatewayConfirm(res, text)           -> true when the answer is the gateway's "confirm in the browser" page (no resize helps)
  */
 export function createUploader(state, deps) {
+	state.chunk = chunkSize(state.chunk);
 	const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
 	let said = false;
 

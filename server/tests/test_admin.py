@@ -62,6 +62,33 @@ def test_admin_is_local_and_keyed(tmp_path, monkeypatch):
     assert cfg2.public_url == "https://f.example.com" and cfg2.session_store == "disk"
 
 
+def test_call_diagnostics_are_exposed_to_admin(tmp_path, monkeypatch):
+    import json
+    import time
+
+    cfg, app = make(tmp_path, monkeypatch)
+    audit = cfg.data_dir / "audit.jsonl"
+    audit.write_text(json.dumps({
+        "event": "chat", "id": "call-1", "ts": time.time(), "project": "专利", "model": "claude-opus",
+        "status": 502, "upstream_error": "Upstream access forbidden", "last_event": "error",
+        "stop_reason": "", "max_tokens": 8192, "estimated_tokens": 24000,
+        "upstream_http_status": 200, "retry_count": 1, "attempt": 2,
+    }) + "\n")
+    key = (tmp_path / "admin-key").read_text().strip()
+
+    async def go():
+        async with client(app) as c:
+            c.cookies.set("ferry_admin", key)
+            calls = (await c.get("/admin/api/calls")).json()["calls"]
+            assert calls[0]["upstream_error"] == "Upstream access forbidden"
+            assert calls[0]["last_event"] == "error" and calls[0]["max_tokens"] == 8192
+            assert calls[0]["upstream_http_status"] == 200 and calls[0]["retry_count"] == 1 and calls[0]["attempt"] == 2
+            recent = (await c.get("/admin/api/traffic?minutes=60")).json()["recent"]
+            assert recent[0]["upstream_error"] == "Upstream access forbidden"
+
+    run(go())
+
+
 def test_providers_keys_prompts_report_words(tmp_path, monkeypatch):
     cfg, app = make(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY")

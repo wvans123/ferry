@@ -38,6 +38,19 @@ test("a small commit goes in one request", async () => {
 	assert.match(sent[0].path, /^\/v1\/ferry\/commit\?/);
 });
 
+test("600 KiB uploads as exactly 512 KiB plus 88 KiB and an empty commit, even with an oversized setting", async () => {
+	for (const chunk of [512 * KB, 4 * 1024 * KB]) {
+		const { up, sent, state } = setup(1000, chunk);
+		await up.commit(Buffer.alloc(600 * KB, 97), new URLSearchParams({ conv: "c" }));
+		assert.deepEqual(sent.map((s) => s.size), [512 * KB, 88 * KB, 0]);
+		assert.equal(state.chunk, 512 * KB);
+		assert.match(sent[2].path, /commit\?.*parts=2/);
+	}
+	const { up, sent } = setup(1000);
+	await up.commit(Buffer.alloc(512 * KB), new URLSearchParams({ conv: "c" }));
+	assert.deepEqual(sent.map((s) => s.size), [512 * KB]);
+});
+
 test("a gateway 403 halves the part size, the upload still completes, and it is said once", async () => {
 	const { up, sent, logs, said, state } = setup(64, 512 * KB);
 	const q = new URLSearchParams({ conv: "c" });
