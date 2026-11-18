@@ -10,6 +10,26 @@ def convo(n_tools: int, tool_bytes: int) -> dict:
     return {"model": "main", "messages": msgs}
 
 
+def test_prompt_part_bytes_counts_provider_content_only():
+    from ferry_server.app import prompt_part_bytes
+
+    url = 'data:image/png;base64,YWJj'
+    p = {'messages': [
+        {'role': 'user', 'content': [{'type': 'tool_result', 'content': [
+            {'type': 'image', 'source': {'type': 'base64', 'data': 'YWJj'}}]}]},
+        {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': '图', 'signature': 'abc'},
+            {'type': 'redacted_thinking', 'data': '1234'},
+            {'type': 'tool_use', 'input': {'type': 'thinking', 'thinking': 'ignore'}}]},
+        {'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': url}},
+                                    {'type': 'image_url', 'image_url': {'url': 'https://example.org/a.jpg'}}]},
+        {'role': 'assistant', 'reasoning_content': 'ok'}]}
+    assert prompt_part_bytes(p) == {'image_bytes': 8, 'thinking_bytes': 5, 'signature_bytes': 7}
+    assert prompt_part_bytes({'input': [
+        {'role': 'user', 'content': [{'type': 'input_image', 'image_url': url}]},
+        {'type': 'reasoning', 'summary': [{'type': 'summary_text', 'text': '想'}], 'encrypted_content': 'abcd'}
+    ]}) == {'image_bytes': 4, 'thinking_bytes': 3, 'signature_bytes': 4}
+
+
 def test_no_cap_or_small_request_untouched():
     p = convo(3, 100)
     assert cap_upstream(p, 0) == (0, body_size(p))

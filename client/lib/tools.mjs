@@ -397,6 +397,9 @@ const ARG_HEAD = 300; // a command keeps its beginning, which says what it was
 
 const kbOf = (text) => Math.max(1, Math.round(Buffer.byteLength(text) / 1024));
 
+// Pi stores tool images inline. The provider encodes the same data again on every request until this entry is edited.
+const isInlineImage = (block) => block.type === "image" && typeof block.data === "string" && block.data.length > 0;
+
 /** An old assistant message with its long write / command arguments shortened, or null when there is nothing to cut. */
 function shortenCalls(message, minChars) {
 	let saved = 0;
@@ -435,12 +438,20 @@ export function trimPlan(entries, keep = TRIM_KEEP, minChars = TRIM_MIN_CHARS) {
 			saved += cut.saved;
 			drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: cut.content } });
 		} else if (m.role === "toolResult" && TRIM_TOOLS.has(m.toolName)) {
-			const text = (m.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-			if (text.length < minChars) continue;
-			const note = `[Ferry: this ${m.toolName} output (${kbOf(text)} KB) was left out to keep the context small; the agent saw it ` +
-				"earlier. Run the tool again, or use history_search, if you need it.]";
-			saved += text.length - note.length;
-			drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: [{ type: "text", text: note }] } });
+			const content = m.content ?? [];
+			const text = content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+			const imageChars = content.reduce((sum, c) => sum + (isInlineImage(c) ? c.data.length : 0), 0);
+			const omitText = text.length >= minChars;
+			if (!omitText && !imageChars) continue;
+			const note = imageChars
+				? `[Ferry: earlier ${m.toolName} image output omitted. Repeat the original tool call if you need the image.]`
+				: `[Ferry: this ${m.toolName} output (${kbOf(text)} KB) was left out to keep the context small; the agent saw it ` +
+					"earlier. Run the tool again, or use history_search, if you need it.]";
+			const gain = imageChars + (omitText ? text.length : 0) - note.length;
+			if (gain <= 0) continue;
+			const kept = content.filter((c) => !isInlineImage(c) && !(omitText && c.type === "text"));
+			saved += gain;
+			drafts.push({ type: "context_edit", targetId: e.id, replacement: { content: [...kept, { type: "text", text: note }] } });
 		}
 	}
 	return { drafts, saved };

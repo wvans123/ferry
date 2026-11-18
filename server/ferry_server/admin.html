@@ -796,6 +796,8 @@ async function openCall(a) {
     <dt>token</dt><dd>输入 ${u.prompt_tokens ?? "–"}，输出 ${u.completion_tokens ?? "–"}</dd>
     <dt>输出上限</dt><dd>${a.max_tokens ?? "–"}</dd><dt>停止原因</dt><dd>${esc(a.stop_reason || a.finish_reason || "–")}</dd>
     <dt>估算输入 token</dt><dd>${a.estimated_tokens ?? "–"}</dd><dt>累计重试</dt><dd>${a.retry_count ?? "–"}</dd>
+    <dt>内嵌图片（Base64）</dt><dd>${a.image_bytes == null ? "–" : bytes(a.image_bytes)}</dd><dt>推理文本</dt><dd>${a.thinking_bytes == null ? "–" : bytes(a.thinking_bytes)}</dd>
+    <dt>签名及加密推理</dt><dd>${a.signature_bytes == null ? "–" : bytes(a.signature_bytes)}</dd>
     <dt>第几次尝试</dt><dd>${a.attempt ?? 1}</dd><dt>上游 HTTP 状态</dt><dd>${a.upstream_http_status ?? "–"}</dd>
     <dt>删掉的旧输出</dt><dd>${a.trimmed || 0} 段</dd><dt>耗时</dt><dd>${secs(a.ms)}</dd><dt>结果</dt><dd>${result(a)}</dd></dl>`;
   if (a.upstream_error || a.error) html += `<h3 style="margin:18px 0 6px;font-size:15px">上游错误</h3><div class="preview">${esc(a.upstream_error || a.error)}</div>`;

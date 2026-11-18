@@ -180,6 +180,46 @@ def details_of(call_id: str, payload: dict, project: str, model: str, purpose: s
             "last_user": _text(users[-1].get("content"))[:20_000] if users else "", "tools": tools}
 
 
+def prompt_part_bytes(payload: dict) -> dict[str, int]:
+    """UTF-8 value sizes in the final prompt, excluding JSON framing and data-URL headers."""
+    counts = {"image_bytes": 0, "thinking_bytes": 0, "signature_bytes": 0}
+    stack = [payload.get("messages"), payload.get("input")]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            kind = value.get("type")
+            if kind in ("image", "input_image", "image_url"):
+                image = value.get("source") or value.get("image_url")
+                data = image.get("data") if isinstance(image, dict) and image.get("type") == "base64" else None
+                url = image.get("url") if isinstance(image, dict) else image
+                if isinstance(data, str):
+                    counts["image_bytes"] += len(data.encode("utf-8"))
+                elif isinstance(url, str) and url.startswith("data:") and ";base64," in url[:100]:
+                    counts["image_bytes"] += len(url.encode("utf-8")) - url.index(",") - 1
+            if kind == "thinking":
+                fields = [("thinking", "thinking_bytes"), ("signature", "signature_bytes")]
+            elif kind == "redacted_thinking":
+                fields = [("data", "signature_bytes")]
+            elif kind == "reasoning":
+                fields = [("encrypted_content", "signature_bytes")]
+                stack.extend([value.get("summary"), value.get("content")])
+            elif kind in ("summary_text", "reasoning_text"):
+                fields = [("text", "thinking_bytes")]
+            elif value.get("role") == "assistant":
+                fields = [("reasoning_content", "thinking_bytes")]
+            else:
+                fields = []
+            for key, metric in fields:
+                if isinstance(value.get(key), str):
+                    counts[metric] += len(value[key].encode("utf-8"))
+            # Tool arguments, JSON schemas and arbitrary nested objects are not protocol content blocks.
+            if value.get("role") or kind == "tool_result":
+                stack.append(value.get("content"))
+        elif isinstance(value, list):
+            stack.extend(value)
+    return counts
+
+
 def without_placeholder_note(rules: str) -> str:
     """Rule files written before 0.26 still tell the model about redaction placeholders, which no longer exist."""
     return "\n".join(l for l in rules.splitlines() if "[FERRY-...]" not in l).strip()
@@ -940,7 +980,7 @@ def create_app(cfg: Config) -> FastAPI:
                     audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id,
                                  purpose=purpose, messages=len(payload.get("messages", [])), upstream_bytes=len(body),
                                  trimmed=trimmed, max_tokens=sent.get("max_tokens", sent.get("max_completion_tokens", sent.get("max_output_tokens"))),
-                                 estimated_tokens=tokens_est, retry_count=again,
+                                 estimated_tokens=tokens_est, retry_count=again, **prompt_part_bytes(sent),
                                  **({"attempt": n + 1} if n else {}))
                     headers = {"Content-Type": "application/json"}
                     if model.api_key:
@@ -1180,6 +1220,7 @@ def create_app(cfg: Config) -> FastAPI:
                     audit = dict(event="chat", id=call_id, user=request.state.user, project=project, model=model.id, purpose=purpose,
                                  messages=len(one.get("messages", [])), upstream_bytes=len(body), trimmed=0,
                                  max_tokens=one.get("max_tokens"), estimated_tokens=tokens_est, retry_count=again,
+                                 **prompt_part_bytes(one),
                                  **({"attempt": n + 1} if n else {}))
                     headers = {"Content-Type": "application/json", "x-api-key": model.api_key,
                                "anthropic-version": request.headers.get("anthropic-version", "2023-06-01")}

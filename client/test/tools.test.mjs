@@ -85,6 +85,23 @@ test("old long outputs and old long write / command texts are left out together,
 	assert.equal(entries[1].message.content[2].arguments.content, long); // the session itself keeps the full text
 });
 
+test("trim old read images without losing captions, user attachments or recent results", async () => {
+	const { trimPlan } = await import("../lib/tools.mjs");
+	const img = { type: "image", data: "x".repeat(100_000), mimeType: "image/png" };
+	const caption = { type: "text", text: "Figure 1" };
+	const result = (id, data = img) => ({ type: "message", id, message: { role: "toolResult", toolName: "read", content: [caption, data] } });
+	const entries = [{ type: "message", id: "user", message: { role: "user", content: [img] } }, result("old"),
+		result("tiny", { ...img, data: "abc=" }), ...Array.from({ length: 6 }, (_, i) => result(`keep${i}`))];
+	const { drafts, saved } = trimPlan(entries);
+	assert.deepEqual(drafts.map((d) => d.targetId), ["old"]);
+	const content = drafts[0].replacement.content;
+	assert.deepEqual(content.map((c) => c.type), ["text", "text"]);
+	assert.equal(content[0].text, caption.text);
+	assert.match(content[1].text, /Repeat the original tool call/);
+	assert.ok(saved >= 99_000 && saved < 100_000);
+	assert.equal(entries[1].message.content[1], img);
+});
+
 test("old outputs are replaced a batch at a time, so the prompt cache is lost rarely", async () => {
 	const { createTrimOldOutputs, TRIM_BATCH_CHARS } = await import("../lib/tools.mjs");
 	const run = (cfg, entries, tokens) => {

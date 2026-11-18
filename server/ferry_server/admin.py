@@ -672,7 +672,8 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         out = [{k: a.get(k) for k in ("id", "ts", "project", "model", "purpose", "messages", "upstream_bytes",
                                       "trimmed", "status", "ms", "usage", "error", "upstream_error", "last_event",
                                       "finish_reason", "stop_reason", "max_tokens", "estimated_tokens",
-                                      "upstream_http_status", "retry_count", "attempt")} for a in rows]
+                                      "upstream_http_status", "retry_count", "attempt", "image_bytes",
+                                      "thinking_bytes", "signature_bytes")} for a in rows]
         for o in out:
             o["has_details"] = o.get("id") in have
         return {"calls": out, "record_details": cfg.record_details}
