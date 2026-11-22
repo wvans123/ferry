@@ -60,7 +60,9 @@ export const shrunk = (chunk, sent = chunk) => Math.max(MIN_CHUNK, Math.floor(Ma
  *   sleep(ms), say(text)                -> backoff, a note to the user (said once)
  *   gatewayConfirm(res, text)           -> true when the answer is the gateway's "confirm in the browser" page (no resize helps)
  */
-export function createUploader(state, deps) {
+export function createUploader(state, deps, paths = {}) {
+	const commitPath = paths.commit ?? "/v1/ferry/commit";
+	const uploadPath = paths.upload ?? "/v1/ferry/upload";
 	state.chunk = chunkSize(state.chunk);
 	const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
 	let said = false;
@@ -113,17 +115,17 @@ export function createUploader(state, deps) {
 			let path;
 			let body;
 			if (direct) {
-				path = `/v1/ferry/commit?${q}`;
+				path = `${commitPath}?${q}`;
 				body = bytes;
 			} else if (finishing) {
 				const f = new URLSearchParams(q);
 				f.set("upload", upload);
 				f.set("parts", String(seq));
-				path = `/v1/ferry/commit?${f}`;
+				path = `${commitPath}?${f}`;
 				body = Buffer.alloc(0);
 			} else {
 				upload ??= randomUUID();
-				path = `/v1/ferry/upload/${upload}/${seq}`;
+				path = `${uploadPath}/${upload}/${seq}`;
 				body = bytes.subarray(offset, offset + state.chunk);
 			}
 			const extra = { part: direct || finishing ? "commit" : `${seq + 1}`, total, chunk: state.chunk, tries,

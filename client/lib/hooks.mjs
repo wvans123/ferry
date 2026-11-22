@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { FERRY_HOME, findBash } from "./config.mjs";
 import { projectKeyDir } from "./permissions.mjs";
+import { projectRoot } from "./resources.mjs";
 
 /** "**\/*.{ts,tsx}" -> RegExp on forward-slash paths relative to the project. */
 export function globRe(glob) {
@@ -86,7 +87,7 @@ export function createHooks() {
 				for (const k of Object.keys(hooks)) if (Array.isArray(h?.[k])) hooks[k].push(...h[k].filter((x) => x?.run));
 			};
 			add(readHooks(join(FERRY_HOME, "hooks.json"))?.hooks);
-			const project = readHooks(join(cwd, ".ferry", "hooks.json"));
+			const project = readHooks(join(cwd, ".ferry", "hooks.json")) ?? readHooks(join(projectRoot(cwd), ".ferry", "hooks.json"));
 			if (!project) return;
 			// a repository can carry hooks; they run commands, so ask once per version of the file
 			const hash = createHash("sha256").update(project.text).digest("hex");

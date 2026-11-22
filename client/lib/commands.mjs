@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { FERRY_HOME, SETTINGS, ADVANCED_SETTINGS, findFerryModel, loadConfig, parseTokens, saveConfig } from "./config.mjs";
 import { MODE_LABEL, ruleFiles } from "./permissions.mjs";
 import { ruleFilesInUse } from "./prompt.mjs";
+import { projectRoot } from "./resources.mjs";
 
 export const HELP = `Ferry commands (type / to pick one; Tab completes)
 
@@ -33,6 +34,7 @@ Work           /goal <objective>  keep working until it is done (/goal pause | r
 Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
                /memory user <text> for all projects)      /skills  what the agent knows how to do
                /memory tidy  clean up;  /memory distill  learn from what keeps coming up in past conversations
+               /sync  upload or pull selected project skills, rules, agents and hooks through your Ferry account
 Information    /context [size]  how full the context is; with a size (400k, 1m, auto) change it
                /cost  tokens and money       /status  server, model, settings, and a quick check
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
@@ -92,11 +94,13 @@ export function commandFiles(cwd) {
 	return [...byName.values()];
 }
 
-// Ferry's own skills (office) come first; yours and the project's with the same name replace them
+// Pi keeps the first skill with a given name. Project skills take precedence over user and built-in skills.
 const BUILTIN_SKILLS = join(dirname(fileURLToPath(import.meta.url)), "..", "skills");
 
 export function skillDirs(cwd) {
-	return [BUILTIN_SKILLS, join(FERRY_HOME, "skills"), join(cwd, ".claude", "skills"), join(cwd, ".ferry", "skills")].filter((d) => existsSync(d));
+	const roots = [...new Set([cwd, projectRoot(cwd)])];
+	return [...roots.flatMap((root) => [join(root, ".ferry", "skills"), join(root, ".claude", "skills")]),
+		join(FERRY_HOME, "skills"), BUILTIN_SKILLS].filter((d) => existsSync(d));
 }
 
 function notifyDone(seconds) {

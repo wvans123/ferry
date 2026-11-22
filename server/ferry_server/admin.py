@@ -98,7 +98,7 @@ def make_shortcut(path: Path, cfg: Config, args: str = "-m ferry_server --ui") -
                    capture_output=True, timeout=30)
 
 
-def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log: Path, audit_log: Path) -> None:
+def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log: Path, audit_log: Path, write) -> None:
     key = admin_key(cfg)
 
     def local(request: Request) -> bool:
@@ -621,6 +621,47 @@ def mount_admin(app: FastAPI, cfg: Config, live, rebuild, run_check, access_log:
         cfg.models_file.write_text(text, encoding="utf-8")
         cfg.models_mtime = cfg.models_file.stat().st_mtime
         return {"providers": provider_views(), "routing": routing}
+
+    # ---------- account-owned project resources ----------
+
+    def resource_action(fn, *args):
+        try:
+            return fn(*args)
+        except (ValueError, KeyError, TypeError, UnicodeError, AttributeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/admin/api/resources")
+    async def resource_accounts(request: Request):
+        if not allowed(request):
+            return denied()
+        with app.state.resources.db() as c:
+            owners = {r[0] for r in c.execute("SELECT DISTINCT owner FROM projects")}
+        owners.update(cfg.users.values())
+        return {"accounts": [{"user": u, "projects": app.state.resources.projects(u)} for u in sorted(owners)]}
+
+    @app.get("/admin/api/resources/{project}")
+    async def resource_project(project: str, request: Request, user: str, revision: int | None = None, path: str | None = None):
+        if not allowed(request):
+            return denied()
+        return app.state.resources.read(user, project, revision, path)
+
+    @app.get("/admin/api/resources/{project}/history")
+    async def resource_history(project: str, request: Request, user: str):
+        if not allowed(request):
+            return denied()
+        return {"history": app.state.resources.history(user, project)}
+
+    @app.post("/admin/api/resources/{project}")
+    async def resource_edit(project: str, request: Request, user: str, base: int, operation: str):
+        if not allowed(request, True):
+            return denied()
+        # The admin page is local-only; the same validation, CAS and history apply to web edits.
+        body = await request.body()
+        result = resource_action(app.state.resources.commit, user, "Server admin", project, base, operation, body)
+        if isinstance(result, dict):
+            write(audit_log, event="resource_commit", user=user, device="Server admin", project=project,
+                  revision=result["revision"])
+        return result
 
     # ---------- prompts ----------
 

@@ -1360,8 +1360,10 @@ def create_app(cfg: Config) -> FastAPI:
                                          lambda: write(audit_log, event="stream_committed", user=request.state.user, project=project,
                                                        model=model.id, seconds=int(time.time() - started)))
 
+    from .resources import mount_resources
+    mount_resources(app, cfg, audit_log, write)
     from .admin import mount_admin
-    mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log)
+    mount_admin(app, cfg, live, rebuild, run_check, access_log, audit_log, write)
     reports.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     web_search.mount(app, cfg, client, lambda **row: write(audit_log, **row))
     side.mount(app, cfg, client, lambda **row: write(audit_log, **row), lambda: live.store, key, limit_of)

@@ -17,6 +17,8 @@ import { Type } from "typebox";
 import { AGENT_DIR, cleanOldFiles, FERRY_HOME, findFerryModel } from "./config.mjs";
 import { createGuard } from "./guard.mjs";
 import { createPrompt } from "./prompt.mjs";
+import { skillDirs } from "./commands.mjs";
+import { projectRoot } from "./resources.mjs";
 import { createWeb } from "./web.mjs";
 import { listJobs, redrawJobs, startSubagentJob, trackSubagent } from "./jobs.mjs";
 import { createBigOutputs } from "./tools.mjs";
@@ -29,7 +31,7 @@ export const SUBAGENTS_DIR = join(FERRY_HOME, "subagents");
 const TRANSCRIPT_RESULT_BYTES = 4 * 1024;
 const TRANSCRIPT_MAX_BYTES = 2 * 1024 * 1024;
 // no nesting; the task list, goal and background jobs belong to the main agent
-const NOT_FOR_SUBAGENTS = new Set(["task", "task_batch", "todo", "ask_user", "switch_mode", "goal_update", "job_start", "job_output", "job_stop"]);
+const NOT_FOR_SUBAGENTS = new Set(["task", "task_batch", "todo", "ask_user", "switch_mode", "goal_update", "job_start", "job_output", "job_stop", "project_resources"]);
 
 // At most cfg.maxParallel subagents run at once (task, background task, task_batch); the others wait for a slot, so a
 // big batch does not flood the Ferry server or the model provider.
@@ -259,7 +261,8 @@ function parseAgentFile(file) {
 /** Built-in agents plus the user's own (project ones win over user ones with the same name). */
 export function discoverAgents(cwd) {
 	const byName = new Map(BUILTIN.map((a) => [a.name, a]));
-	for (const dir of [join(FERRY_HOME, "agents"), join(cwd, ".claude", "agents"), join(cwd, ".ferry", "agents")]) {
+	const roots = [...new Set([projectRoot(cwd), cwd])];
+	for (const dir of [join(FERRY_HOME, "agents"), ...roots.flatMap((root) => [join(root, ".claude", "agents"), join(root, ".ferry", "agents")])]) {
 		if (!existsSync(dir)) continue;
 		for (const f of readdirSync(dir).filter((n) => n.endsWith(".md")).sort()) {
 			try {
@@ -492,6 +495,7 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi, claims }) {
 		noExtensions: true, // only Ferry's own extensions below: predictable, and no nested task tool
 		noPromptTemplates: true,
 		noThemes: true,
+		additionalSkillPaths: skillDirs(cwd),
 		extensionFactories: [
 			{ name: "ferry-sync", factory: deps.makeSync() },
 			{ name: "ferry-prompt", factory: createPrompt(cfg, { subagent: true }) },

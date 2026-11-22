@@ -467,6 +467,7 @@ async function run(args) {
 				compactReserves: (c) => writeCompactReserves(models, c),
 				serverWindow: (id) => models.find((m) => m.id === id)?.contextWindow }), hidden: true },
 			{ name: "ferry-memory", factory: createMemory(cfg), hidden: true },
+			{ name: "ferry-resources", factory: (await import("../lib/resources.mjs")).createResources(cfg), hidden: true },
 			{ name: "ferry-memory-review", factory: (await import("../lib/memreview.mjs")).createMemoryReview(cfg), hidden: true },
 			{ name: "ferry-distill", factory: (await import("../lib/distill.mjs")).createDistill(cfg), hidden: true },
 			{ name: "ferry-todo", factory: createTodo(), hidden: true },

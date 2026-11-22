@@ -22,6 +22,49 @@ Ferry 的大部分能力都可以用**普通文本文件**来定制，不用写�
 
 Ferry 也认 Claude Code 的文件夹：`.claude\commands\`、`.claude\agents\`、`.claude\skills\`、`CLAUDE.md`。已经给 Claude Code 写过的东西可以直接用。
 
+## 在 Client 和 Server 之间同步项目资源
+
+在 Ferry 对话里输入 `/sync`，选择上传、拉取、查看状态、历史版本或关联项目。Server 按 Ferry 账户保存项目，同一账户的多台电脑可以关联到同一个 Server 项目。第一次同步时选择已有项目或创建一个，关联关系保存在这台电脑的 Ferry 数据目录里。Git 项目以仓库根目录作为同步根目录，其他文件夹以启动 Ferry 时所在目录为准。
+
+可以直接指定一个 skill 的名字或路径。
+
+```text
+/sync upload research
+/sync upload .claude/skills/patent-research
+/sync upload "D:\my-skills\patent research"
+/sync upload user:release-notes
+/sync upload AGENTS.md
+/sync upload .ferry/hooks.json
+/sync pull research
+/sync status
+/sync history
+/sync pull research --revision 2
+/sync bind
+```
+
+`user:名字` 选择个人 Ferry skills 目录中的技能。显式选择其他目录时，该目录需要包含 `SKILL.md`。外部和个人 skill 上传到 Server 项目的 `.ferry/skills/<目录名>`，拉取也写入当前本地项目的这个位置。名字重复时会列出候选路径，请指定完整路径。包含空格的路径可以加引号。
+
+也可以直接对 agent 说“把专利调研的 skill 上传到 Server”或“拉取 Server 上最新的专利 PPT skill”。模型通过 `project_resources` 工具列出候选，根据名称选择资源，再展示同步预览。预览包含来源、目标、文件增删改、字节数和排除的文件，可以查看文本差异，再确认同步。模型得到的同步结果只含文件元数据。
+
+支持的项目资源如下。
+
+| 资源 | 同步范围 |
+|---|---|
+| `.ferry/skills/<名字>`、`.claude/skills/<名字>` | 整个 skill 目录，包括 SKILL.md、scripts、references、模板和二进制文件 |
+| `AGENTS.md`、`CLAUDE.md` | 单个规则文件，子目录中的规则可显式指定路径 |
+| `.ferry/agents/*.md`、`.claude/agents/*.md` | 单个 agent 定义 |
+| `.ferry/hooks.json` | 项目 hooks，支持 afterEdit 和 onDone |
+
+hooks 调用的脚本可以放在一并同步的 skill 目录里。项目 hooks 拉取并重载后，按现有机制确认信任，内容变化时会再次确认。项目 skill 优先于同名个人和内置 skill，新启动的子 agent 也能发现项目 skill。拉取后用 `/reload` 重新加载主会话中的 skill 和规则，斜杠命令完成拉取后会提供重载选项。
+
+在运行 Server 的电脑打开管理页，进入“项目资源”，选择账户、项目、资源和文件，即可编辑 UTF-8 的 SKILL.md、脚本和参考文件，或添加、删除 skill 内文件。每次保存都会生成项目新版本。历史版本可以查看，也可以把其中一个资源恢复成新版本。二进制资料保留原始字节，可以通过 Client 同步。
+
+每次上传和拉取前都会比较本地、Server 和上次同步的版本。两边都改过时会提示覆盖冲突，供你查看差异后决定。Server 使用版本号检查并发写入，确认期间又发生更新会返回冲突，需要刷新后重新审核。网页遇到此类冲突会保留当前草稿。Client 拉取前在 `%USERPROFILE%\.ferry\resource-sync\` 下保存文件备份和恢复记录，进程意外退出后再次同步会恢复未完成的写入，遇到后续人工修改则提示处理备份。
+
+资源上传复用对话上传的分包器，序列化后的 UTF-8 字节按当前 `chunkBytes` 分块，单请求体硬上限 512 KiB。网关拒绝时会自动缩小分块，最终使用空请求体提交，Server 验证文件 SHA-256 后写入版本。每文件最多 4 MiB，每项目最多 512 个文件和 32 MiB，大小计算包含 Base64 编码开销。同步会排除 `.git`、`node_modules`、`.env`、常见凭证文件和私钥，预览会列出排除项。符号链接和跨平台路径冲突会被拒绝。
+
+Server 将资源及历史保存在数据目录的 `resources.sqlite3`，备份 Server 时请连同这个文件保存。账户归属沿用 Ferry 的用户名，轮换设备令牌后可以重新关联到原项目。
+
 ## 规则：AGENTS.md
 
 每次对话一开始都会带上的说明。最省事的写法是跟 agent 说"读一遍这个项目，写一份 AGENTS.md"，你再改。想要固定的写法，可以把 [examples/commands/init.md](../examples/commands/init.md) 拷到你的 `commands` 文件夹，以后输入 `/init` 就行。

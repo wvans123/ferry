@@ -163,6 +163,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
     <a href="#overview" data-page="overview">概览</a>
     <a href="#providers" data-page="providers">服务商和模型</a>
     <a href="#prompts" data-page="prompts">提示词</a>
+    <a href="#resources" data-page="resources">项目资源</a>
     <a href="#calls" data-page="calls">调用记录</a>
     <a href="#usage" data-page="usage">用量和费用</a>
     <a href="#devices" data-page="devices">设备和记忆</a>
@@ -237,6 +238,21 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       </div>
       <div id="provList"></div>
       <p class="msg" id="provMsg"></p>
+    </section>
+
+    <section data-view="resources" hidden>
+      <h1>项目资源</h1>
+      <p class="lead">按 Client 账户保存项目 skill、规则、agent 和 hooks。编辑会生成历史版本，Client 用 /sync 拉取后应用。</p>
+      <div class="card">
+        <div class="row"><label>账户 <select id="rsAccount"></select></label><label>项目 <select id="rsProject"></select></label><button class="btn" id="rsRefresh">刷新</button></div>
+        <div class="row" style="margin-top:14px"><label>版本 <select id="rsRevision"></select></label><label>资源 <select id="rsResource"></select></label></div>
+        <p class="hint" id="rsInfo"></p>
+        <div class="row"><label>文件 <select id="rsFile"></select></label><button class="btn" id="rsAdd">添加文件</button><button class="btn danger" id="rsRemove">删除文件</button></div>
+        <label style="display:block;margin-top:14px">文件内容<textarea id="rsText" rows="20" spellcheck="false" style="font-family:monospace"></textarea></label>
+        <label><input type="checkbox" id="rsExecutable">作为可执行脚本保存</label>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="rsSave">保存为新版本</button><button class="btn" id="rsRestore">恢复此资源为新版本</button><button class="btn danger" id="rsDelete">删除资源</button></div>
+        <p class="msg" id="rsMsg"></p>
+      </div>
     </section>
 
     <!-- prompts -->
@@ -479,7 +495,7 @@ async function api(path, method = "GET", body) {
   const r = await fetch("/admin/api/" + path, { method, headers: { "Content-Type": "application/json", "X-Ferry-Admin": "1" },
     body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  if (!r.ok) throw new Error(typeof data.error === "string" ? data.error : data.error?.message || data.detail || ("HTTP " + r.status));
   return data;
 }
 function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("show"), 1900); }
@@ -504,7 +520,7 @@ function show(name) {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   for (const s of document.querySelectorAll("[data-view]")) s.hidden = s.dataset.view !== name;
   for (const a of document.querySelectorAll(".side a")) a.toggleAttribute("aria-current", a.dataset.page === name), a.dataset.page === name && a.setAttribute("aria-current", "page");
-  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, calls: loadCalls, usage: loadUsage, devices: loadDevices, settings: loadSettings })[name]?.();
+  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, resources: () => rsHandle(loadResources)(), calls: loadCalls, usage: loadUsage, devices: loadDevices, settings: loadSettings })[name]?.();
 }
 addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
 
@@ -719,6 +735,151 @@ $("dlgSave").onclick = async () => {
   } catch (e) { say("dlgMsg", e.message, false); }
   $("dlgSave").disabled = false;
 };
+
+/* ---------- project resources ---------- */
+let RS = { accounts: [], head: 0, loaded: null, snapshot: null, resource: null, file: null, dirty: false, editorDirty: false };
+function rsOptions(id, items) {
+  const select = $(id); select.replaceChildren();
+  for (const [value, text] of items) { const o = document.createElement("option"); o.value = value; o.textContent = text; select.append(o); }
+  select.dataset.previous = select.value;
+}
+function rsQuery(extra = {}) { return new URLSearchParams({ user: $("rsAccount").value, ...extra }); }
+function rsUrl(extra = {}) { return "resources/" + $("rsProject").value + "?" + rsQuery(extra); }
+function rsLeave() { return !RS.dirty || confirm("放弃尚未保存的资源修改？"); }
+function rsEncode(text) {
+  const bytes = new TextEncoder().encode(text); let raw = "";
+  for (let i = 0; i < bytes.length; i += 8192) raw += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(raw);
+}
+function rsDecode(data) { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(data), c => c.charCodeAt(0))); }
+async function loadResources() {
+  try {
+    if (!rsLeave()) return;
+    const account = $("rsAccount").value, project = $("rsProject").value;
+    RS.accounts = (await api("resources")).accounts; RS.dirty = false;
+    rsOptions("rsAccount", RS.accounts.map(a => [a.user, a.user]));
+    if (RS.accounts.some(a => a.user === account)) $("rsAccount").value = account;
+    $("rsAccount").dataset.previous = $("rsAccount").value;
+    await rsProjects(project);
+  } catch (e) { say("rsMsg", e.message, false); }
+}
+async function rsProjects(keep = "") {
+  const projects = RS.accounts.find(a => a.user === $("rsAccount").value)?.projects || [];
+  rsOptions("rsProject", projects.map(p => [p.id, p.name + " [" + p.id.slice(0, 8) + "]"]));
+  if (projects.some(p => p.id === keep)) $("rsProject").value = keep;
+  $("rsProject").dataset.previous = $("rsProject").value;
+  await rsHistory();
+}
+async function rsHistory() {
+  RS.resource = null; RS.file = null; RS.snapshot = null; RS.dirty = false;
+  rsOptions("rsResource", []); rsOptions("rsFile", []); $("rsText").value = ""; $("rsInfo").textContent = "";
+  if (!$("rsProject").value) { rsOptions("rsRevision", []); say("rsMsg", "Client 上传并关联项目后，资源会显示在这里。"); return; }
+  const head = await api(rsUrl()); RS.head = head.revision;
+  RS.loaded = { user: $("rsAccount").value, project: $("rsProject").value };
+  const history = (await api("resources/" + $("rsProject").value + "/history?" + rsQuery())).history;
+  rsOptions("rsRevision", [["", "当前版本 r" + RS.head], ...history.map(r => [String(r.rev), "r" + r.rev + " · " + new Date(r.at * 1000).toLocaleString() + " · " + r.actor])]);
+  await rsSnapshot();
+}
+async function rsSnapshot() {
+  const rev = $("rsRevision").value;
+  RS.snapshot = await api(rsUrl(rev ? { revision: rev } : {})); RS.dirty = false;
+  rsOptions("rsResource", RS.snapshot.resources.map(r => [r.path, r.path]));
+  await rsResource();
+}
+async function rsResource() {
+  RS.dirty = false; RS.resource = null; RS.file = null; $("rsText").value = "";
+  rsOptions("rsFile", []);
+  const path = $("rsResource").value;
+  if (!path) return;
+  const data = await api(rsUrl({ revision: String(RS.snapshot.revision), path }));
+  RS.resource = data.resource;
+  $("rsInfo").textContent = RS.resource.kind + " · " + RS.resource.files.length + " 文件 · r" + data.revision +
+    (RS.resource.kind === "hooks" ? " · Client 应用后会按既有机制确认 hooks 信任" : "");
+  rsFiles();
+}
+function rsFiles(keep = "") {
+  rsOptions("rsFile", (RS.resource?.files || []).map(f => [f.path, f.path + " (" + bytes(f.bytes) + ")"]));
+  if (RS.resource?.files.some(f => f.path === keep)) $("rsFile").value = keep;
+  rsFile();
+}
+function rsCapture() {
+  if (!RS.file || !RS.editorDirty || $("rsText").disabled) return;
+  RS.file.data = rsEncode($("rsText").value); delete RS.file.sha256;
+  RS.file.bytes = new TextEncoder().encode($("rsText").value).length;
+  RS.file.executable = $("rsExecutable").checked;
+  RS.editorDirty = false;
+}
+function rsFile() {
+  RS.editorDirty = false;
+  RS.file = RS.resource?.files.find(f => f.path === $("rsFile").value);
+  $("rsText").disabled = !RS.file; $("rsExecutable").disabled = !RS.file;
+  $("rsText").value = ""; $("rsExecutable").checked = !!RS.file?.executable;
+  if (!RS.file) return;
+  try {
+    const text = rsDecode(RS.file.data);
+    if (text.includes("\0")) throw new Error("binary");
+    $("rsText").value = text;
+  } catch {
+    $("rsText").value = "该文件为二进制或使用其他文本编码。Client 拉取会保留原始字节。";
+    $("rsText").disabled = true; $("rsExecutable").disabled = true;
+  }
+}
+async function rsCommit(change) {
+  const q = new URLSearchParams({ user: RS.loaded.user, base: String(RS.head), operation: crypto.randomUUID().replaceAll("-", "") });
+  const result = await api("resources/" + RS.loaded.project + "?" + q, "POST", change);
+  RS.dirty = false;
+  await rsHistory(); say("rsMsg", "已保存 r" + result.revision + "。Client 用 /sync pull 拉取；历史版本可恢复。");
+}
+let rsBusy = false;
+function rsHandle(fn) { return async () => {
+  if (rsBusy) return;
+  rsBusy = true; document.querySelector('[data-view="resources"]').inert = true;
+  try { await fn(); } catch (e) { say("rsMsg", e.message + "。当前草稿已保留。", false); }
+  finally { rsBusy = false; document.querySelector('[data-view="resources"]').inert = false; }
+}; }
+function rsSwitch(id, fn) { return rsHandle(async () => {
+  const select = $(id), next = select.value;
+  if (!rsLeave()) { select.value = select.dataset.previous; return; }
+  await fn(); select.dataset.previous = next;
+}); }
+$("rsRefresh").onclick = rsHandle(loadResources);
+$("rsAccount").onchange = rsSwitch("rsAccount", () => rsProjects());
+$("rsProject").onchange = rsSwitch("rsProject", rsHistory);
+$("rsRevision").onchange = rsSwitch("rsRevision", rsSnapshot);
+$("rsResource").onchange = rsSwitch("rsResource", rsResource);
+$("rsFile").onchange = () => { if (RS.dirty) rsCapture(); rsFile(); };
+$("rsText").oninput = $("rsExecutable").onchange = () => { RS.dirty = true; RS.editorDirty = true; };
+$("rsAdd").onclick = rsHandle(async () => {
+  if (RS.resource?.kind !== "skill") throw new Error("只有 skill 目录可以添加文件");
+  rsCapture();
+  const rel = prompt("文件相对 skill 目录的路径，例如 references/example.md 或 scripts/check.py");
+  if (!rel) return;
+  const path = RS.resource.path + "/" + rel;
+  if (RS.resource.files.some(f => f.path === path)) throw new Error("文件已存在");
+  RS.resource.files.push({ path, data: "", executable: false, bytes: 0 }); RS.dirty = true; rsFiles(path);
+});
+$("rsRemove").onclick = rsHandle(async () => {
+  if (!RS.file) return;
+  if (RS.resource.kind !== "skill" || RS.file.path === RS.resource.path + "/SKILL.md") throw new Error("可使用删除资源移除整个资源");
+  if (!confirm("删除 " + RS.file.path + "？保存后生成新版本。")) return;
+  RS.resource.files = RS.resource.files.filter(f => f !== RS.file); RS.dirty = true; rsFiles();
+});
+$("rsSave").onclick = rsHandle(async () => {
+  if (!RS.resource) return;
+  rsCapture();
+  if (!confirm("保存整个资源 " + RS.resource.path + " 为新版本？")) return;
+  await rsCommit({ put: [RS.resource] });
+});
+$("rsRestore").onclick = rsHandle(async () => {
+  if (!RS.resource) return;
+  if (RS.dirty) throw new Error("请先保存修改或重新选择历史资源");
+  if (!confirm("将 r" + RS.snapshot.revision + " 的 " + RS.resource.path + " 恢复为新版本？")) return;
+  await rsCommit({ put: [RS.resource] });
+});
+$("rsDelete").onclick = rsHandle(async () => {
+  if (!RS.resource || !confirm("从当前 Server 项目删除 " + RS.resource.path + "？历史版本保留。")) return;
+  await rsCommit({ delete: [RS.resource.path] });
+});
 
 /* ---------- prompts ---------- */
 let PR = null;
