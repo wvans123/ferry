@@ -86,7 +86,8 @@ def decide(msgs):
     if "Read files in data/." in json.dumps(msgs) and "big-notes.txt" in json.dumps(msgs):
         state["after_summary"] = state.get("after_summary", 0) + 1
         if state["after_summary"] == 1:  # one more step after the summary (and the note), to see the upload stay incremental
-            return ("tool", "read", {"path": "big-notes.txt"})
+            # A small follow-up isolates incremental upload from another threshold crossing as tool schemas grow.
+            return ("tool", "read", {"path": "big-notes.txt", "limit": 1})
         return ("text", "MIDCOMPACT: finished after the summary")  # the fixed summary is in the conversation: the request was summarised in the middle
     if MODE == "basic":
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
