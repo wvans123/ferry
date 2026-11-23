@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 const temp = mkdtempSync(join(tmpdir(), "ferry-resources-"));
 process.env.FERRY_HOME = join(temp, "home");
-const { applyPull, collectResource, createResourceClient, createResources, recoverPull, resourcePath, selectResource, textDiff } = await import("../lib/resources.mjs");
+const { applyPull, collectResource, createResourceClient, createResources, discoverResources, recoverPull, resourcePath, selectResource, textDiff } = await import("../lib/resources.mjs");
 after(() => rmSync(temp, { recursive: true, force: true }));
 function project(name) { const root = join(temp, name); mkdirSync(root, { recursive: true }); return root; }
 function file(root, path, text) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), text); }
@@ -20,6 +20,9 @@ test("complete selected skill includes scripts and references and excludes known
 	const root = project("collect");
 	skill(root); file(root, ".ferry/skills/research/scripts/check.py", "print('check')");
 	file(root, ".ferry/skills/research/.env", "SECRET");
+	file(root, "AGENTS.md", "project rules are not part of skill sync");
+	file(root, ".ferry/agents/reviewer.md", "agent definition");
+	file(root, ".ferry/hooks.json", "{} ");
 	const selected = selectResource(root, "research");
 	const { resource, skipped } = collectResource(root, selected.path);
 	assert.equal(resource.files.length, 3);
@@ -30,6 +33,8 @@ test("complete selected skill includes scripts and references and excludes known
 	assert.throws(() => selectResource(root, "research"), /Ambiguous/);
 	file(process.env.FERRY_HOME, "skills/mine/SKILL.md", "user skill");
 	assert.equal(selectResource(root, "user:mine").path, ".ferry/skills/mine");
+	assert.ok(discoverResources(root).every((r) => r.path.includes("/skills/")));
+	assert.throws(() => selectResource(root, "AGENTS.md"), /Only skills/);
 	file(root, "custom/other/SKILL.md", "external skill");
 	assert.equal(selectResource(root, join(root, "custom/other")).path, ".ferry/skills/other");
 	assert.equal(selectResource(root, "custom/other").source, join(root, "custom/other"));

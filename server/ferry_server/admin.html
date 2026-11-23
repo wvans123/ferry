@@ -146,6 +146,56 @@ dialog::backdrop { background: rgba(10, 30, 34, .45); }
 details.full { margin-top: 10px; }
 details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-bottom: 8px; }
 
+/* skills */
+.skill-toolbar { display:flex; align-items:end; gap:12px; padding:16px 18px; }
+.skill-toolbar .field { width:min(360px,100%); }
+.skill-toolbar .grow { flex:1; }
+.skill-layout { display:grid; grid-template-columns:minmax(210px,260px) minmax(0,1fr); gap:16px; align-items:start; }
+.skill-list-panel { padding:14px; }
+.skill-list-head { display:flex; align-items:center; gap:8px; padding:0 4px 12px; border-bottom:1px solid var(--line); }
+.skill-list-head h2 { margin:0; flex:1; font-size:15px; }
+.skill-list { display:grid; gap:4px; padding-top:8px; }
+.skill-item { display:block; width:100%; min-width:0; text-align:left; border:1px solid transparent; border-radius:8px; padding:10px 11px; color:var(--ink); background:transparent; cursor:pointer; }
+.skill-item:hover { background:var(--bg); }
+.skill-item[aria-pressed="true"] { background:var(--river-soft); border-color:var(--line); }
+.skill-item b,.skill-item small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.skill-item small { color:var(--muted); font:12px/1.5 var(--mono); margin-top:2px; }
+.skill-empty { padding:22px 10px; color:var(--muted); font-size:14px; }
+.skill-editor { padding:0; overflow:hidden; }
+.skill-editor-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:16px 18px; border-bottom:1px solid var(--line); }
+.skill-title { flex:1; min-width:180px; }
+.skill-title h2 { font-size:18px; margin:0; overflow-wrap:anywhere; }
+.skill-title p { margin:2px 0 0; color:var(--muted); font:12px/1.5 var(--mono); overflow-wrap:anywhere; }
+.skill-history { width:min(240px,100%); }
+.skill-workbench { display:grid; grid-template-columns:minmax(155px,205px) minmax(0,1fr); min-height:520px; }
+.skill-files { padding:12px 9px; border-right:1px solid var(--line); background:color-mix(in srgb,var(--bg) 55%,var(--surface)); }
+.skill-files h3 { font-size:12px; color:var(--muted); margin:0 7px 8px; font-weight:600; }
+.skill-file-list { display:grid; gap:3px; }
+.skill-file { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; border:0; background:transparent; color:var(--muted); border-radius:6px; padding:7px 8px; cursor:pointer; font:12px/1.4 var(--mono); }
+.skill-file:hover { background:var(--surface); color:var(--ink); }
+.skill-file[aria-current="true"] { background:var(--surface); color:var(--ink); box-shadow:inset 2px 0 var(--river); }
+.skill-file-actions { display:grid; gap:6px; margin:12px 3px; }
+.skill-file-actions .btn { white-space:normal; }
+.skill-edit { min-width:0; display:flex; flex-direction:column; }
+.skill-edit-head { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); }
+.skill-edit-head code { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.skill-edit textarea { width:100%; flex:1; min-height:440px; border:0; border-radius:0; padding:16px 18px; resize:vertical; background:var(--surface); font:13px/1.65 var(--mono); tab-size:2; }
+.skill-edit textarea:focus-visible { outline-offset:-3px; }
+.skill-edit-foot { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+.skill-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px 16px; border-top:1px solid var(--line); }
+.skill-actions .msg { flex:1; min-width:160px; }
+.skill-blank { grid-column:1/-1; padding:56px 24px; text-align:center; color:var(--muted); }
+.skill-blank h2 { color:var(--ink); font-size:18px; margin:0 0 8px; }
+@media(max-width:760px) {
+  .skill-toolbar { align-items:stretch; flex-direction:column; }
+  .skill-toolbar .field { width:100%; }
+  .skill-layout { grid-template-columns:minmax(0,1fr); }
+  .skill-list { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+  .skill-workbench { grid-template-columns:minmax(115px,34%) minmax(0,1fr); min-height:440px; }
+  .skill-edit textarea { min-height:360px; padding:12px; }
+  .skill-editor-head { padding:14px; }
+}
+
 /* call details */
 .kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 6px 14px; font-size: 14px; }
 .kv dt { color: var(--muted); }
@@ -163,7 +213,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
     <a href="#overview" data-page="overview">概览</a>
     <a href="#providers" data-page="providers">服务商和模型</a>
     <a href="#prompts" data-page="prompts">提示词</a>
-    <a href="#resources" data-page="resources">项目资源</a>
+    <a href="#skills" data-page="skills">Skills</a>
     <a href="#calls" data-page="calls">调用记录</a>
     <a href="#usage" data-page="usage">用量和费用</a>
     <a href="#devices" data-page="devices">设备和记忆</a>
@@ -240,18 +290,46 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
       <p class="msg" id="provMsg"></p>
     </section>
 
-    <section data-view="resources" hidden>
-      <h1>项目资源</h1>
-      <p class="lead">按 Client 账户保存项目 skill、规则、agent 和 hooks。编辑会生成历史版本，Client 用 /sync 拉取后应用。</p>
-      <div class="card">
-        <div class="row"><label>账户 <select id="rsAccount"></select></label><label>项目 <select id="rsProject"></select></label><button class="btn" id="rsRefresh">刷新</button></div>
-        <div class="row" style="margin-top:14px"><label>版本 <select id="rsRevision"></select></label><label>资源 <select id="rsResource"></select></label></div>
-        <p class="hint" id="rsInfo"></p>
-        <div class="row"><label>文件 <select id="rsFile"></select></label><button class="btn" id="rsAdd">添加文件</button><button class="btn danger" id="rsRemove">删除文件</button></div>
-        <label style="display:block;margin-top:14px">文件内容<textarea id="rsText" rows="20" spellcheck="false" style="font-family:monospace"></textarea></label>
-        <label><input type="checkbox" id="rsExecutable">作为可执行脚本保存</label>
-        <div class="row" style="margin-top:14px"><button class="btn primary" id="rsSave">保存为新版本</button><button class="btn" id="rsRestore">恢复此资源为新版本</button><button class="btn danger" id="rsDelete">删除资源</button></div>
-        <p class="msg" id="rsMsg"></p>
+    <section data-view="skills" hidden>
+      <h1>Skills</h1>
+      <p class="lead">在 Server 上整理和修改技能，再从 Ferry Client 拉取到工作电脑。</p>
+      <div class="card skill-toolbar">
+        <div class="field" id="rsAccountField" hidden><label class="f" for="rsAccount">账户</label><select id="rsAccount"></select></div>
+        <div class="field"><label class="f" for="rsProject">工作区</label><select id="rsProject"></select></div>
+        <span class="grow"></span>
+        <button class="btn" id="rsRefresh">刷新</button>
+        <span class="muted" style="font-size:13px">Client 输入 <code>/sync</code> 上传或拉取</span>
+      </div>
+      <p class="msg" id="rsMsg" role="status" aria-live="polite"></p>
+      <div class="skill-layout">
+        <aside class="card skill-list-panel" aria-label="Skills 列表">
+          <div class="skill-list-head"><h2>技能</h2><span class="tag" id="rsSkillCount">0</span></div>
+          <div class="skill-list" id="rsSkillList"></div>
+          <div class="skill-empty" id="rsSkillEmpty" hidden>这个工作区还没有 skill。<br>在 Client 运行 <code>/sync upload &lt;名字&gt;</code> 上传。</div>
+        </aside>
+        <div class="card skill-editor" id="rsSkillEditor">
+          <div class="skill-blank" id="rsSkillBlank"><h2>选择一个 skill</h2><div>左侧选择技能后，可以编辑它的说明、脚本和参考文件。</div></div>
+          <div id="rsSkillContent" hidden>
+            <div class="skill-editor-head">
+              <div class="skill-title"><h2 id="rsSkillName"></h2><p id="rsSkillPath"></p></div>
+              <label class="skill-history"><span class="f">历史</span><select id="rsRevision" aria-label="查看历史版本"></select></label>
+              <button class="btn" id="rsRestore" title="将当前查看的历史内容保存为新版本">恢复历史</button>
+            </div>
+            <div class="skill-workbench">
+              <nav class="skill-files" aria-label="Skill 文件">
+                <h3>文件</h3>
+                <div class="skill-file-list" id="rsFileList"></div>
+                <div class="skill-file-actions"><button class="btn small" id="rsAdd">添加文件</button><button class="btn small danger" id="rsRemove">删除此文件</button></div>
+              </nav>
+              <div class="skill-edit">
+                <div class="skill-edit-head"><code id="rsFileName">选择一个文件</code><span class="tag" id="rsFileSize" hidden></span><label id="rsExecutableWrap" class="muted" hidden><input type="checkbox" id="rsExecutable"> 可执行脚本</label></div>
+                <textarea id="rsText" spellcheck="false" aria-label="Skill 文件内容" placeholder="选择左侧文件后，在这里编辑内容" disabled></textarea>
+                <div class="skill-edit-foot"><span>修改会保留在草稿中，保存后 Client 才能拉取</span><span id="rsDirtyMark"></span></div>
+              </div>
+            </div>
+            <div class="skill-actions"><button class="btn primary" id="rsSave">保存修改</button><button class="btn danger" id="rsDelete">删除 Skill</button></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -520,7 +598,7 @@ function show(name) {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   for (const s of document.querySelectorAll("[data-view]")) s.hidden = s.dataset.view !== name;
   for (const a of document.querySelectorAll(".side a")) a.toggleAttribute("aria-current", a.dataset.page === name), a.dataset.page === name && a.setAttribute("aria-current", "page");
-  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, resources: () => rsHandle(loadResources)(), calls: loadCalls, usage: loadUsage, devices: loadDevices, settings: loadSettings })[name]?.();
+  ({ overview: loadOverview, providers: loadProviders, prompts: loadPrompts, skills: () => rsHandle(loadResources)(), calls: loadCalls, usage: loadUsage, devices: loadDevices, settings: loadSettings })[name]?.();
 }
 addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
 
@@ -736,8 +814,9 @@ $("dlgSave").onclick = async () => {
   $("dlgSave").disabled = false;
 };
 
-/* ---------- project resources ---------- */
-let RS = { accounts: [], head: 0, loaded: null, snapshot: null, resource: null, file: null, dirty: false, editorDirty: false };
+/* ---------- skills ---------- */
+let RS = { accounts: [], head: 0, loaded: null, snapshot: null, skills: [], path: "", resource: null, file: null,
+  filePath: "", dirty: false, editorDirty: false };
 function rsOptions(id, items) {
   const select = $(id); select.replaceChildren();
   for (const [value, text] of items) { const o = document.createElement("option"); o.value = value; o.textContent = text; select.append(o); }
@@ -745,97 +824,134 @@ function rsOptions(id, items) {
 }
 function rsQuery(extra = {}) { return new URLSearchParams({ user: $("rsAccount").value, ...extra }); }
 function rsUrl(extra = {}) { return "resources/" + $("rsProject").value + "?" + rsQuery(extra); }
-function rsLeave() { return !RS.dirty || confirm("放弃尚未保存的资源修改？"); }
+function rsLeave() { return !RS.dirty || confirm("放弃尚未保存的 Skill 修改？"); }
 function rsEncode(text) {
   const bytes = new TextEncoder().encode(text); let raw = "";
   for (let i = 0; i < bytes.length; i += 8192) raw += String.fromCharCode(...bytes.subarray(i, i + 8192));
   return btoa(raw);
 }
 function rsDecode(data) { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(data), c => c.charCodeAt(0))); }
+function rsSkillName(resource) {
+  const file = resource?.files.find(f => /\/SKILL\.md$/i.test(f.path));
+  if (file) try { const m = /^name:\s*(.+)$/mi.exec(rsDecode(file.data)); if (m) return m[1].trim().replace(/^['"]|['"]$/g, ""); } catch {}
+  return resource?.path.split("/").at(-1) || "Skill";
+}
+function rsShowSkill(yes) { $("rsSkillBlank").hidden = yes; $("rsSkillContent").hidden = !yes; }
 async function loadResources() {
-  try {
-    if (!rsLeave()) return;
-    const account = $("rsAccount").value, project = $("rsProject").value;
-    RS.accounts = (await api("resources")).accounts; RS.dirty = false;
-    rsOptions("rsAccount", RS.accounts.map(a => [a.user, a.user]));
-    if (RS.accounts.some(a => a.user === account)) $("rsAccount").value = account;
-    $("rsAccount").dataset.previous = $("rsAccount").value;
-    await rsProjects(project);
-  } catch (e) { say("rsMsg", e.message, false); }
+  if (!rsLeave()) return;
+  const account = $("rsAccount").value, project = $("rsProject").value;
+  RS.accounts = (await api("resources")).accounts;
+  rsOptions("rsAccount", RS.accounts.map(a => [a.user, a.user]));
+  if (RS.accounts.some(a => a.user === account)) $("rsAccount").value = account;
+  $("rsAccountField").hidden = RS.accounts.length <= 1;
+  $("rsAccount").dataset.previous = $("rsAccount").value;
+  await rsProjects(project);
 }
 async function rsProjects(keep = "") {
   const projects = RS.accounts.find(a => a.user === $("rsAccount").value)?.projects || [];
-  rsOptions("rsProject", projects.map(p => [p.id, p.name + " [" + p.id.slice(0, 8) + "]"]));
+  rsOptions("rsProject", projects.map(p => [p.id, p.name]));
   if (projects.some(p => p.id === keep)) $("rsProject").value = keep;
   $("rsProject").dataset.previous = $("rsProject").value;
   await rsHistory();
 }
 async function rsHistory() {
-  RS.resource = null; RS.file = null; RS.snapshot = null; RS.dirty = false;
-  rsOptions("rsResource", []); rsOptions("rsFile", []); $("rsText").value = ""; $("rsInfo").textContent = "";
-  if (!$("rsProject").value) { rsOptions("rsRevision", []); say("rsMsg", "Client 上传并关联项目后，资源会显示在这里。"); return; }
+  RS.resource = null; RS.file = null; RS.snapshot = null; RS.dirty = false; RS.path = ""; RS.filePath = "";
+  $("rsText").value = ""; $("rsSkillList").replaceChildren(); $("rsFileList").replaceChildren();
+  rsOptions("rsRevision", []); rsShowSkill(false);
+  if (!$("rsProject").value) { RS.loaded = null; $("rsSkillCount").textContent = "0"; $("rsSkillEmpty").hidden = false;
+    $("rsSkillEmpty").textContent = "先在 Client 输入 /sync，将 skill 上传到这个 Server 账户。"; say("rsMsg", ""); return; }
   const head = await api(rsUrl()); RS.head = head.revision;
   RS.loaded = { user: $("rsAccount").value, project: $("rsProject").value };
   const history = (await api("resources/" + $("rsProject").value + "/history?" + rsQuery())).history;
-  rsOptions("rsRevision", [["", "当前版本 r" + RS.head], ...history.map(r => [String(r.rev), "r" + r.rev + " · " + new Date(r.at * 1000).toLocaleString() + " · " + r.actor])]);
+  rsOptions("rsRevision", [["", "当前"], ...history.map(r => [String(r.rev), new Date(r.at * 1000).toLocaleString() + " · " + r.actor])]);
   await rsSnapshot();
 }
 async function rsSnapshot() {
-  const rev = $("rsRevision").value;
+  const path = RS.path, rev = $("rsRevision").value;
   RS.snapshot = await api(rsUrl(rev ? { revision: rev } : {})); RS.dirty = false;
-  rsOptions("rsResource", RS.snapshot.resources.map(r => [r.path, r.path]));
-  await rsResource();
+  RS.skills = RS.snapshot.resources.filter(r => r.kind === "skill");
+  $("rsSkillCount").textContent = String(RS.skills.length);
+  $("rsSkillEmpty").hidden = RS.skills.length > 0;
+  if (!RS.skills.length) $("rsSkillEmpty").innerHTML = '这个工作区还没有 skill。<br>在 Client 运行 <code>/sync upload &lt;名字&gt;</code> 上传。';
+  rsRenderSkills();
+  const next = RS.skills.some(r => r.path === path) ? path : RS.skills[0]?.path || "";
+  if (next) await rsSelectSkill(next, { force: true }); else { RS.path = ""; RS.resource = null; rsShowSkill(false); }
+  $("rsRestore").disabled = !rev;
 }
-async function rsResource() {
-  RS.dirty = false; RS.resource = null; RS.file = null; $("rsText").value = "";
-  rsOptions("rsFile", []);
-  const path = $("rsResource").value;
-  if (!path) return;
+function rsRenderSkills() {
+  const list = $("rsSkillList"); list.replaceChildren();
+  for (const item of RS.skills) {
+    const button = document.createElement("button"); button.type = "button"; button.className = "skill-item";
+    button.setAttribute("aria-pressed", String(item.path === RS.path));
+    const title = document.createElement("b"); title.textContent = item.path.split("/").at(-1);
+    const path = document.createElement("small"); path.textContent = item.path;
+    button.append(title, path); button.onclick = rsHandle(() => rsSelectSkill(item.path)); list.append(button);
+  }
+}
+async function rsSelectSkill(path, { force = false } = {}) {
+  if (RS.path === path && !force) return;
+  if (RS.path !== path && !rsLeave()) return;
+  RS.path = path; RS.dirty = false;
   const data = await api(rsUrl({ revision: String(RS.snapshot.revision), path }));
-  RS.resource = data.resource;
-  $("rsInfo").textContent = RS.resource.kind + " · " + RS.resource.files.length + " 文件 · r" + data.revision +
-    (RS.resource.kind === "hooks" ? " · Client 应用后会按既有机制确认 hooks 信任" : "");
-  rsFiles();
+  RS.resource = data.resource; RS.file = null; RS.filePath = "";
+  $("rsDirtyMark").textContent = "";
+  $("rsSkillName").textContent = rsSkillName(RS.resource);
+  $("rsSkillPath").textContent = path;
+  rsShowSkill(!!RS.resource); rsRenderSkills(); rsFiles();
+  if (RS.resource?.files.length) await rsSelectFile(RS.resource.files.some(f => f.path === path + "/SKILL.md") ? path + "/SKILL.md" : RS.resource.files[0].path);
+  say("rsMsg", "");
 }
-function rsFiles(keep = "") {
-  rsOptions("rsFile", (RS.resource?.files || []).map(f => [f.path, f.path + " (" + bytes(f.bytes) + ")"]));
-  if (RS.resource?.files.some(f => f.path === keep)) $("rsFile").value = keep;
-  rsFile();
+function rsFiles() {
+  const list = $("rsFileList"); list.replaceChildren();
+  for (const file of RS.resource?.files || []) {
+    const button = document.createElement("button"); button.type = "button"; button.className = "skill-file";
+    const rel = file.path.slice(RS.resource.path.length + 1);
+    button.textContent = rel; button.title = rel; button.setAttribute("aria-current", String(file.path === RS.filePath));
+    button.onclick = rsHandle(async () => { if (RS.dirty) rsCapture(); await rsSelectFile(file.path); }); list.append(button);
+  }
 }
 function rsCapture() {
   if (!RS.file || !RS.editorDirty || $("rsText").disabled) return;
   RS.file.data = rsEncode($("rsText").value); delete RS.file.sha256;
   RS.file.bytes = new TextEncoder().encode($("rsText").value).length;
   RS.file.executable = $("rsExecutable").checked;
+  $("rsFileSize").textContent = bytes(RS.file.bytes);
   RS.editorDirty = false;
 }
-function rsFile() {
-  RS.editorDirty = false;
-  RS.file = RS.resource?.files.find(f => f.path === $("rsFile").value);
-  $("rsText").disabled = !RS.file; $("rsExecutable").disabled = !RS.file;
+async function rsSelectFile(path) {
+  if (RS.dirty) rsCapture();
+  RS.filePath = path; RS.file = RS.resource?.files.find(f => f.path === path);
+  RS.editorDirty = false; $("rsText").disabled = !RS.file;
+  $("rsDirtyMark").textContent = RS.dirty ? "未保存" : "";
   $("rsText").value = ""; $("rsExecutable").checked = !!RS.file?.executable;
-  if (!RS.file) return;
-  try {
+  $("rsExecutableWrap").hidden = !RS.file; $("rsFileSize").hidden = !RS.file;
+  $("rsFileName").textContent = RS.file ? path.slice(RS.resource.path.length + 1) : "选择一个文件";
+  $("rsFileSize").textContent = RS.file ? bytes(RS.file.bytes) : "";
+  if (RS.file) try {
     const text = rsDecode(RS.file.data);
     if (text.includes("\0")) throw new Error("binary");
     $("rsText").value = text;
   } catch {
-    $("rsText").value = "该文件为二进制或使用其他文本编码。Client 拉取会保留原始字节。";
-    $("rsText").disabled = true; $("rsExecutable").disabled = true;
+    $("rsText").value = "此文件为二进制或非 UTF-8 编码。内容可通过 Client 同步，网页编辑器无法显示。";
+    $("rsText").disabled = true;
   }
+  $("rsRemove").disabled = !RS.file || RS.file.path === RS.resource.path + "/SKILL.md";
+  rsFiles();
 }
 async function rsCommit(change) {
   const q = new URLSearchParams({ user: RS.loaded.user, base: String(RS.head), operation: crypto.randomUUID().replaceAll("-", "") });
-  const result = await api("resources/" + RS.loaded.project + "?" + q, "POST", change);
-  RS.dirty = false;
-  await rsHistory(); say("rsMsg", "已保存 r" + result.revision + "。Client 用 /sync pull 拉取；历史版本可恢复。");
+  await api("resources/" + RS.loaded.project + "?" + q, "POST", change);
+  RS.dirty = false; $("rsRevision").value = "";
+  await rsHistory();
+  if (RS.skills.some(r => r.path === RS.path)) await rsSelectSkill(RS.path);
+  say("rsMsg", "已保存。Client 用 /sync pull 拉取最新内容。");
 }
 let rsBusy = false;
 function rsHandle(fn) { return async () => {
   if (rsBusy) return;
-  rsBusy = true; document.querySelector('[data-view="resources"]').inert = true;
-  try { await fn(); } catch (e) { say("rsMsg", e.message + "。当前草稿已保留。", false); }
-  finally { rsBusy = false; document.querySelector('[data-view="resources"]').inert = false; }
+  rsBusy = true; document.querySelector('[data-view="skills"]').inert = true;
+  try { await fn(); } catch (e) { say("rsMsg", e.message + " 当前草稿已保留。", false); }
+  finally { rsBusy = false; document.querySelector('[data-view="skills"]').inert = false; }
 }; }
 function rsSwitch(id, fn) { return rsHandle(async () => {
   const select = $(id), next = select.value;
@@ -846,38 +962,37 @@ $("rsRefresh").onclick = rsHandle(loadResources);
 $("rsAccount").onchange = rsSwitch("rsAccount", () => rsProjects());
 $("rsProject").onchange = rsSwitch("rsProject", rsHistory);
 $("rsRevision").onchange = rsSwitch("rsRevision", rsSnapshot);
-$("rsResource").onchange = rsSwitch("rsResource", rsResource);
-$("rsFile").onchange = () => { if (RS.dirty) rsCapture(); rsFile(); };
-$("rsText").oninput = $("rsExecutable").onchange = () => { RS.dirty = true; RS.editorDirty = true; };
+$("rsText").oninput = $("rsExecutable").onchange = () => { RS.dirty = true; RS.editorDirty = true; $("rsDirtyMark").textContent = "未保存"; };
 $("rsAdd").onclick = rsHandle(async () => {
-  if (RS.resource?.kind !== "skill") throw new Error("只有 skill 目录可以添加文件");
-  rsCapture();
+  if (!RS.resource) return;
+  if (RS.dirty) rsCapture();
   const rel = prompt("文件相对 skill 目录的路径，例如 references/example.md 或 scripts/check.py");
   if (!rel) return;
-  const path = RS.resource.path + "/" + rel;
+  const path = RS.resource.path + "/" + rel.replaceAll("\\", "/");
   if (RS.resource.files.some(f => f.path === path)) throw new Error("文件已存在");
-  RS.resource.files.push({ path, data: "", executable: false, bytes: 0 }); RS.dirty = true; rsFiles(path);
+  RS.resource.files.push({ path, data: rsEncode(""), executable: false, bytes: 0 }); RS.dirty = true; await rsSelectFile(path);
+  $("rsDirtyMark").textContent = "未保存";
 });
 $("rsRemove").onclick = rsHandle(async () => {
-  if (!RS.file) return;
-  if (RS.resource.kind !== "skill" || RS.file.path === RS.resource.path + "/SKILL.md") throw new Error("可使用删除资源移除整个资源");
-  if (!confirm("删除 " + RS.file.path + "？保存后生成新版本。")) return;
-  RS.resource.files = RS.resource.files.filter(f => f !== RS.file); RS.dirty = true; rsFiles();
+  if (!RS.file || RS.file.path === RS.resource.path + "/SKILL.md") return;
+  if (!confirm("从此 Skill 删除 " + RS.filePath.slice(RS.resource.path.length + 1) + "？保存后可从历史恢复。")) return;
+  RS.resource.files = RS.resource.files.filter(f => f !== RS.file); RS.dirty = true;
+  await rsSelectFile(RS.resource.files[0]?.path || ""); $("rsDirtyMark").textContent = "未保存";
 });
 $("rsSave").onclick = rsHandle(async () => {
   if (!RS.resource) return;
-  rsCapture();
-  if (!confirm("保存整个资源 " + RS.resource.path + " 为新版本？")) return;
+  rsCapture(); if (!RS.dirty) return say("rsMsg", "没有待保存的修改。");
+  if (!confirm("保存对 Skill 的修改？保存后工作电脑可通过 /sync pull 拉取。")) return;
   await rsCommit({ put: [RS.resource] });
 });
 $("rsRestore").onclick = rsHandle(async () => {
-  if (!RS.resource) return;
-  if (RS.dirty) throw new Error("请先保存修改或重新选择历史资源");
-  if (!confirm("将 r" + RS.snapshot.revision + " 的 " + RS.resource.path + " 恢复为新版本？")) return;
+  if (!RS.resource || !$("rsRevision").value) return;
+  if (RS.dirty) throw new Error("请先保存或放弃当前修改，再恢复历史内容。");
+  if (!confirm("把当前查看的历史 Skill 内容恢复为最新内容？原有历史仍会保留。")) return;
   await rsCommit({ put: [RS.resource] });
 });
 $("rsDelete").onclick = rsHandle(async () => {
-  if (!RS.resource || !confirm("从当前 Server 项目删除 " + RS.resource.path + "？历史版本保留。")) return;
+  if (!RS.resource || !confirm("删除当前 Skill？Server 历史仍保留，Client 端已有文件不会被自动删除。")) return;
   await rsCommit({ delete: [RS.resource.path] });
 });
 

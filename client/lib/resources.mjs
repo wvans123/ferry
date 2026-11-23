@@ -100,20 +100,13 @@ export function collectResource(root, path, source = null) {
 
 export function discoverResources(root) {
 	const result = [];
-	for (const name of ["AGENTS.md", "CLAUDE.md", ".ferry/hooks.json"]) {
-		if (existsSync(join(root, name))) result.push({ path: name, source: null, label: name });
-	}
 	for (const prefix of [".ferry", ".claude"]) {
-		for (const type of ["skills", "agents"]) {
-			const dir = join(root, prefix, type);
-			if (!existsSync(dir)) continue;
-			checkedFile(root, `${prefix}/${type}`);
-			for (const name of readdirSync(dir).sort()) {
-				const path = `${prefix}/${type}/${name}`;
-				if ((type === "skills" && existsSync(join(root, path, "SKILL.md"))) || (type === "agents" && name.endsWith(".md"))) {
-					result.push({ path, source: null, label: path });
-				}
-			}
+		const dir = join(root, prefix, "skills");
+		if (!existsSync(dir)) continue;
+		checkedFile(root, `${prefix}/skills`);
+		for (const name of readdirSync(dir).sort()) {
+			const path = `${prefix}/skills/${name}`;
+			if (existsSync(join(root, path, "SKILL.md"))) result.push({ path, source: null, label: path });
 		}
 	}
 	const user = join(FERRY_HOME, "skills");
@@ -136,11 +129,12 @@ export function selectResource(root, selector) {
 		resourceKind(path);
 		return { path, source, label: selector };
 	}
-	// Explicit nested rule files are accepted without scanning the whole repository.
 	const path = selector.replaceAll("\\", "/").replace(/^\.\//, "");
-	resourceKind(path);
-	checkedFile(root, path);
-	return { path, source: null, label: path };
+	if (resourceKind(path) === "skill") {
+		checkedFile(root, path);
+		if (existsSync(join(root, path, "SKILL.md"))) return { path, source: null, label: path };
+	}
+	throw new Error("Only skills can be synced. Choose a skill directory containing SKILL.md.");
 }
 
 export function changes(local, remote) {
@@ -376,7 +370,7 @@ export function createResources(cfg) {
 				const head = await client.api(projectPath, undefined, signal);
 				const selected = action === "pull" && revision !== undefined
 					? await client.api(`${projectPath}?revision=${revision}`, undefined, signal) : head;
-				if (action === "status") return { project: state.project, revision: head.revision, resources: head.resources.map((r) => {
+				if (action === "status") return { project: state.project, revision: head.revision, resources: head.resources.filter((r) => r.kind === "skill").map((r) => {
 					const local = localResource(root, r.path);
 					return { path: r.path, local: local?.hash ?? null, server: r.hash, baseline: state.bases[r.path] ?? null,
 						changes: changes(local, r) };
@@ -385,12 +379,12 @@ export function createResources(cfg) {
 				let choices;
 				if (action === "upload") choices = selectors.map((s) => selectResource(root, s));
 				else choices = selectors.map((s) => {
-					const matches = selected.resources.filter((r) => r.path === s || basename(r.path) === s || basename(r.path, ".md") === s);
+					const matches = selected.resources.filter((r) => r.kind === "skill" && (r.path === s || basename(r.path) === s));
 					if (matches.length !== 1) throw new Error(`Choose an unambiguous Server resource path for ${s}.`);
 					return { path: matches[0].path, label: matches[0].path };
 				});
 				if (!choices.length) {
-					const available = action === "upload" ? discoverResources(root) : selected.resources.map((r) => ({ path: r.path, label: r.path }));
+					const available = action === "upload" ? discoverResources(root) : selected.resources.filter((r) => r.kind === "skill").map((r) => ({ path: r.path, label: r.path }));
 					if (!available.length) return { message: "没有可选择的资源。", resources: [] };
 					if (!ctx.hasUI) return { choose: available.map((r) => r.label) };
 					const pick = await ctx.ui.select("选择资源（可再次执行命令同步其他资源）", available.map((r) => r.label));
@@ -442,8 +436,7 @@ export function createResources(cfg) {
 					`${bytes} 文件字节；单个上传请求体最多 ${chunkSize(cfg.chunkBytes)} 字节\n` +
 					(skipped.length ? `排除文件\n${skipped.join("\n")}\n` : "") +
 					(choices.some((r) => r.source) ? `外部 skill 来源\n${choices.filter((r) => r.source).map((r) => `${r.source} → ${r.path}`).join("\n")}\n` : "") +
-					(conflicts.length ? `需确认覆盖或删除\n${conflicts.join("\n")}\n` : "") +
-					(choices.some((r) => r.path === ".ferry/hooks.json") ? "hooks 拉取后会按现有机制重新确认信任。\n" : "");
+					(conflicts.length ? `需确认覆盖或删除\n${conflicts.join("\n")}\n` : "");
 				if (!await review(ctx, text, conflicts.length ? "确认覆盖或删除" : "确认同步", diffs.join("\n\n"))) return { cancelled: true };
 				// No file may change between the preview and the write, even while the approval is open.
 				for (let i = 0; i < choices.length; i++) {
@@ -468,8 +461,8 @@ export function createResources(cfg) {
 			} finally { rmSync(lock, { recursive: true, force: true }); }
 		}
 		pi.registerTool({
-			name: "project_resources", label: "Project resource sync",
-			description: "List, upload or pull selected project skills (complete folders), AGENTS.md/CLAUDE.md, agent definitions and hooks via Ferry. " +
+			name: "project_resources", label: "Skill sync",
+			description: "List, upload or pull selected project skills (complete folders) via Ferry. Only skills containing SKILL.md are supported. " +
 				"Use only when the user asks to sync these resources. First list to identify the requested skill; use its exact selector when names are ambiguous. " +
 				"Uploads use bounded parts and show the user a confirmation. Tool results contain file metadata, never script or reference file bodies. " +
 				"user:name uploads a user skill into the Server project's .ferry/skills/name. Pull always writes inside the local project. " +
@@ -484,7 +477,7 @@ export function createResources(cfg) {
 			},
 		});
 		pi.registerCommand("sync", {
-			description: "Sync selected project skills, rules, agents and hooks with your Ferry account. /sync upload <skill name or path>; /sync pull; /sync status; /sync history; /sync bind",
+			description: "Sync selected skills with your Ferry account. /sync upload <skill name or path>; /sync pull; /sync status; /sync history; /sync bind",
 			handler: async (args, ctx) => {
 				try {
 					const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(String(args ?? "").trim());

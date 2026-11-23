@@ -166,7 +166,6 @@ def test_real_node_client_upload_admin_edit_pull_and_history(tmp_path, monkeypat
     (skill / "references/data.bin").write_bytes(bytes(range(256)) * 1600)
     (skill / "references/\ue000.md").write_text("BMP path", encoding="utf-8")
     (skill / "references/\U00010000.md").write_text("Astral path", encoding="utf-8")
-    (root / ".ferry/hooks.json").write_text('{"onDone":[{"run":"echo done"}]}', encoding="utf-8")
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -188,7 +187,7 @@ const c = createResourceClient({server, token:'token-a', chunkBytes:90000});
 const path = '.ferry/skills/research';
 if (mode === 'upload') {
   const p = await c.api('projects', {name:'互通项目'});
-  const resources = [collectResource(root,path).resource, collectResource(root,'.ferry/hooks.json').resource];
+  const resources = [collectResource(root,path).resource];
   const result = await c.upload(p.id,0,resources);
   console.log(JSON.stringify({...result, project:p.id, hash:resources[0].hash}));
 } else {
