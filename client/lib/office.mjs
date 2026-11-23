@@ -2,7 +2,7 @@
 // documents as tracked changes (wordedit.mjs) and Excel cells; create Word and Excel files. Works on the files
 // themselves, so nothing needs to be installed and no window on the screen is touched. A .docx/.xlsx/.pptx is a zip of XML files.
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, posix, relative, resolve } from "node:path";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { Type } from "typebox";
 import { wrapExternal } from "./external.mjs";
@@ -318,8 +318,8 @@ function pptxChartText(z, slidePath, rId) {
 	const relsXml = z.text(slidePath.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels");
 	const rel = [...relsXml.matchAll(/<Relationship\b([^>]*)\/?>/g)].find((m) => attr(m[1], "Id") === rId);
 	if (!rel) return "";
-	const target = attr(rel[1], "Target") ?? "";
-	const chartPath = target.startsWith("/") ? target.slice(1) : resolve("/ppt/slides", target).slice(1);
+	const target = (attr(rel[1], "Target") ?? "").replace(/\\/g, "/");
+	const chartPath = target.startsWith("/") ? target.slice(1) : posix.resolve("/ppt/slides", target).slice(1);
 	const xml = z.text(chartPath);
 	if (!xml) return "";
 	const titleXml = /<c:title>([\s\S]*?)<\/c:title>/.exec(xml)?.[1] ?? "";
