@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { convertBatch, createDocx, createOffice, createXlsx, editDocx, editXlsx, readDocx, readOffice, readPdf, readXlsx } from "../lib/office.mjs";
+import { convertBatch, createDocx, createOffice, createXlsx, editDocx, editPptx, editXlsx, readDocx, readOffice, readPdf, readPptx, readXlsx } from "../lib/office.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "ferry-office-"));
 
@@ -188,4 +188,49 @@ test("office_read outline/section/pages and office_edit preview avoid full-file 
 	}, undefined, undefined, { cwd: dir })).content[0].text;
 	assert.match(edited, /Preview:/);
 	assert.match(edited, /\{-every 10 ms-\}\{\+every 20 ms\+\}/);
+});
+
+test("general Office: PPTX tables/charts/in-place edit, Word headers/footers, and offset paging", async () => {
+	const { strToU8, zipSync } = await import("fflate");
+	// Build a minimal .pptx with 1 slide holding split-run text, a 2x2 table, and a linked chart
+	const pptx = join(dir, "deck.pptx");
+	const zfiles = {
+		"[Content_Types].xml": "<Types/>",
+		"ppt/presentation.xml": "<p:presentation/>",
+		"ppt/slides/slide1.xml": [
+			"<p:sld><p:cSld><p:spTree>",
+			'<p:sp><p:txBody><a:p><a:r><a:rPr b="1"/><a:t>Q2 </a:t></a:r><a:r><a:rPr b="1"/><a:t>Review</a:t></a:r></a:p></p:txBody></p:sp>',
+			"<p:graphicFrame><a:graphic><a:graphicData><a:tbl>",
+			"<a:tr><a:tc><a:txBody><a:p><a:r><a:t>Metric</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Value</a:t></a:r></a:p></a:txBody></a:tc></a:tr>",
+			"<a:tr><a:tc><a:txBody><a:p><a:r><a:t>Margin</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>42%</a:t></a:r></a:p></a:txBody></a:tc></a:tr>",
+			"</a:tbl></a:graphicData></a:graphic></p:graphicFrame>",
+			'<p:graphicFrame><a:graphic><a:graphicData><c:chart r:id="rId2"/></a:graphicData></a:graphic></p:graphicFrame>',
+			"</p:spTree></p:cSld></p:sld>",
+		].join(""),
+		"ppt/slides/_rels/slide1.xml.rels": '<Relationships><Relationship Id="rId2" Target="../charts/chart1.xml"/></Relationships>',
+		"ppt/charts/chart1.xml": [
+			"<c:chartSpace><c:chart><c:title><c:tx><c:rich><a:p><a:r><a:t>Revenue</a:t></a:r></a:p></c:rich></c:tx></c:title>",
+			"<c:plotArea><c:barChart><c:ser><c:tx><c:strRef><c:strCache><c:pt idx=\"0\"><c:v>ARR</c:v></c:pt></c:strCache></c:strRef></c:tx>",
+			"<c:cat><c:strRef><c:strCache><c:pt idx=\"0\"><c:v>H1</c:v></c:pt><c:pt idx=\"1\"><c:v>H2</c:v></c:pt></c:strCache></c:strRef></c:cat>",
+			"<c:val><c:numRef><c:numCache><c:pt idx=\"0\"><c:v>120</c:v></c:pt><c:pt idx=\"1\"><c:v>155</c:v></c:pt></c:numCache></c:numRef></c:val>",
+			"</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>",
+		].join(""),
+	};
+	writeFileSync(pptx, zipSync(Object.fromEntries(Object.entries(zfiles).map(([k, v]) => [k, strToU8(v)]))));
+	const before = readPptx(pptx);
+	assert.match(before, /Q2 Review/);
+	assert.match(before, /\| Metric \| Value \|/);
+	assert.match(before, /\| Margin \| 42% \|/);
+	assert.match(before, /\[Chart: Revenue\]\n  - ARR: H1=120, H2=155/);
+
+	// Edit across split <a:r> runs and table cell in place via office_edit
+	const tools = {};
+	createOffice()({ registerTool: (t) => { tools[t.name] = t; } });
+	await tools.office_edit.execute("3", {
+		path: "deck.pptx",
+		edits: [{ find: "Q2 Review", replace: "Q3 Review", slide: 1 }, { find: "42%", replace: "48%", slide: 1 }],
+	}, undefined, undefined, { cwd: dir });
+	const after = readPptx(pptx);
+	assert.match(after, /Q3 Review/);
+	assert.match(after, /\| Margin \| 48% \|/);
 });

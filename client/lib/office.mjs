@@ -102,7 +102,13 @@ export function readDocx(path, { revisions = "show" } = {}) {
 		return `[comment ${c.id}] ${unesc(attr(c.head, "w:author") ?? "")}${parent !== undefined ? ` (reply to ${parent})` : ""}: ${c.paras.map((p) => paragraphText(p)).join(" ")}`;
 	});
 	let out = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+	const partLines = (rx) => [...new Set(Object.keys(z.files).filter((n) => rx.test(n)).sort().flatMap((n) =>
+		(z.text(n).match(/<w:p[ >][\s\S]*?<\/w:p>/g) ?? []).map((p) => paragraphText(p, show).trim()).filter(Boolean)))];
+	const headers = partLines(/^word\/header\d*\.xml$/);
+	const footers = partLines(/^word\/footer\d*\.xml$/);
+	if (headers.length) out = `[Header] ${headers.join(" | ")}\n\n${out}`;
 	if (tracked && show) out = `(tracked changes: {+inserted+} {-deleted-})\n\n${out}`;
+	if (footers.length) out += `\n\n[Footer] ${footers.join(" | ")}`;
 	if (comments.length) out += `\n\nComments:\n${comments.join("\n")}`;
 	return out;
 }
@@ -308,14 +314,64 @@ export function filterWordText(text, { outline = false, section } = {}) {
 	throw new Error(`Section "${section}" not found.${avail ? ` Available headings: ${avail}` : ""}`);
 }
 
+function pptxChartText(z, slidePath, rId) {
+	const relsXml = z.text(slidePath.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels");
+	const rel = [...relsXml.matchAll(/<Relationship\b([^>]*)\/?>/g)].find((m) => attr(m[1], "Id") === rId);
+	if (!rel) return "";
+	const target = attr(rel[1], "Target") ?? "";
+	const chartPath = target.startsWith("/") ? target.slice(1) : resolve("/ppt/slides", target).slice(1);
+	const xml = z.text(chartPath);
+	if (!xml) return "";
+	const titleXml = /<c:title>([\s\S]*?)<\/c:title>/.exec(xml)?.[1] ?? "";
+	const title = [...titleXml.matchAll(/<(?:a:t|c:v)>([\s\S]*?)<\/(?:a:t|c:v)>/g)].map((m) => unesc(m[1]).trim()).filter(Boolean).join(" ");
+	const pts = (block) => [...(block ?? "").matchAll(/<c:pt\b[^>]*>[\s\S]*?<c:v>([\s\S]*?)<\/c:v>[\s\S]*?<\/c:pt>/g)].map((m) => unesc(m[1]).trim());
+	const series = [...xml.matchAll(/<c:ser>([\s\S]*?)<\/c:ser>/g)].map((m, idx) => {
+		const s = m[1];
+		const tx = /<c:tx>([\s\S]*?)<\/c:tx>/.exec(s)?.[1] ?? "";
+		const name = pts(tx)[0] ?? ([...tx.matchAll(/<c:v>([\s\S]*?)<\/c:v>/g)].map((v) => unesc(v[1]).trim())[0] || `Series ${idx + 1}`);
+		const cats = pts(/<c:(?:cat|xVal)>([\s\S]*?)<\/c:(?:cat|xVal)>/.exec(s)?.[1]);
+		const vals = pts(/<c:(?:val|yVal)>([\s\S]*?)<\/c:(?:val|yVal)>/.exec(s)?.[1]);
+		const pairs = vals.slice(0, 24).map((v, i) => (cats[i] ? `${cats[i]}=${v}` : v)).join(", ");
+		return pairs ? `  - ${name}: ${pairs}${vals.length > 24 ? ", ..." : ""}` : "";
+	}).filter(Boolean);
+	if (!title && !series.length) return "";
+	return [`[Chart${title ? `: ${title}` : ""}]`, ...series].join("\n");
+}
+
+function slideBlocks(z, slidePath) {
+	const xml = z.text(slidePath);
+	const out = [];
+	const aText = (s) => [...s.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map((t) => unesc(t[1])).join("");
+	const blocks = xml.match(/<a:tbl\b[\s\S]*?<\/a:tbl>|<c:chart\b[^>]*\/?>|<a:p(?:\s[^>]*[^/])?>[\s\S]*?<\/a:p>/g) ?? [];
+	for (const b of blocks) {
+		if (b.startsWith("<a:tbl")) {
+			const rows = b.match(/<a:tr\b[\s\S]*?<\/a:tr>/g) ?? [];
+			rows.forEach((r, ri) => {
+				const cells = (r.match(/<a:tc\b[\s\S]*?<\/a:tc>/g) ?? []).map((c) =>
+					(c.match(/<a:p(?:\s[^>]*[^/])?>[\s\S]*?<\/a:p>/g) ?? []).map(aText).filter(Boolean).join(" / ").replace(/\|/g, "\\|"));
+				out.push(`| ${cells.join(" | ")} |`);
+				if (ri === 0) out.push(`|${cells.map(() => " --- ").join("|")}|`);
+			});
+		} else if (b.startsWith("<c:chart")) {
+			const rid = /\br:id="([^"]+)"/.exec(b)?.[1];
+			const ch = rid ? pptxChartText(z, slidePath, rid) : "";
+			if (ch) out.push(ch);
+		} else {
+			const t = aText(b);
+			if (t) out.push(t);
+		}
+	}
+	return out;
+}
+
 export function readPptx(path, { pages, outline = false } = {}) {
 	const z = openZip(path);
 	const slides = Object.keys(z.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
 		.sort((a, b) => +/(\d+)\.xml/.exec(a)[1] - +/(\d+)\.xml/.exec(b)[1]);
 	const parsed = slides.map((n, i) => {
-		const paras = (z.text(n).match(/<a:p>[\s\S]*?<\/a:p>/g) ?? []).map((p) => [...p.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => unesc(t[1])).join("")).filter(Boolean);
+		const paras = slideBlocks(z, n);
 		const notes = z.text(n.replace("slides/slide", "notesSlides/notesSlide"));
-		const noteText = [...notes.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => unesc(t[1])).join(" ").trim();
+		const noteText = [...notes.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map((t) => unesc(t[1])).join(" ").trim();
 		return { num: i + 1, paras, noteText };
 	});
 	if (outline) {
@@ -326,6 +382,92 @@ export function readPptx(path, { pages, outline = false } = {}) {
 	const head = pages ? `${parsed.length} slides (showing ${a}-${b})\n\n` : "";
 	return head + parsed.slice(a - 1, b).map((s) =>
 		`## Slide ${s.num}\n${s.paras.join("\n")}${s.noteText ? `\nNotes: ${s.noteText}` : ""}`).join("\n\n");
+}
+
+/** Edit text inside a PowerPoint .pptx in place, keeping every slide's layout, run styling (<a:rPr>), tables and charts. */
+export function editPptx(path, edits, out = path) {
+	const z = openZip(path);
+	const slideFiles = Object.keys(z.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+		.sort((a, b) => +/(\d+)\.xml/.exec(a)[1] - +/(\d+)\.xml/.exec(b)[1]);
+	const aTag = (s) => `<a:t${/^\s|\s$/.test(s) ? ' xml:space="preserve"' : ""}>${esc(s)}</a:t>`;
+	const replacePara = (pXml, needle, repl) => {
+		const toks = [...pXml.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)];
+		if (!toks.length) return { xml: pXml, count: 0 };
+		const texts = toks.map((m) => unesc(m[1]));
+		const full = texts.join("");
+		if (!full.includes(needle)) return { xml: pXml, count: 0 };
+		let pos = 0;
+		const ranges = texts.map((t, idx) => { const start = pos; pos += t.length; return { idx, start, end: pos, match: toks[idx] }; });
+		const replacements = new Map(); // idx -> new text
+		let searchFrom = 0;
+		let count = 0;
+		const working = [...texts];
+		while (needle.length > 0) {
+			const at = full.indexOf(needle, searchFrom);
+			if (at < 0) break;
+			const end = at + needle.length;
+			const touched = ranges.filter((r) => r.end > at && r.start < end);
+			touched.forEach((r, ti) => {
+				const cur = replacements.has(r.idx) ? replacements.get(r.idx) : working[r.idx];
+				if (touched.length === 1) {
+					const localAt = at - r.start + (cur.length - working[r.idx].length);
+					replacements.set(r.idx, cur.slice(0, localAt) + repl + cur.slice(localAt + needle.length));
+				} else if (ti === 0) {
+					replacements.set(r.idx, working[r.idx].slice(0, at - r.start) + repl);
+				} else if (ti === touched.length - 1) {
+					replacements.set(r.idx, working[r.idx].slice(end - r.start));
+				} else {
+					replacements.set(r.idx, "");
+				}
+			});
+			count++;
+			searchFrom = end;
+		}
+		if (!count) return { xml: pXml, count: 0 };
+		let outXml = "";
+		let last = 0;
+		for (const r of ranges) {
+			outXml += pXml.slice(last, r.match.index);
+			outXml += replacements.has(r.idx) ? aTag(replacements.get(r.idx)) : r.match[0];
+			last = r.match.index + r.match[0].length;
+		}
+		outXml += pXml.slice(last);
+		return { xml: outXml, count };
+	};
+	const results = [];
+	for (const e of edits) {
+		const want = String(e.find ?? "");
+		if (!want) throw new Error("PowerPoint edit: give non-empty find text");
+		const repl = String(e.replace ?? "");
+		const targets = e.slide !== undefined
+			? (() => {
+				const s = slideFiles[Number(e.slide) - 1];
+				if (!s) throw new Error(`No slide ${e.slide} (deck has ${slideFiles.length} slide(s))`);
+				const note = s.replace("slides/slide", "notesSlides/notesSlide");
+				return z.files[note] ? [s, note] : [s];
+			})()
+			: [...slideFiles, ...slideFiles.map((s) => s.replace("slides/slide", "notesSlides/notesSlide")).filter((n) => z.files[n])];
+		const hits = [];
+		for (const file of targets) {
+			const xml = z.text(file);
+			let fileCount = 0;
+			const nextXml = xml.replace(/<a:p(?:\s[^>]*[^/])?>[\s\S]*?<\/a:p>/g, (p) => {
+				const r = replacePara(p, want, repl);
+				fileCount += r.count;
+				return r.xml;
+			});
+			if (fileCount) hits.push({ file, nextXml, fileCount });
+		}
+		const total = hits.reduce((s, h) => s + h.fileCount, 0);
+		if (!total) throw new Error(`Not found in PowerPoint: "${want.slice(0, 80)}"`);
+		if (total > 1 && !e.all) {
+			throw new Error(`"${want.slice(0, 80)}" appears ${total} times; pass slide: N or all: true`);
+		}
+		for (const h of hits) z.put(h.file, h.nextXml);
+		results.push({ find: want, replaced: total });
+	}
+	writeFileSync(out, zipSync(z.files));
+	return results;
 }
 
 export async function readPdf(path, pages, { outline = false } = {}) {
@@ -922,7 +1064,19 @@ export function createXlsx(path, sheets) {
 	};
 	names.forEach((n, i) => {
 		const rows = sheets[n] ?? [];
-		files[`xl/worksheets/sheet${i + 1}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((r, ri) =>
+		const widths = [];
+		for (const r of rows) {
+			(r ?? []).forEach((v, ci) => {
+				if (v === null || v === undefined) return;
+				const s = String(v).startsWith("=") ? "1234567890" : String(v);
+				const len = [...s].reduce((w, ch) => w + (ch.codePointAt(0) > 127 ? 2 : 1), 0);
+				widths[ci] = Math.max(widths[ci] ?? 10, Math.min(48, len + 3));
+			});
+		}
+		const cols = widths.length
+			? `<cols>${widths.map((w, ci) => `<col min="${ci + 1}" max="${ci + 1}" width="${w ?? 12}" customWidth="1"/>`).join("")}</cols>`
+			: "";
+		files[`xl/worksheets/sheet${i + 1}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>${rows.map((r, ri) =>
 			`<row r="${ri + 1}">${(r ?? []).map((v, ci) => cell(v, `${colName(ci + 1)}${ri + 1}`)).join("")}</row>`).join("")}</sheetData></worksheet>`;
 	});
 	writeFileSync(path, zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)]))));
@@ -930,9 +1084,14 @@ export function createXlsx(path, sheets) {
 
 // ---------- tools ----------
 
-const cut = (s) => (s.length > MAX_OUT
-	? `${s.slice(0, MAX_OUT)}\n...(cut at ${MAX_OUT / 1000}k of ${Math.round(s.length / 1000)}k characters: use outline: true to inspect structure, then read a section, sheet/range, or pages)`
-	: s);
+const cut = (s, offset = 0) => {
+	const start = Math.max(0, Math.floor(Number(offset) || 0));
+	const part = start ? s.slice(start) : s;
+	if (part.length <= MAX_OUT) return start ? `(from character ${start.toLocaleString()} of ${s.length.toLocaleString()})\n\n${part}` : part;
+	const next = start + MAX_OUT;
+	return `${start ? `(from character ${start.toLocaleString()} of ${s.length.toLocaleString()})\n\n` : ""}${part.slice(0, MAX_OUT)}\n` +
+		`...(cut at ${next.toLocaleString()} of ${s.length.toLocaleString()} characters: pass offset: ${next} for the next part, or use outline: true, section, sheet/range, or pages)`;
+};
 
 /** Compact preview of lines changed in a Word document so the agent need not re-read the whole file to verify. */
 function docxChangePreview(path, edits) {
@@ -976,6 +1135,7 @@ export function createOffice(cfg = {}) {
 				range: Type.Optional(Type.String({ description: "Excel: e.g. A1:H50" })),
 				formulas: Type.Optional(Type.Boolean({ description: "Excel: show formulas instead of values" })),
 				pages: Type.Optional(Type.String({ description: "PDF pages or PowerPoint slides: e.g. 5 or 3-7" })),
+				offset: Type.Optional(Type.Number({ description: "Character offset to continue reading past the 60k limit" })),
 				revisions: Type.Optional(Type.String({ description: "Word: show (default, marks tracked changes) or accepted (as if all were accepted)" })),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false },
@@ -993,30 +1153,29 @@ export function createOffice(cfg = {}) {
 						"out (a folder for the text files, e.g. out: \"office-text\"). Each file becomes a .txt there and you get a summary back.");
 				}
 				const text = await readOffice(path, p);
-				return { content: [{ type: "text", text: wrapExternal(`file:${path}`, cut(text)) }], details: undefined };
+				return { content: [{ type: "text", text: wrapExternal(`file:${path}`, cut(text, p.offset)) }], details: undefined };
 			},
 		});
 
 		pi.registerTool({
 			name: "office_edit",
 			label: "Edit Office",
-			description: "Change a Word or Excel file in place, keeping its formatting. Word, by default as tracked changes (like " +
-				"a 3GPP change request: the reader sees what was deleted and inserted). Each edit is one of: {find, replace} " +
-				"replace text (inside one paragraph, unique unless all: true); {insert, after|before, style?} new paragraph(s) " +
-				"next to the paragraph holding that text, formatted like it; {deleteParagraph, through?} delete that paragraph " +
-				"(through another one); {fill, label|table+row+col|after} write into an empty table cell (label = the text of " +
-				"the cell to its left, e.g. \"Title:\") or the next empty paragraph after a text; {comment, find} or " +
-				"{comment, replyTo} a comment on text, or a reply to comment N; {accept|reject: \"all\" or an author} resolve " +
-				"tracked changes. Any edit may set track for itself. The result is checked before it is saved; on a problem " +
-				"nothing is saved. Excel: set cells (numbers, text, or formulas starting with =). Read the file with office_read " +
-				"first. To make a new file use office_create.",
-			promptSnippet: "Change Word as tracked changes (text, paragraphs, empty cells, comments, accept/reject), or Excel cells",
+			description: "Change a Word, Excel or PowerPoint file in place, keeping its formatting, layouts and charts. Word: " +
+				"by default as tracked changes (set track: false for normal silent edits on general documents/templates). Each " +
+				"Word edit is one of: {find, replace} replace text (inside one paragraph, unique unless all: true); {insert, " +
+				"after|before, style?} new paragraph(s) next to that paragraph; {deleteParagraph, through?} delete paragraph(s); " +
+				"{fill, label|table+row+col|after} write into an empty table cell or paragraph; {comment, find|replyTo}; " +
+				"{accept|reject: \"all\" or an author}. The XML is validated before saving. Excel: set cells (numbers, text, or " +
+				"formulas starting with =). PowerPoint (.pptx): edits [{find, replace, slide?, all?}] updates text on slides and " +
+				"speaker notes while keeping run styles and template design. Read with office_read first.",
+			promptSnippet: "Edit Word (tracked or clean), Excel cells/formulas, or PowerPoint slide text in place",
 			parameters: Type.Object({
 				path: Type.String(),
 				edits: Type.Optional(Type.Array(Type.Object({
 					find: Type.Optional(Type.String({ description: "Text to replace, or to comment on" })),
-					replace: Type.Optional(Type.String({ description: "Empty to delete" })),
+					replace: Type.Optional(Type.String({ description: "Replacement text (empty to delete)" })),
 					all: Type.Optional(Type.Boolean()),
+					slide: Type.Optional(Type.Number({ description: "PowerPoint: 1-based slide number to restrict this edit to" })),
 					insert: Type.Optional(Type.String({ description: "New paragraph text; one paragraph per line" })),
 					after: Type.Optional(Type.String({ description: "insert / fill: text of the paragraph to go after" })),
 					before: Type.Optional(Type.String({ description: "insert: text of the paragraph to go before" })),
@@ -1059,7 +1218,13 @@ export function createOffice(cfg = {}) {
 					const n = editXlsx(path, p.cells, { sheet: p.sheet });
 					return { content: [{ type: "text", text: `${n} cell(s) set in ${path}${p.sheet ? ` (${p.sheet})` : ""}; formulas are recalculated when Excel opens it.` }], details: undefined };
 				}
-				throw new Error("office_edit changes .docx and .xlsx files");
+				if (ext === ".pptx" || ext === ".potx" || ext === ".ppsx") {
+					if (!p.edits?.length) throw new Error("PowerPoint: give edits [{find, replace, slide?, all?}]");
+					const r = editPptx(path, p.edits);
+					const lines = r.map((x) => `"${x.find}": ${x.replaced} replaced`);
+					return { content: [{ type: "text", text: `Changes saved in ${path}\n${lines.join("\n")}` }], details: undefined };
+				}
+				throw new Error("office_edit changes .docx, .xlsx and .pptx files");
 			},
 		});
 

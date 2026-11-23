@@ -306,9 +306,9 @@ web_fetch 只把网页的 HTML 转成文字，读不到靠 JavaScript 生成的�
 
 ### Office 文件
 
-读 Word（含修订痕迹和批注）、Excel、PowerPoint、PDF；按修订方式改 Word，像 change request 那样显示删了什么、加了什么；改 Excel 单元格；从 Markdown 新建 Word、从表格新建 Excel。直接处理文件，不需要装 Office，也不会去操作屏幕上的窗口。
+读 Word（含页眉页脚、修订痕迹和批注）、Excel、PowerPoint（含表格和图表数据）、PDF；按修订或普通静默方式（`track: false`）改 Word；原位改 Excel 单元格与公式、原位替换 PowerPoint 幻灯片和备注文字（保留原有模板版式、字体和图表）；从 Markdown 新建 Word、从表格新建自适应列宽的 Excel。直接处理文件，不需要装 Office，也不会去操作屏幕上的窗口。
 
-- 长文档和大型规范支持按结构精读：先用 `outline: true` 看目录标题、条款号、幻灯片标题或每页摘要，再用 `section: "5.2.1"` 精读 Word 指定章节（含子章节），或用 `pages: "3-7"` 读指定页的 PDF / 幻灯片。
+- 长文档和大型规范支持按结构或偏移精读：先用 `outline: true` 看目录标题、条款号、幻灯片标题或每页摘要，再用 `section: "5.2.1"` 精读 Word 指定章节（含子章节），用 `pages: "3-7"` 读指定页的 PDF / 幻灯片，或用 `offset` 接着读超过 6 万字的大文件。
 - 旧版文件也能读：Word 97-2003 的 .doc 读出文字（保留分段，表格按行列出），.xls 读出单元格的值，.ppt 按页读出文字。
 - 按文件内容判断格式，不看扩展名。扩展名是 .docx、实际是旧版 .doc 或 PDF 的文件，照样能读。
 - 用 IRM（权限管理）或密码加密的文件读不了，agent 会直接告诉你，不会换别的办法反复试。

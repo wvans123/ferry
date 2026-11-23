@@ -28,8 +28,7 @@ Conversation   /new  start a new one          /resume  go back to an earlier one
                /rewind  go back to one of your messages: conversation, files, or both
                /btw <question>  ask a side question, also while the agent works; not added to the conversation
 Work           /goal <objective>  keep working until it is done (/goal pause | resume | clear | budget)
-               /grill [what]  interview you on structure, scope and key choices before building
-               /tasks  background commands and subagents: output, stop
+               /grill [what]  align on structure and choices   /tasks  background commands and subagents
                /loop [5m] <what>  do this every so often while the window is open (/loop stop [n])
                /phone  push this session's console to the phone: watch, steer, pause the goal, new tasks (/phone off)
 Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
@@ -46,7 +45,7 @@ Keys           Shift+Tab   permission mode: ask first > auto-edit > plan > allow
                Shift+Enter  new line      Ctrl+O  show or hide tool output             Ctrl+T  show or hide thinking
                Ctrl+L  pick a model       Ctrl+G  write the message in your editor     Ctrl+X  copy the last answer
                @file  attach a file       !command  run a command yourself (its output goes to the agent)
-While it works  Enter  your message goes in at the next step    Enter again on an empty line  interrupt now (a running command gets 3 s)
+While it works Enter  your message goes in at the next step   Enter on empty line  interrupt now (commands get 3 s)
                Alt+Enter  send it after the agent finishes     Alt+Up  take waiting messages back to edit
 Your own commands: Markdown files in .ferry/commands/ or ${join(FERRY_HOME, "commands")} (docs/CUSTOMIZE.md)`;
 
