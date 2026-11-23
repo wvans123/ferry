@@ -7,8 +7,10 @@ description: Work with Word, Excel, PowerPoint and PDF files - read them (with t
 Tools (they work on the files; nothing is opened on the screen, Office need not be installed):
 - `office_read` - .docx / .xlsx / .pptx / .pdf as text, and the old .doc / .xls / .ppt too. It judges the format by
   the file's content, so a .docx that is really an old .doc (or a PDF) is still read. Word tracked changes show as
-  {+inserted+} {-deleted-}, comments are listed at the end with their anchor [comment N]. Excel: `sheet`, `range`
-  (A1:H50), `formulas: true`. PDF: `pages: "3-7"` for long files.
+  {+inserted+} {-deleted-}, comments are listed at the end with their anchor [comment N].
+  Long files: pass `outline: true` first to get headings/clauses, slide titles, sheet headers or page summaries; then
+  read only what you need with `section: "5.2.1"` (Word clause or heading), `pages: "3-7"` (PDF pages or PowerPoint
+  slides), or `sheet` + `range` (`A1:H50`, `formulas: true` for Excel).
   Many files: `office_read` with `path` = a folder or a glob (`D:/docs/**/*.doc*`) and `out` = a folder. Each file
   becomes a .txt under `out` (same relative path); you get back only a summary (ok / failed / encrypted, failed files
   with reasons). Then grep or read the .txt files you need.
@@ -38,10 +40,9 @@ tracked when tracking is on). If there is a problem, nothing is saved and you ge
 do not work around it with scripts.
 
 How to work:
-1. Read first (`office_read`), then edit. Quote `find` exactly as office_read shows it, without the {+ +} / {- -}
-   marks; it must lie inside one paragraph and be unique (or `all: true`). Prefer whole phrases or sentences.
-2. One `office_edit` call can carry many edits; they apply in order.
-3. After editing, read the changed part again to check it.
+1. Read first (`office_read` — for long specifications or decks, start with `outline: true`, then read the target `section` or `pages`), then edit. Quote `find` exactly as office_read shows it, without the {+ +} / {- -} marks; it must lie inside one paragraph and be unique (or `all: true`). Prefer whole phrases or sentences.
+2. One `office_edit` call can carry many edits; they apply in order and return a preview of the changed lines.
+3. Check the preview `office_edit` returns; if you need surrounding clauses or cover fields, read only that `section` rather than re-reading the entire document.
 4. Keep the original untouched when the user may want to compare: copy it first (`powershell: Copy-Item a.docx a-rev1.docx`
    or `bash: cp`), then edit the copy.
 5. Old binary .doc/.xls/.ppt files: read them with `office_read`. To change one, ask the user to save it as

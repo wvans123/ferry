@@ -88,7 +88,7 @@ Ferry 不自带模板命令。[examples/commands/](../examples/commands/) 里有
 
 ## 技能
 
-技能是一个文件夹，里面有 `SKILL.md`，还可以放参考资料、模板和脚本。平时只有技能的名字和简介进系统提示；模型判断任务对得上时，才去读全文。你也可以用 `/skill:名字` 直接调用。
+技能是一个文件夹，里面有 `SKILL.md`，还可以放参考资料、模板和脚本。平时只有技能的名字和简介进系统提示；模型判断任务对得上时，才去读全文。你也可以用 `/skill:名字` 直接调用。Ferry 自带三个技能：`office`（读写和修订 Office/PDF）、`review`（交付物复核清单）、`grill`（动工前追问对齐结构与范围，也可直接输 `/grill`）；在 `.ferry\skills\` 或个人 `skills\` 放同名文件夹就能覆盖内置版本。
 
 ```markdown
 ---
@@ -105,8 +105,10 @@ description: Write release notes from git history in this team's format. Use whe
 
 ## 子 agent
 
-主 agent 可以用 `task` 工具把活交给子 agent。子 agent 的上下文是全新的，做完只把报告带回来。Ferry 自带两个：
-- `explore`：只读，负责搜索；
+主 agent 可以用 `task` 工具把活交给子 agent。子 agent 的上下文是全新的，做完只把报告带回来。Ferry 自带四个：
+- `explore`：只读，负责搜索和读代码；
+- `research`：负责上网查资料、找原始出处；
+- `review`：只读，对照最初要求检查做好的文档或代码；
 - `general`：和主 agent 用一样的工具。
 
 自己加一个：
@@ -122,7 +124,7 @@ You are a security reviewer. ...
 ```
 
 - `tools` 不写，就用主 agent 的全部工具。
-- `model` 不写，就用主对话的模型；写了服务端提供的模型名（管理页里列的，比如 `deepseek-flash`），这个子 agent 就用它。查资料、整理这类杂活用便宜的模型能省不少钱。服务端要打开"工作电脑可以用 /model 自己挑"。
+- `model` 不写，就用服务端管理页“子 agent 用”里选的模型（没单独选就跟主对话一样）；写了服务端提供的模型名（管理页里列的，比如 `deepseek-flash`），这个子 agent 就用它。查资料、整理这类杂活用便宜快速的模型能省不少钱。按名字指定时服务端要打开"工作电脑可以用 /model 自己挑"。
 - 子 agent 改文件、执行命令同样要过权限，确认框会弹在你的主窗口里。
 - `/help` 的最后列出现有的子 agent。
 

@@ -11,7 +11,7 @@ export const MIN_CHUNK = 8 * 1024;
 export const MAX_TRIES = 3; // retries after the first attempt
 
 /** Statuses of answers that did not come from the Ferry server (no JSON) and are worth sending again. */
-const RETRY_STATUS = new Set([403, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530]);
+const RETRY_STATUS = new Set([403, 413, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530]);
 
 const isJson = (res) => !!res.headers?.get?.("content-type")?.includes("json");
 
@@ -96,7 +96,7 @@ export function createUploader(state, deps, paths = {}) {
 		} finally {
 			if (state.chunk < before && !said) { // once, with the size it ended at
 				said = true;
-				deps.say?.(`The network stopped a request (HTTP 403). Ferry now sends parts of at most ${Math.round(state.chunk / 1024)} KB for the rest of this session. "ferry doctor --upload" finds the right size.`);
+				deps.say?.(`The network stopped a large upload. Ferry now sends parts of at most ${Math.round(state.chunk / 1024)} KB for the rest of this session. "ferry doctor --upload" finds the right size.`);
 			}
 		}
 	}
@@ -145,7 +145,7 @@ export function createUploader(state, deps, paths = {}) {
 				throw new Error(`could not reach the Ferry server (${r.error?.cause?.code ?? r.error?.message}) after ${tries + 1} tries`);
 			}
 			tries++;
-			if (r.res?.status === 403 && body.length > MIN_CHUNK) {
+			if ((r.res?.status === 403 || r.res?.status === 413 || (r.error && body.length >= 64 * 1024)) && body.length > MIN_CHUNK) {
 				const to = shrunk(state.chunk, body.length);
 				if (to < state.chunk) {
 					state.chunk = to;

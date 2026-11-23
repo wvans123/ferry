@@ -1,14 +1,14 @@
 // Pictures in the conversation (screenshots the agent read, images you attached), before they go to the server.
 //
-// A screenshot is easily 1–3 MB of base64: it fills an upload on its own (the 1 MB rule), makes every later request
-// heavy, and costs as much as a long document. So before syncing:
-// - every picture is made smaller once: at most 1568 pixels on its longer side (what Claude and GPT look at anyway)
-//   and about 300 KB, as PNG or JPEG, whichever is smaller (cached, so the same picture always becomes the same bytes);
-// - only the latest few pictures (keepImages, default 4) stay in the conversation; older ones are replaced by a short
-//   note, and the agent reads the file again if it needs to look.
+// A screenshot is easily 1–3 MB of base64: it fills an upload on its own (and trips 100–200 KB company gateways),
+// makes every later request heavy, and costs as much as a long document. So before syncing:
+// - every picture is made smaller once: at most 1280 pixels on its longer side and about 120 KB of base64 (~90 KB image),
+//   as PNG or JPEG, whichever is smaller (cached, so the same picture always becomes the same bytes);
+// - a picture stays in the conversation for at most `maxSteps` assistant replies (default 4) and at most `keepImages`
+//   (default 4) at once; older ones become a short note, and the agent reads the file again if it needs to look.
 const NOTE = "[Ferry: an earlier picture was left out to keep the conversation small. Read the file again if you need to see it.]";
-const MAX_SIDE = 1568;
-const MAX_B64 = 300 * 1024;
+export const MAX_SIDE = 1280;
+export const MAX_B64 = 120 * 1024;
 const cache = new Map(); // original base64 (its first and last 64 chars + length) -> { data, mimeType }
 
 let resizer;
@@ -31,17 +31,23 @@ export async function smaller(b64, mimeType) {
 	const resize = await loadResizer();
 	let out = { data: b64, mimeType };
 	if (resize) {
-		const r = await resize(Buffer.from(b64, "base64"), mimeType, { maxWidth: MAX_SIDE, maxHeight: MAX_SIDE, maxBytes: MAX_B64, jpegQuality: 80 }).catch(() => null);
+		const r = await resize(Buffer.from(b64, "base64"), mimeType, { maxWidth: MAX_SIDE, maxHeight: MAX_SIDE, maxBytes: MAX_B64, jpegQuality: 76 }).catch(() => null);
 		if (r?.data) out = { data: r.data, mimeType: r.mimeType };
 	}
 	cache.set(key, out);
 	return out;
 }
 
-/** Every picture in a request, in order: { get(): {data, mimeType}, set(data, mimeType), drop() }. */
+/** Every picture in a request, in order: { stepsAfter, get(): {data, mimeType}, set(data, mimeType), drop() }. */
 function findPictures(messages) {
 	const found = [];
-	const visit = (arr) => {
+	const after = new Array(messages.length).fill(0);
+	let replies = 0;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		after[i] = replies;
+		if (messages[i]?.role === "assistant") replies++;
+	}
+	const visit = (arr, stepsAfter) => {
 		if (!Array.isArray(arr)) return;
 		for (let i = 0; i < arr.length; i++) {
 			const p = arr[i];
@@ -51,31 +57,34 @@ function findPictures(messages) {
 				const m = /^data:([\w/.+-]+);base64,(.*)$/s.exec(url ?? "");
 				if (!m) continue;
 				found.push({
+					stepsAfter,
 					get: () => ({ mimeType: m[1], data: m[2] }),
 					set: (data, mime) => { arr[i] = { ...p, image_url: { ...(typeof p.image_url === "object" ? p.image_url : {}), url: `data:${mime};base64,${data}` } }; },
 					drop: () => { arr[i] = { type: "text", text: NOTE }; },
 				});
 			} else if (p.type === "image" && p.source?.type === "base64") { // Claude style
 				found.push({
+					stepsAfter,
 					get: () => ({ mimeType: p.source.media_type, data: p.source.data }),
 					set: (data, mime) => { arr[i] = { ...p, source: { ...p.source, media_type: mime, data } }; },
 					drop: () => { arr[i] = { type: "text", text: NOTE }; },
 				});
 			} else if (p.type === "tool_result" && Array.isArray(p.content)) {
-				visit(p.content);
+				visit(p.content, stepsAfter);
 			}
 		}
 	};
-	for (const m of messages) visit(m?.content);
+	for (let i = 0; i < messages.length; i++) visit(messages[i]?.content, after[i]);
 	return found;
 }
 
-/** Make the pictures in these messages smaller and keep only the latest `keep` (changes the messages in place). */
-export async function fitPictures(messages, keep = 4) {
+/** Make the pictures smaller, drop any older than `maxSteps` assistant replies, and keep only the latest `keep`. */
+export async function fitPictures(messages, keep = 4, maxSteps = 4) {
 	const pics = findPictures(messages);
 	const cut = Math.max(0, pics.length - Math.max(0, keep));
+	const ageLimit = Number(maxSteps);
 	for (let i = 0; i < pics.length; i++) {
-		if (i < cut) {
+		if (i < cut || (ageLimit > 0 && pics[i].stepsAfter >= ageLimit)) {
 			pics[i].drop();
 			continue;
 		}

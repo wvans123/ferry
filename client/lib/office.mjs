@@ -235,29 +235,113 @@ export function editXlsx(path, cells, { sheet, out = path } = {}) {
 
 // ---------- PowerPoint and PDF ----------
 
-export function readPptx(path) {
+function parseRange(spec, total) {
+	if (!spec) return [1, total];
+	const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(String(spec).trim());
+	if (!m) return [1, total];
+	const a = Math.max(1, +m[1]);
+	const b = Math.min(total, Math.max(a, +(m[2] ?? m[1])));
+	return [a, b];
+}
+
+/** Heading level and title of a rendered Word line (# Heading, numbered 3GPP clause "5.2.1 Title", or "Annex A..."). */
+function wordHeading(line) {
+	const t = line.trim();
+	if (!t || t.startsWith("|") || t.startsWith("- ")) return null;
+	const md = /^(#{1,6})\s+(.+)$/.exec(t);
+	if (md) {
+		const num = /^(\d+(?:\.\d+)*)\b/.exec(md[2].trim());
+		return { level: md[1].length, title: md[2].trim(), clause: num ? num[1] : "" };
+	}
+	const cl = /^(\d+(?:\.\d+){0,5})\s+(\S.{0,115})$/.exec(t);
+	if (cl && !/[.;:]$/.test(cl[2].trim())) {
+		return { level: Math.min(6, cl[1].split(".").length), title: t, clause: cl[1] };
+	}
+	const ax = /^(Annex\s+[A-Z])\b.{0,110}$/i.exec(t);
+	if (ax) return { level: 1, title: t, clause: ax[1] };
+	return null;
+}
+
+/** Compact table of contents or slice by section/clause for Word text (.docx and .doc). */
+export function filterWordText(text, { outline = false, section } = {}) {
+	if (!outline && !section) return text;
+	const lines = text.split("\n");
+	const heads = [];
+	let tables = 0;
+	let inTable = false;
+	let comments = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const l = lines[i];
+		if (/^\|/.test(l)) { if (!inTable) { tables++; inTable = true; } continue; }
+		inTable = false;
+		if (/^\[comment \d+\]/.test(l)) { comments++; continue; }
+		const h = wordHeading(l);
+		if (h) heads.push({ ...h, line: i });
+	}
+	if (outline) {
+		const meta = [`Length: ${text.length.toLocaleString()} chars, ${lines.length} lines` +
+			(tables ? `, ${tables} table(s)` : "") + (comments ? `, ${comments} comment(s)` : "") +
+			(/^\(tracked changes:/.test(text) ? ", has tracked changes" : "")];
+		if (heads.length) {
+			meta.push("", "Outline (pass section: \"<clause or heading>\" to read one):",
+				...heads.slice(0, 200).map((h) => `${"  ".repeat(h.level - 1)}- ${h.title}`),
+				...(heads.length > 200 ? [`... ${heads.length - 200} more headings`] : []));
+		} else {
+			meta.push("", "Preview (no headings found):", ...lines.filter(Boolean).slice(0, 12));
+		}
+		return meta.join("\n");
+	}
+	const q = String(section).trim().replace(/^#+\s*/, "");
+	const ql = q.toLowerCase();
+	const hit = heads.find((h) => h.clause && h.clause.toLowerCase() === ql)
+		?? heads.find((h) => h.title.toLowerCase() === ql)
+		?? heads.find((h) => h.title.toLowerCase().startsWith(ql))
+		?? heads.find((h) => h.title.toLowerCase().includes(ql));
+	if (hit) {
+		const subClause = hit.clause ? `${hit.clause.toLowerCase()}.` : "";
+		const next = heads.find((h) => h.line > hit.line && !(subClause && h.clause.toLowerCase().startsWith(subClause)) && h.level <= hit.level);
+		return lines.slice(hit.line, next ? next.line : lines.length).join("\n").trim();
+	}
+	const lineIdx = lines.findIndex((l) => l.toLowerCase().includes(ql));
+	if (lineIdx >= 0) return lines.slice(Math.max(0, lineIdx - 2), Math.min(lines.length, lineIdx + 45)).join("\n").trim();
+	const avail = heads.slice(0, 20).map((h) => h.title).join("; ");
+	throw new Error(`Section "${section}" not found.${avail ? ` Available headings: ${avail}` : ""}`);
+}
+
+export function readPptx(path, { pages, outline = false } = {}) {
 	const z = openZip(path);
 	const slides = Object.keys(z.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
 		.sort((a, b) => +/(\d+)\.xml/.exec(a)[1] - +/(\d+)\.xml/.exec(b)[1]);
-	return slides.map((n, i) => {
+	const parsed = slides.map((n, i) => {
 		const paras = (z.text(n).match(/<a:p>[\s\S]*?<\/a:p>/g) ?? []).map((p) => [...p.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => unesc(t[1])).join("")).filter(Boolean);
 		const notes = z.text(n.replace("slides/slide", "notesSlides/notesSlide"));
 		const noteText = [...notes.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((t) => unesc(t[1])).join(" ").trim();
-		return `## Slide ${i + 1}\n${paras.join("\n")}${noteText ? `\nNotes: ${noteText}` : ""}`;
-	}).join("\n\n");
+		return { num: i + 1, paras, noteText };
+	});
+	if (outline) {
+		return [`${parsed.length} slides (pass pages: "1-5" to read specific slides)`, "",
+			...parsed.map((s) => `- Slide ${s.num}: ${(s.paras[0] ?? "(no title)").slice(0, 90)} (${s.paras.join("\n").length} chars${s.noteText ? ", has notes" : ""})`)].join("\n");
+	}
+	const [a, b] = parseRange(pages, parsed.length);
+	const head = pages ? `${parsed.length} slides (showing ${a}-${b})\n\n` : "";
+	return head + parsed.slice(a - 1, b).map((s) =>
+		`## Slide ${s.num}\n${s.paras.join("\n")}${s.noteText ? `\nNotes: ${s.noteText}` : ""}`).join("\n\n");
 }
 
-export async function readPdf(path, pages) {
+export async function readPdf(path, pages, { outline = false } = {}) {
 	const { extractText, getDocumentProxy } = await import("unpdf");
 	// verbosity 0 = errors only: pdf.js prints font warnings ("Warning: TT: undefined function") to the console, which
 	// lands in the TUI input box.
 	const pdf = await getDocumentProxy(new Uint8Array(typeof path === "string" ? readFileSync(path) : path), { verbosity: 0 });
 	const { text } = await extractText(pdf, { mergePages: false });
-	let [a, b] = [1, text.length];
-	if (pages) {
-		const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(String(pages).trim());
-		if (m) [a, b] = [+m[1], +(m[2] ?? m[1])];
+	if (outline) {
+		return [`${text.length} pages (pass pages: "3-7" to read specific pages)`, "",
+			...text.map((t, i) => {
+				const firstLine = (t.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? "(blank)").slice(0, 90);
+				return `- Page ${i + 1}: ${firstLine} (${t.length} chars)`;
+			})].join("\n");
 	}
+	const [a, b] = parseRange(pages, text.length);
 	return `${text.length} pages\n\n${text.slice(a - 1, b).map((t, i) => `--- page ${a + i} ---\n${t}`).join("\n\n")}`;
 }
 
@@ -558,7 +642,7 @@ export function readXls(cfb, { maxRows = 200 } = {}) {
 }
 
 /** Text of a PowerPoint 97-2003 .ppt, slide by slide (found through the file's own index of its records). */
-export function readPpt(cfb) {
+export function readPpt(cfb, opts = {}) {
 	const doc = cfb.stream("PowerPoint Document");
 	if (!doc) throw new Error("damaged PowerPoint file");
 	const cu = cfb.stream("Current User");
@@ -616,7 +700,13 @@ export function readPpt(cfb) {
 		walk(0, doc.length, (t) => all.push(t));
 		return all.join("\n");
 	}
-	return slides.map((s, i) => `## Slide ${i + 1}\n${s.text.join("\n")}`).join("\n\n");
+	if (opts.outline) {
+		return [`${slides.length} slides (pass pages: "1-5" to read specific slides)`, "",
+			...slides.map((s, i) => `- Slide ${i + 1}: ${(s.text[0] ?? "(no title)").slice(0, 90)} (${s.text.join("\n").length} chars)`)].join("\n");
+	}
+	const [a, b] = parseRange(opts.pages, slides.length);
+	const head = opts.pages ? `${slides.length} slides (showing ${a}-${b})\n\n` : "";
+	return head + slides.slice(a - 1, b).map((s, i) => `## Slide ${a + i}\n${s.text.join("\n")}`).join("\n\n");
 }
 
 // ---------- any file, by what it is ----------
@@ -659,18 +749,18 @@ export async function readOffice(path, p = {}, { full = false } = {}) {
 			throw new Error(`damaged or incomplete file (zip: ${e.message})`);
 		}
 		const has = (n) => names.includes(n);
-		if (has("word/document.xml")) [what, text] = ["docx", readDocx(buf, { revisions: p.revisions })];
-		else if (has("xl/workbook.xml")) [what, text] = ["xlsx", readXlsx(buf, full ? { maxRows: Infinity, maxSheets: Infinity } : p)];
-		else if (has("ppt/presentation.xml")) [what, text] = ["pptx", readPptx(buf)];
+		if (has("word/document.xml")) [what, text] = ["docx", full ? readDocx(buf, { revisions: p.revisions }) : filterWordText(readDocx(buf, { revisions: p.revisions }), p)];
+		else if (has("xl/workbook.xml")) [what, text] = ["xlsx", readXlsx(buf, full ? { maxRows: Infinity, maxSheets: Infinity } : p.outline ? { ...p, maxRows: 3, maxSheets: 20 } : p)];
+		else if (has("ppt/presentation.xml")) [what, text] = ["pptx", readPptx(buf, full ? {} : p)];
 		else throw new Error("a zip file, not a Word, Excel or PowerPoint document");
-	} else if (kind === "pdf") [what, text] = ["pdf", await readPdf(buf, full ? undefined : p.pages)];
+	} else if (kind === "pdf") [what, text] = ["pdf", await readPdf(buf, full ? undefined : p.pages, full ? {} : p)];
 	else if (kind === "ole") {
 		const cfb = readCfb(buf);
 		if (cfb.names.some((n) => /DRM/i.test(n))) throw IRM();
 		if (cfb.names.includes("EncryptedPackage") || cfb.names.includes("EncryptionInfo")) throw PASSWORD();
-		if (cfb.stream("WordDocument")) [what, text] = ["doc", readDoc(cfb)];
-		else if (cfb.stream("Workbook") || cfb.stream("Book")) [what, text] = ["xls", readXls(cfb, { maxRows: full ? Infinity : 200 })];
-		else if (cfb.stream("PowerPoint Document")) [what, text] = ["ppt", readPpt(cfb)];
+		if (cfb.stream("WordDocument")) [what, text] = ["doc", full ? readDoc(cfb) : filterWordText(readDoc(cfb), p)];
+		else if (cfb.stream("Workbook") || cfb.stream("Book")) [what, text] = ["xls", readXls(cfb, { maxRows: full ? Infinity : p.outline ? 3 : 200 })];
+		else if (cfb.stream("PowerPoint Document")) [what, text] = ["ppt", readPpt(cfb, full ? {} : p)];
 		else throw new Error(`an OLE compound file with no Word, Excel or PowerPoint document inside (it holds: ${cfb.names.slice(0, 8).join(", ")})`);
 	} else throw new Error(OTHER[kind]);
 	const [label, ext] = KINDS[what];
@@ -840,7 +930,22 @@ export function createXlsx(path, sheets) {
 
 // ---------- tools ----------
 
-const cut = (s) => (s.length > MAX_OUT ? `${s.slice(0, MAX_OUT)}\n...(cut at ${MAX_OUT / 1000}k characters: ask for fewer pages, a sheet or a range)` : s);
+const cut = (s) => (s.length > MAX_OUT
+	? `${s.slice(0, MAX_OUT)}\n...(cut at ${MAX_OUT / 1000}k of ${Math.round(s.length / 1000)}k characters: use outline: true to inspect structure, then read a section, sheet/range, or pages)`
+	: s);
+
+/** Compact preview of lines changed in a Word document so the agent need not re-read the whole file to verify. */
+function docxChangePreview(path, edits) {
+	try {
+		const needles = edits.flatMap((e) => [e.replace, e.insert, e.fill, e.comment].filter((x) => typeof x === "string" && x.trim()))
+			.map((s) => s.trim().split("\n")[0].slice(0, 40));
+		const shown = readDocx(path).split("\n").filter((l) =>
+			l.includes("{+") || l.includes("{-") || needles.some((n) => n && l.includes(n))).slice(0, 12);
+		return shown.length ? `\nPreview:\n${shown.map((l) => `  ${l.slice(0, 220)}`).join("\n")}` : "";
+	} catch {
+		return "";
+	}
+}
 
 /** cfg.officeAuthor: the name on Word changes and comments when the agent gives none (empty: Office's user name). */
 export function createOffice(cfg = {}) {
@@ -851,22 +956,26 @@ export function createOffice(cfg = {}) {
 			description: "Read Word, Excel, PowerPoint or PDF files as text, without Office: .docx and old .doc, .xlsx and " +
 				"old .xls, .pptx and old .ppt, .pdf. The format is judged by the file's content, so a file with the wrong " +
 				"extension is still read. Word: headings, lists and tables as Markdown, tracked changes as {+inserted+} " +
-				"{-deleted-} and comments listed at the end. Excel: sheets as tables with row numbers and column letters " +
-				"(sheet, range, formulas). PDF: text per page (pages: \"3-7\"). Use this instead of read for these files.\n" +
+				"{-deleted-} and comments listed at the end; for long specs pass outline: true first, then section: \"5.2.1\" " +
+				"(clause number or heading text) to read only what you need. Excel: sheets as tables with row numbers and " +
+				"column letters (sheet, range, formulas). PowerPoint / PDF: text per slide or page (pages: \"3-7\", or " +
+				"outline: true). Use this instead of read for these files.\n" +
 				"Many files (more than a few): give a folder or a glob as path (\"D:/docs\" or \"D:/docs/**/*.doc*\") and out " +
 				"(a folder): every file becomes a .txt under out with the same relative path, and you get back only a summary " +
 				"(ok / failed / encrypted counts, failed files with reasons); then grep or read the .txt files. Do not write " +
 				"python scripts for this.\nNever drive Word, Excel or PowerPoint with COM automation (win32com, " +
 				"New-Object -ComObject): many company PCs block it. Encrypted (IRM or password) files cannot be read by any " +
 				"tool: tell the user.",
-			promptSnippet: "Read Word, Excel, PowerPoint and PDF files, old formats too, one file or a whole folder into .txt files",
+			promptSnippet: "Read Word, Excel, PowerPoint and PDF files (outline, section, pages, sheet/range, or batch folder)",
 			parameters: Type.Object({
 				path: Type.String({ description: "A file; or, with out, a folder or a glob" }),
 				out: Type.Optional(Type.String({ description: "Batch: folder for the .txt files (one per file read)" })),
+				outline: Type.Optional(Type.Boolean({ description: "true: return only the table of contents / slide titles / page summary and size" })),
+				section: Type.Optional(Type.String({ description: "Word: read one clause or heading (with its sub-clauses), e.g. \"5.2.1\" or \"Architecture\"" })),
 				sheet: Type.Optional(Type.String({ description: "Excel: one sheet by name" })),
 				range: Type.Optional(Type.String({ description: "Excel: e.g. A1:H50" })),
 				formulas: Type.Optional(Type.Boolean({ description: "Excel: show formulas instead of values" })),
-				pages: Type.Optional(Type.String({ description: "PDF: e.g. 5 or 3-7" })),
+				pages: Type.Optional(Type.String({ description: "PDF pages or PowerPoint slides: e.g. 5 or 3-7" })),
 				revisions: Type.Optional(Type.String({ description: "Word: show (default, marks tracked changes) or accepted (as if all were accepted)" })),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false },
@@ -942,7 +1051,8 @@ export function createOffice(cfg = {}) {
 						initials: p.initials || me?.initials, date: p.date });
 					const lines = r.map((x) => x.note ?? `"${x.find}": ${x.replaced} replaced${x.skipped ? `, ${x.skipped} skipped (a field or picture inside; change it in Word)` : ""}`);
 					const tracked = p.track !== false && p.edits.some((e) => e.accept === undefined && e.reject === undefined);
-					return { content: [{ type: "text", text: `${tracked ? "Tracked changes" : "Changes"} saved in ${path} (checked)\n${lines.join("\n")}` }], details: undefined };
+					const preview = docxChangePreview(path, p.edits);
+					return { content: [{ type: "text", text: `${tracked ? "Tracked changes" : "Changes"} saved in ${path} (checked)\n${lines.join("\n")}${preview}` }], details: undefined };
 				}
 				if (ext === ".xlsx" || ext === ".xlsm") {
 					if (!p.cells || !Object.keys(p.cells).length) throw new Error("Excel: give cells");

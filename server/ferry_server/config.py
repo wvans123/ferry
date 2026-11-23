@@ -97,6 +97,7 @@ class Config:
     # the server picks the model: clients ask for "auto"; summaries can go to a cheaper model
     default_model: str = ""
     summary_model: str = ""
+    subagent_model: str = ""       # the model subagents use by default ("" = same as the main conversation)
     image_model: str = ""          # the model behind the agent's image_create tool (an image model or a Responses one)
     advisor_model: str = ""        # the model the agent's advisor tool asks ("" = the most expensive model, see side.py)
     expose_models: bool = False  # true: clients may also pick a model by name
@@ -159,6 +160,7 @@ def load(path: str | os.PathLike) -> Config:
         raise SystemExit("no [models.*] configured")
     r = raw.get("routing", {})
     cfg.default_model, cfg.summary_model = r.get("default", ""), r.get("summary", "")
+    cfg.subagent_model = r.get("subagent", "")
     cfg.image_model = r.get("image", "")
     cfg.advisor_model = r.get("advisor", "")
     cfg.expose_models = bool(r.get("expose", False))
@@ -172,10 +174,11 @@ def finish(cfg: Config) -> None:
     if cfg.session_store not in ("disk", "memory", "none"):
         raise SystemExit(f'session_store must be "disk", "memory" or "none", not {cfg.session_store!r}')
     if not cfg.models:
-        cfg.default_model = cfg.summary_model = ""
+        cfg.default_model = cfg.summary_model = cfg.subagent_model = ""
         return
     cfg.default_model = cfg.default_model or next(iter(cfg.models))
-    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model), ("image", cfg.image_model), ("advisor", cfg.advisor_model)):
+    for what, mid in (("default", cfg.default_model), ("summary", cfg.summary_model), ("subagent", cfg.subagent_model),
+                      ("image", cfg.image_model), ("advisor", cfg.advisor_model)):
         if mid and mid not in cfg.models:
             raise SystemExit(f"routing {what} = {mid!r} is not one of the models: {', '.join(cfg.models)}")
     if "auto" in cfg.models:
@@ -284,6 +287,7 @@ def models_template(found: dict[str, ModelConfig]) -> str:
            "[routing]",
            f'default = "{default}"   # 客户端用 auto 时由服务端选这个',
            'summary = ""            # 上下文太长要写摘要时用哪个模型（填便宜的省钱），空 = 同 default',
+           'subagent = ""           # 子 agent 默认用哪个模型（比如轻量快速的模型），空 = 同主对话',
            "expose = true           # true：客户端可以用 /model 自己挑；false：只能用 auto，完全由服务端决定",
            ""]
     for m in found.values():
@@ -425,6 +429,7 @@ def apply_models_file(cfg: Config, path: Path) -> None:
     r = raw.get("routing", {})
     trial = Config(models=models, default_model=os.environ.get("FERRY_MODEL") or r.get("default", ""),
                    summary_model=os.environ.get("FERRY_SUMMARY_MODEL") or r.get("summary", ""),
+                   subagent_model=os.environ.get("FERRY_SUBAGENT_MODEL") or r.get("subagent", ""),
                    image_model=r.get("image", ""), advisor_model=r.get("advisor", ""),
                    expose_models=bool(r.get("expose", False)) or os.environ.get("FERRY_EXPOSE_MODELS", "") in ("1", "true"),
                    session_store=cfg.session_store)
@@ -432,7 +437,8 @@ def apply_models_file(cfg: Config, path: Path) -> None:
         trial.default_model = ""
     finish(trial)
     cfg.models, cfg.providers, cfg.default_model = trial.models, providers, trial.default_model
-    cfg.summary_model, cfg.expose_models, cfg.image_model = trial.summary_model, trial.expose_models, trial.image_model
+    cfg.summary_model, cfg.subagent_model = trial.summary_model, trial.subagent_model
+    cfg.expose_models, cfg.image_model = trial.expose_models, trial.image_model
     cfg.advisor_model = trial.advisor_model
 
 
@@ -442,6 +448,8 @@ def render_models_toml(providers: list[dict], models: list[dict], routing: dict)
            "# 服务商的 Key 保存在同一文件夹的 secrets.toml 里（或环境变量 api_key_env）。", "", "[routing]"]
     out.append(f"default = {_toml_value(routing.get('default', ''))}")
     out.append(f"summary = {_toml_value(routing.get('summary', ''))}")
+    if routing.get("subagent"):
+        out.append(f"subagent = {_toml_value(routing['subagent'])}")
     if routing.get("image"):
         out.append(f"image = {_toml_value(routing['image'])}")
     if routing.get("advisor"):

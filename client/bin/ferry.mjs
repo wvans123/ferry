@@ -120,6 +120,7 @@ async function fetchModels(cfg, waited = false) {
 		const models = requireServerModels(r);
 		cfg.sessionStore = r.body.sessionStore;
 		cfg.features = r.body.features ?? [];
+		cfg.subagentModel = r.body.subagentModel || "";
 		writeModelsCache(models);
 		return models;
 	} catch (e) {
@@ -427,7 +428,7 @@ async function run(args) {
 			`Server: ${cfg.mode === "local" ? "on this computer" : cfg.server}  ${h.json ? `reachable in ${Date.now() - t} ms, version ${h.body.version}`
 				: `NOT reachable (${h.error?.cause?.code ?? h.error?.message ?? `HTTP ${h.status}`})`}`,
 			`Model: chosen by the server${m.routesTo ? `: ${m.routesTo} (${m.model})` : ""}`,
-			`Web tools: ${webOn(cfg) ? "on" : "off"}   Browser: ${browserState.on ? `on (${browserState.browser})` : browserState.why}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : "on"}`,
+			`Web tools: ${webOn(cfg) ? "on" : "off"}   Browser: ${browserState.on ? `on (${browserState.browser})` : browserState.why}   Memory: ${cfg.memory === false ? "off" : "on"}   Subagents: ${cfg.subagents === false ? "off" : `on (${cfg.subagentModel || "same model"})`}`,
 		];
 	};
 	const { createWeb } = await import("../lib/web.mjs");

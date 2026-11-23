@@ -42,28 +42,29 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 模块 | 做什么 | 代码 | 开关 | 自测 |
 |---|---|---|---|---|
 | 记忆 | 项目、个人记忆；全局记忆在服务端；新对话开始时从上一段对话提记忆候选、`/memory tidy` 整理、`/memory distill` 从很多段旧对话里找反复出现的事写成记忆、规则或技能，都要你确认 | `client/lib/memory.mjs`、`memreview.mjs`、`distill.mjs`、`server/ferry_server/globalmem.py`、`memreview.py` | `memory`、`memoryReview`；全局记忆在管理页 | F28、F56、F78、F88、F105–F110 |
-| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删；`task_batch` 里一个文件只让先改它的子 agent 改 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；`agents/<名字>.md` 换模型 | F29、F49、F89、F91、F115 |
+| 子 agent | `task`、`task_batch`；内置 explore、research（上网调研）、review（对照要求检查交付物）、general；支持服务端 `[routing] subagent` 指定子 agent 模型，explore / research 跑满 24 步自动提醒收敛总结；`task` 的 `resume` 追问做完的子 agent（保留最近 5 个）；每个子 agent 的过程记录在 `subagents/`，7 天后删；`task_batch` 里一个文件只让先改它的子 agent 改 | `client/lib/subagent.mjs` | `subagents`、`maxParallel`；管理页“子 agent 用”或 `agents/<名字>.md` 换模型 | F29、F49、F89、F91、F115 |
 | 工具输出 | 待办（12 次工具调用没更新就提醒）、命令输出去噪、长输出存文件、旧输出和旧的长写入成批省略、连续单个小查看的提醒、`history_search`、`past_conversations` | `client/lib/tools.mjs` | `bigOutputBytes`、`trimOldOutputs`、`batchNudge` | F30、F31、F46、F48、F92、F96 |
 | /goal | 一直做到完成；先定完成标准，中途改的要求记下，按标准验收；报完成后由没看过过程的 `review` 子 agent 复核（最多两轮，起不来就照旧）；一轮出错后等 30 秒、2 分钟、5 分钟重试，三次不行就暂停并推手机 | `client/lib/goal.mjs`；复核通过 `subagent.mjs` 放在 `cfg.runSubagent` 里的入口 | `goalMaxTurns`、`goalBudget`、`goalReview` | F41、F95、F97、F129 |
 | 后台任务 | `job_start` 等；任务结束时 agent 马上拿到结果，停下了就自己接着干；`job_start` 带 `watch` 时脚本每打印一行 agent 就收到（Claude Code 的 Monitor）；`/tasks` 和 Running 一行显示子 agent 正在做的步骤，能看过程记录的最后一屏 | `client/lib/jobs.mjs` | `wakeOnJobEnd` | F42、F86、F125、单元测试 |
 | /loop | 每隔一段时间把一句提示作为 Ferry 的消息送给 agent：空闲就开一轮，忙就等做完，上一次没做完就跳过；只在这个窗口里，24 小时自停 | `client/lib/loop.mjs` | — | F125、单元测试 |
 | 回退 | `/rewind` | `client/lib/checkpoint.mjs` | — | F38 |
 | 钩子 | 改完文件后自动跑检查 | `client/lib/hooks.mjs` | 有 `hooks.json` 才生效 | F39 |
-| 提问 | `ask_user` | `client/lib/ask.mjs` | — | F65 |
+| 提问与对齐 | `ask_user` 集中提问对齐；内置 `grill` 技能与 `/grill` 命令，动工前先读文件再追问敲定项目结构与范围 | `client/lib/ask.mjs`、`commands.mjs`、`client/skills/grill/` | — | F65 |
 | 联网 | `web_fetch`、`web_search`、网站黑名单 | `client/lib/web.mjs` | `web`、`blockedSites` | F35、F57、F64 |
 | 搜索和读网页 | `web_search` 经服务端搜：几家同时查（Exa 免费搜索、DeepSeek、填了 Key 的 Tavily / Brave / 博查、可选模型自带的搜索），合并去重，摘出前几页的相关段落，缓存 10 分钟；`web_fetch` 带问题时由服务端的模型读 | `server/ferry_server/search.py`；客户端在 `web.mjs`；评测 `evals/search_eval.py` | 管理页 → 设置 → 网页搜索；选"不用服务端搜索"就读 Bing 的结果页 | F66、F67、F98–F100 |
 | 浏览器 | agent 用 agent-browser 命令操作本机 Edge / Chrome | `client/lib/browser.mjs`、`client/browser-skill/` | `browser`、`browserHeadless`、`browserPath` | F36 |
 | MCP | 用户和项目的 MCP 服务器 | `client/lib/mcp.mjs` | 有配置才生效 | F44、F45 |
-| Office | 读写 Word、Excel、PowerPoint、PDF；读旧版 .doc/.xls/.ppt；整个文件夹转成文本；Word 按修订方式改文字、插入删除段落、填空单元格、加批注、接受拒绝修订，保存前检查 | `client/lib/office.mjs`、`wordedit.mjs`、`client/skills/office/`、`client/skills/review/`（review 子 agent 的检查清单） | `officeAuthor` | F50、F75–F77、F101–F104 |
-| 分块上传和重试 | 每个请求体不超过块大小；被网关或 Cloudflare 挡下时重发、减半；子 agent 不因一次失败而停 | `client/lib/upload.mjs` | `chunkBytes` | F80 |
+| Office | 读写 Word、Excel、PowerPoint、PDF（支持 `outline` 目录大纲、`section` 按章节精读、`pages` 指定页/幻灯片）；读旧版 .doc/.xls/.ppt；整个文件夹转成文本；Word 按修订方式改文字、插入删除段落、填空单元格、加批注、接受拒绝修订，保存前检查并返回改动行预览 | `client/lib/office.mjs`、`wordedit.mjs`、`client/skills/office/`、`client/skills/review/`（review 子 agent 的检查清单） | `officeAuthor` | F50、F75–F77、F101–F104 |
+| 分块上传和重试 | 默认每块 128 KiB（上限 512 KiB）；被网关 403/413 或大包连接重置挡下时重发并减半；`/resume` 恢复会话直接复用服务端已有前缀和工具定义；子 agent 不因一次失败而停 | `client/lib/upload.mjs`、`sync.mjs` | `chunkBytes` | F80 |
 | 隐藏模型名 | 右下角不显示模型名 | `client/lib/footer.mjs` | `showModel` | 单元测试 |
-| 图片 | 读图前缩小；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`；服务端选了画图模型才有 | F59 |
+| 图片 | 读图前缩小到 1280px / 约 120 KB base64，保留 4 步（`imageSteps`）后退化为占位说明；`image_create` 画图 | `client/lib/pictures.mjs`、`image.mjs`、`server/ferry_server/images.py` | `keepImages`、`imageSteps`；服务端选了画图模型才有 | F59 |
 | 团队 | Paperclip 看板上的成员 | `client/lib/team.mjs`、`teamcli.mjs` | 由 Paperclip 启动时才生效 | F54 |
 | 通知 | 响铃、Windows 通知、Bark 推手机 | `client/lib/phone.mjs`、`server/ferry_server/notify.py` | `notify`、`phoneNotify` | F52 |
 | 手机上答 | 确认框和 `ask_user` 的问题放进服务端的收件箱，Bark 通知带一个只管这一项的链接，手机页面上批准、拒绝或回答；谁先答算谁的 | `client/lib/remote.mjs`、`server/ferry_server/remote.py`；接入在 `guard.mjs`、`ask.mjs` | `phoneRemote`；服务端要有 Bark 和外网地址 | F113、F114 |
 | 手机控制台 | 开着终端的 ferry 在同一个收件箱里是一个会话：传小份状态（目标、待办、最近几步），长连接取手机的命令（插话、暂停或继续目标、空闲时派新活）；`/phone` 推链接，`/phone off` 作废；这个会话的通知都带控制台链接 | `client/lib/console.mjs`、`server/ferry_server/remote.py`；`goal.mjs` 的 `cfg.goalNow`，`phone.mjs`、`heartbeat.mjs`、`watchdog.py` 带会话编号 | `phoneRemote`、`remoteTasks` | F116–F119 |
 | 看门狗 | 干活时每 5 分钟告诉服务端还在跑；跑到一半 15 分钟没消息（网关要确认、睡眠、断网、ferry 退出），服务端自己推手机，又连上时再推一条 | `client/lib/heartbeat.mjs`、`server/ferry_server/watchdog.py` | 客户端 `phoneNotify`；服务端 `stall_minutes`（0 关），要设了 Bark | F112 |
 | 旁问、顾问、回顾 | `advisor` 工具、`/btw`、长请求做完的一句话回顾，共用服务端一个接口；`review` 子 agent 和交付质量提示在 `subagent.mjs`、`prompt.mjs` | `client/lib/side.mjs`、`server/ferry_server/side.py`；`sync.mjs` 里 `cfg.side` 记着对话的服务端副本 | `advisor`、`recap`；服务端管理页的顾问模型 | F83–F85 |
+| Skill 同步 | `/sync` 和 `project_resources` 按账户同步带 `SKILL.md` 的 skill 文件夹（含脚本和参考文件），分包上传、冲突保护、历史版本恢复；服务端管理页直接编辑 | `client/lib/resources.mjs`、`server/ferry_server/resources.py`、`admin.py`、`admin.html` | — | 单元测试 |
 | 问题报告 | `/report` 经服务端发 GitHub issue | `client/lib/report.mjs`、`server/ferry_server/report.py` | 服务端设了令牌才发到 GitHub | 单元测试 |
 
-`server/ferry_server/report.py` 是第一个按 `mount()` 写法接入的服务端模块，`search.py` 是第二个。其他服务端功能的接口还写在 `app.py` 里，以后动到哪个就顺手搬成这个样子。
+`report.py`、`search.py`、`side.py`、`memreview.py`、`remote.py`、`watchdog.py`、`resources.py`、`admin.py` 都已按 `mount()` 方式在 `app.py` 末尾接入；对话同步、模型转发和全局记忆的核心接口仍留在 `app.py` 里。

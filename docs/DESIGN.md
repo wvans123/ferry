@@ -129,7 +129,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 
 ## 12. 本机模式、安装和更新
 
-**本机模式**：没有执行过 `ferry login` 时，每个 `ferry` 进程在后台启动一个只属于自己的服务端（随机端口、随机令牌、只监听 127.0.0.1），进程退出时一起关掉。服务端用零配置启动：模型是 DeepSeek，Key 读环境变量 `DEEPSEEK_API_KEY`，规则和词表自动生成在 `~/.ferry-server`。所以第一次使用只需要 `ferry` 一条命令（自测 F22、F23）。
+**本机模式**：没有执行过 `ferry login` 时，每个 `ferry` 进程在后台启动一个只属于自己的服务端（随机端口、随机令牌、只监听 127.0.0.1），进程退出时一起关掉。服务端用零配置启动：模型是 DeepSeek，Key 读环境变量 `DEEPSEEK_API_KEY`，规则和模型清单自动生成在 `~/.ferry-server`。所以第一次使用只需要 `ferry` 一条命令（自测 F22、F23）。
 
 每个窗口各起一个服务端，而不是共用一个后台常驻进程，是为了：关掉一个窗口不会影响另一个窗口；升级后不会有旧版本的服务端还在跑；环境变量（Key、代理）改了，重开窗口就生效。代价是每次启动多 1 到 2 秒。
 
@@ -153,18 +153,19 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 自己的电脑 | 有能让工作电脑访问到的中转（工作电脑连不上他的电脑） | 到中转 | 自己的电脑 |
 | 云服务器 | 正式使用；要用 Claude / OpenAI 时必须选它们支持的地区 | 只到 Ferry 服务端（HTTPS，≤ 1MB/次） | 云服务器 |
 
-模型接入统一用 OpenAI 兼容的 `/chat/completions`：
+模型支持三种上游接口格式，服务商或单个模型都可以单独选：
 
-- DeepSeek、OpenAI 本来就是这个格式；
-- Claude 用 Anthropic 官方的 OpenAI 兼容接口（`https://api.anthropic.com/v1/`）。它支持流式和工具调用，但官方说明它主要用于测试和对比，生产建议用原生接口，而且不支持提示词缓存。agent 每轮都重发整个上下文，提示词缓存能省下大部分输入费用，所以"Claude 原生接口"排在路线图第一位。
+- OpenAI 兼容的 `/chat/completions`：DeepSeek、智谱、Kimi、通义等直接用；中转后面的 Claude 会自动补上缓存标记；
+- Anthropic Messages 原生接口（`/v1/messages`）：Claude 官方和支持它的中转走这条路，带原生提示词缓存和思考；
+- OpenAI Responses 接口（`/v1/responses`）：GPT / Codex 等模型在服务端自动与对话格式互转，保留缓存统计。
 
 零配置时，模型清单在服务端数据目录的 `models.toml` 里：第一次启动时按环境里有哪些 Key 生成（有 Key 的启用，其余写成注释），之后每次请求前检查文件是否改过，改过就重新读取，所以改模型不用重启；文件写错时保留上一份能用的清单，并在日志里提示。
 
-**模型由服务端决定。** 客户端只看到一个叫 `auto` 的模型，请求里也只写 `auto`。服务端按 `[routing]` 设置挑真正的模型：
+**模型列表只听服务端的。** 默认在工作电脑上按服务商列出（如 `kiro/claude-opus-5.5`），几家勾了 `share = true` 的同名模型合成一组放在 `ferry` 下。`[routing]` 控制分流：
 
-- `default`：干活（agent 每一轮）用的模型；
-- `summary`：写上下文摘要用的模型。客户端在同步时标明请求用途（pi 的摘要请求有固定的系统提示开头），服务端据此分流；这时 `auto` 报给客户端的上下文窗口取两个模型里较小的那个，保证摘要请求放得下；
-- `expose`：为 true 时客户端也能用 `/model` 选具体模型。
+- `default`：默认干活用的模型；
+- `summary`：写上下文摘要和带问题读网页用的模型；
+- `expose`：默认打开，客户端可以用 `/model` 挑服务端列出的模型；关掉时客户端只看到一个 `auto`，干活和摘要由服务端在后台分流（自测 F25）。
 
 这样换模型、换服务商、给摘要换便宜模型，都只改服务端，工作电脑上什么都不用动（自测 F25）。
 
@@ -232,6 +233,7 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 公司网关要先确认 | 启动时发现服务端地址被网关转到确认页，就用浏览器打开那一页，每 2.5 秒检查一次，你确认后自动继续；会话中途确认过期，打开确认页、等确认后自动重发（最多等 3 分钟）；`ferry check` 手动查 | `client/lib/gateway.mjs` |
 | 跟着 pi 更新 | Ferry 只用 pi 公开的扩展接口，不改 pi 本身，所以不 fork。每周一自动检查 pi 新版本：换上新版本后在 Linux 和 Windows 上跑全部测试（含终端界面冒烟测试），都通过才开 PR，附 pi 的发布说明；看过再合并，跟下一次发布一起出去 | `.github/workflows/update-pi.yml`、`scripts/bump_pi.mjs` |
 | 斜杠命令和自定义 | pi 自带命令里用不上的，启动时从它的命令表里拿掉（只是不列出）；用户和项目的命令、技能目录通过 pi 的 `resources_discover` 事件加进去，同名时项目覆盖用户 | `client/lib/trim.mjs`、`client/lib/commands.mjs` |
+| Skill 同步 | `/sync` 按账户同步带 `SKILL.md` 的 skill 文件夹（含脚本和参考文件），复用 512KB 分块上传，带版本历史和冲突检查；管理页可在线编辑 | `client/lib/resources.mjs`、`server/ferry_server/resources.py` |
 | 浏览器 | agent-browser（Rust 写的命令行程序，用 CDP 控制浏览器）放进 pi 的 bin 文件夹，agent 用 bash 调用；Ferry 设好用哪个浏览器、自己的资料夹、要不要窗口，技能说明只在浏览器打开时列出；看页面的子命令算只读；ferry 退出时关掉浏览器 | `client/lib/browser.mjs`、`client/browser-skill/` |
 | 问题报告 | 工作电脑只能连服务端：`/report` 让对话里的 agent 写报告（它最清楚出了什么事），用户在终端看过全文再发；只自动附上版本和工具次数。服务端隐去管理页上列的词、内网 IP、邮箱、手机号、Key、路径里的用户名，存一份，再用自己的 GitHub 令牌开 issue | `client/lib/report.mjs`、`server/ferry_server/report.py` |
 | 撤销 | 每次请求里第一次 edit/write 一个文件前，把原内容按哈希存一份；`/rewind` 选一个请求，把它和之后改过的文件恢复，并告诉模型这些文件变了 | `client/lib/checkpoint.mjs` |
@@ -255,9 +257,9 @@ pi 的配置目录指向 `~/.ferry/agent`，和用户自己装的 pi 互不影�
 | 模型调用和 API Key | 服务端 | 服务端 |
 | 代码库语义检索 | 服务端索引 | 不做（要把代码上传建索引）；用 grep + 子 agent 搜索 |
 | 记忆 | Memories（服务端生成，需批准） | 客户端文件，模型用 `memory` 工具读写，你可以直接改 |
-| 子 agent | 有 | `task` 工具，内置 explore / general，可自定义 |
+| 子 agent | 有 | `task` / `task_batch` 工具，内置 explore / research / review / general，可自定义 |
 | 权限 | 有 | 四种模式、按项目记住的规则、只读命令白名单、危险命令总是问（参考 Claude Code） |
-| 读网页、搜索 | 服务端执行 | 在工作电脑上执行（受公司网关管） |
+| 读网页、搜索 | 服务端执行 | 搜索和公开网页在服务端执行（Key 留在服务端）；公司内网、私有地址和文件下载在工作电脑上执行（受公司网关管） |
 
 ## 路线图
 

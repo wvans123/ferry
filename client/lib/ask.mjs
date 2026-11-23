@@ -80,10 +80,11 @@ export function createAsk(cfg = {}) {
 		pi.registerTool({
 			name: "ask_user",
 			label: "Ask",
-			description: "Ask the user 1 to 4 questions, each with 2 to 6 options to pick from (one, or several with " +
-				"multiSelect), your recommended option(s) marked with recommended, and an \"Other\" choice where they type " +
-				"their own answer. Use it only when the answer changes what you do and you cannot find it out yourself: " +
-				"a choice between real alternatives, a preference, missing information. Not to ask whether to continue.",
+			description: "Ask the user 1 to 4 questions in one batch, each with 2 to 6 options to pick from (one, or several " +
+				"with multiSelect), your recommended option(s) marked with recommended, and an \"Other\" choice where they type " +
+				"their own answer. Use it upfront (after a quick look at existing files) before scaffolding a new project, " +
+				"choosing folder/module structure or architecture, or drafting a document/deck/CR whose scope, outline or " +
+				"audience is open. Never use it for facts the files already hold or to ask whether to continue.",
 			promptSnippet: "Ask the user questions with options to pick from",
 			parameters: Params,
 			annotations: { readOnlyHint: true, openWorldHint: false },

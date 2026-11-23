@@ -27,6 +27,7 @@ import { promptWithRecovery, transientMessage } from "./upload.mjs";
 
 const MAX_REPORT_BYTES = 30 * 1024;
 const KEEP = 5; // finished subagents kept for a follow-up (task with resume)
+export const SUBAGENT_SOFT_STEPS = 24; // read-only search subagents are nudged to wrap up after this many tool calls
 export const SUBAGENTS_DIR = join(FERRY_HOME, "subagents");
 const TRANSCRIPT_RESULT_BYTES = 4 * 1024;
 const TRANSCRIPT_MAX_BYTES = 2 * 1024 * 1024;
@@ -476,11 +477,31 @@ export function createSubagents(cfg, deps) {
 	};
 }
 
-/** The agent file's model if the server offers it, else the main agent's. */
-function pickModel(agent, ctx) {
-	if (!agent.model) return ctx?.model;
+/** The agent file's model, else the server's subagent routing model, else the main agent's. */
+export function pickModel(agent, ctx, cfg) {
+	const want = agent.model || cfg?.subagentModel || "";
+	if (!want) return ctx?.model;
 	const reg = ctx?.modelRegistry;
-	return findFerryModel(reg, String(agent.model).replace(/^[^/]*\//, "")) ?? ctx?.model; // "kiro/x" or "x"
+	return findFerryModel(reg, String(want).replace(/^[^/]*\//, "")) ?? ctx?.model; // "kiro/x" or "x"
+}
+
+/** Nudge read-only search subagents (explore, research) to report once they have made enough tool calls. */
+export function subagentBudgetGuard(agentName, maxSteps = SUBAGENT_SOFT_STEPS) {
+	const bounded = agentName === "explore" || agentName === "research";
+	return (p) => {
+		if (!bounded || !(maxSteps > 0)) return;
+		let count = 0;
+		let nudged = false;
+		p.on("tool_execution_end", () => {
+			if (nudged || ++count < maxSteps) return;
+			nudged = true;
+			p.sendMessage({
+				customType: "ferry-subagent-wrap",
+				display: false,
+				content: `You have already made ${count} tool calls. Stop opening new files or pages and write your final report now from what you have found, noting anything still unknown.`,
+			}, { deliverAs: "steer" });
+		});
+	};
 }
 
 /** A fresh session for the subagent, with its own Ferry provider (its own server conversation). */
@@ -489,6 +510,7 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi, claims }) {
 	const parentTools = pi.getActiveTools().filter((t) => !NOT_FOR_SUBAGENTS.has(t));
 	const tools = (agent.tools ?? parentTools).filter((t) => !NOT_FOR_SUBAGENTS.has(t));
 	const role = agent.prompt;
+	const chosenModel = pickModel(agent, ctx, cfg);
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir: AGENT_DIR,
@@ -505,6 +527,7 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi, claims }) {
 			{ name: "ferry-big-outputs", factory: createBigOutputs(cfg) },
 			{ name: "ferry-web", factory: createWeb(cfg) },
 			{ name: "ferry-office", factory: createOffice(cfg) },
+			{ name: "ferry-subagent-budget", factory: subagentBudgetGuard(agent.name) },
 			{
 				name: "ferry-subagent-role",
 				factory: (p) => p.on("before_agent_start", (e) => {
@@ -519,7 +542,7 @@ async function openSession({ cfg, deps, agent, label, ctx, cwd, pi, claims }) {
 		agentDir: AGENT_DIR,
 		resourceLoader: loader,
 		sessionManager: SessionManager.inMemory(cwd),
-		model: pickModel(agent, ctx),
+		model: chosenModel,
 		// it thinks as much as the main conversation does (pi clamps the level to what the model can do)
 		thinkingLevel: pi.getThinkingLevel?.(),
 		tools,

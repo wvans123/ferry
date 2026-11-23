@@ -65,6 +65,12 @@ class Store:
         row = self.db.execute("SELECT count, hash FROM conv WHERE id=?", (conv,)).fetchone()
         return (row[0], row[1]) if row else (0, "")
 
+    def has_tools(self, tools_hash: str) -> bool:
+        if not tools_hash:
+            return False
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM tools WHERE hash=?", (tools_hash,)).fetchone() is not None
+
     def have(self, owner: str, hashes: list[str]) -> list[str]:
         """Which of these messages (by hash) the server keeps for this user: the client then sends only a reference."""
         out = []

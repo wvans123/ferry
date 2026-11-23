@@ -143,3 +143,49 @@ test("office_read tool: one file, a folder without out, a folder with out", asyn
 	assert.match((await run({ path: "batch/*.docx", out: "tool-txt" })).content[0].text, /ok 1, encrypted 0, failed 1, skipped 1/);
 	assert.match(tools.office_read.description, /COM automation/);
 });
+
+test("office_read outline/section/pages and office_edit preview avoid full-file re-reads", async () => {
+	const tools = {};
+	createOffice()({ registerTool: (t) => { tools[t.name] = t; } });
+	const spec = join(dir, "spec.docx");
+	createDocx(spec, [
+		"# 5 Procedures",
+		"Overview of procedures.",
+		"## 5.1 Connection control",
+		"Connection text.",
+		"## 5.2 Measurement",
+		"General measurement rules.",
+		"### 5.2.1 Measurement reporting",
+		"The UE shall report every 10 ms.",
+		"## 5.3 Handover",
+		"Handover text.",
+	].join("\n\n"));
+	const read = (p) => tools.office_read.execute("1", p, undefined, undefined, { cwd: dir });
+	const toc = (await read({ path: "spec.docx", outline: true })).content[0].text;
+	assert.match(toc, /Outline/);
+	assert.match(toc, /5\.2\.1 Measurement reporting/);
+	assert.doesNotMatch(toc, /The UE shall report every 10 ms/);
+
+	// Reading clause 5.2 includes 5.2 and its sub-clause 5.2.1, stopping before 5.3
+	const sec = (await read({ path: "spec.docx", section: "5.2" })).content[0].text;
+	assert.match(sec, /## 5\.2 Measurement/);
+	assert.match(sec, /The UE shall report every 10 ms\./);
+	assert.doesNotMatch(sec, /Connection text/);
+	assert.doesNotMatch(sec, /Handover text/);
+
+	// PowerPoint outline and slide range
+	const pptToc = await readOffice(join(FIX, "slides.ppt"), { outline: true });
+	assert.match(pptToc, /2 slides/);
+	assert.match(pptToc, /Slide 1: Ferry slide one/);
+	const slide2 = await readOffice(join(FIX, "slides.ppt"), { pages: "2" });
+	assert.match(slide2, /## Slide 2\n第二页/);
+	assert.doesNotMatch(slide2, /Ferry slide one/);
+
+	// office_edit returns a preview of the changed paragraph immediately
+	const edited = (await tools.office_edit.execute("2", {
+		path: "spec.docx",
+		edits: [{ find: "every 10 ms", replace: "every 20 ms" }],
+	}, undefined, undefined, { cwd: dir })).content[0].text;
+	assert.match(edited, /Preview:/);
+	assert.match(edited, /\{-every 10 ms-\}\{\+every 20 ms\+\}/);
+});

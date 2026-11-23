@@ -14,6 +14,7 @@ conversation text.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import os
@@ -675,7 +676,10 @@ def create_app(cfg: Config) -> FastAPI:
         if shared.get(d.id):
             auto["providers"] = len(shared[d.id])
             auto["contextWindow"] = min(auto["contextWindow"], *(limit_of(cfg.models[i]) for i in shared[d.id]))
-        return {"models": listed, "defaultModel": cfg.default_model, "sessionStore": cfg.session_store,
+        if cfg.subagent_model:
+            auto["subagentTo"] = cfg.subagent_model
+        return {"models": listed, "defaultModel": cfg.default_model, "subagentModel": cfg.subagent_model,
+                "sessionStore": cfg.session_store,
                 "features": (["refs"] if cfg.session_store != "none" else []) + (["image"] if cfg.image_model else [])
                 + (["advisor"] if side.advisor_model(cfg) else []) + (["search"] if web_search.ready(cfg) else []) + (["extract", "read"] if web_search.extract_models(cfg) else [])
                 + (["remote"] if remote.ready(cfg) else [])}
@@ -738,6 +742,8 @@ def create_app(cfg: Config) -> FastAPI:
         default = cfg.models[cfg.default_model]
         if purpose == "summary" and cfg.summary_model and cfg.models[cfg.summary_model].api == default.api:
             return cfg.models[cfg.summary_model]  # (a summary model with another API cannot take this request)
+        if purpose == "subagent" and cfg.subagent_model and cfg.models[cfg.subagent_model].api == default.api:
+            return cfg.models[cfg.subagent_model]
         return default
 
     async def run_check(want: str | list | None, user: str) -> list[dict]:
@@ -851,9 +857,17 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/v1/ferry/have")
     async def have(request: Request):
-        """After a restart or /resume the client asks which messages the server still has, and sends only the rest."""
-        hashes = [str(h) for h in (json.loads(await request.body() or b"{}").get("hashes") or [])][:20000]
-        return {"have": live.store.have(request.state.user or "", hashes)}
+        """After a restart or /resume the client asks whether the server still has the conversation, tools or blobs."""
+        data = json.loads(await request.body() or b"{}")
+        hashes = [str(h) for h in (data.get("hashes") or [])][:20000]
+        out: dict = {"have": live.store.have(request.state.user or "", hashes)}
+        if data.get("conv"):
+            c, h = live.store.state(key(request, str(data["conv"])))
+            if c:
+                out["conv"] = {"count": c, "hash": h}
+        if data.get("tools_hash"):
+            out["has_tools"] = live.store.has_tools(str(data["tools_hash"]))
+        return out
 
     @app.post("/v1/ferry/probe")
     async def probe(request: Request):
@@ -985,6 +999,8 @@ def create_app(cfg: Config) -> FastAPI:
                     headers = {"Content-Type": "application/json"}
                     if model.api_key:
                         headers["Authorization"] = f"Bearer {model.api_key}"
+                    if conv:
+                        headers["x-session-id"] = hashlib.sha256(conv.encode("utf-8")).hexdigest()[:32]
                     url = responses_url(model.base_url) if model.api == "openai-responses" else chat_url(model.base_url)
                     # another provider to try next (the same model without cache markers is only tried when they were refused)
                     more = any(t[0] is not model for t in tries[n + 1:])
@@ -1226,6 +1242,8 @@ def create_app(cfg: Config) -> FastAPI:
                                "anthropic-version": request.headers.get("anthropic-version", "2023-06-01")}
                     if request.headers.get("anthropic-beta"):
                         headers["anthropic-beta"] = request.headers["anthropic-beta"]
+                    if conv:
+                        headers["x-session-id"] = hashlib.sha256(conv.encode("utf-8")).hexdigest()[:32]
                     more = n + 1 < len(tries)
                     await live.pool.enter(cfg, model)
                     holding.append(model.id)

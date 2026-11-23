@@ -31,8 +31,8 @@
 
 | 能力 | 在哪 | 状态 |
 |---|---|---|
-| 项目规则 `AGENTS.md` | 客户端，pi 自带：项目目录和上级目录里的 `AGENTS.md` / `CLAUDE.md` 自动加载 | 可用 |
-| 用户规则 | 客户端，`%USERPROFILE%\.ferry\agent\AGENTS.md` | 可用 |
+| 项目规则 `AGENTS.md` | 客户端：项目目录及 Git 仓库上层目录里的 `AGENTS.md` / `CLAUDE.md` 自动加载（仓库外上层默认跳过） | 可用 |
+| 用户规则 | 客户端，`%USERPROFILE%\.ferry\AGENTS.md`（及 `agent\AGENTS.md`） | 可用 |
 | 团队规则 | 服务端 `rules\_global.md` 和 `rules\<项目名>.md`，拼在客户端系统提示后面，改完下一轮生效 | 可用 |
 | 会话摘要 | 客户端（pi），接近模型窗口时 | 可用 |
 | 请求封顶 | 服务端，超过 900KB 时删最旧的工具输出 | 可用 |

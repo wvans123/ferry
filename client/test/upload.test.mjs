@@ -118,6 +118,23 @@ test("answers from the Ferry server (JSON, 401) and the gateway's confirmation p
 	assert.equal(n, 1);
 });
 
+test("gateway 413 or connection reset on a large chunk shrinks part size so the upload succeeds", async () => {
+	const state = { chunk: 256 * KB };
+	const sent = [];
+	const up = createUploader(state, {
+		post: async (_path, body) => {
+			sent.push(body.length);
+			if (body.length > 100 * KB) throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+			return json();
+		},
+		sleep: async () => {},
+	});
+	const res = await up.commit(Buffer.alloc(200 * KB, 97), new URLSearchParams({ conv: "c" }));
+	assert.equal(res.status, 200);
+	assert.ok(state.chunk <= 100 * KB, `chunk=${state.chunk}`);
+	assert.ok(sent.some((n) => n <= 100 * KB && n > 0));
+});
+
 test("an abort is not retried", async () => {
 	const ac = new AbortController();
 	ac.abort();

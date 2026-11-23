@@ -28,6 +28,7 @@ Conversation   /new  start a new one          /resume  go back to an earlier one
                /rewind  go back to one of your messages: conversation, files, or both
                /btw <question>  ask a side question, also while the agent works; not added to the conversation
 Work           /goal <objective>  keep working until it is done (/goal pause | resume | clear | budget)
+               /grill [what]  interview you on structure, scope and key choices before building
                /tasks  background commands and subagents: output, stop
                /loop [5m] <what>  do this every so often while the window is open (/loop stop [n])
                /phone  push this session's console to the phone: watch, steer, pause the goal, new tasks (/phone off)
@@ -336,6 +337,20 @@ export function createCommands(cfg, deps) {
 					if (key === "thinking") pi.setThinkingLevel(value);
 					tell(ctx, `${key} = ${JSON.stringify(value)} (saved)`, "info");
 				}
+			},
+		});
+
+		pi.registerCommand("grill", {
+			description: "Align on structure, scope and design choices via ask_user before building: /grill [what to plan]",
+			handler: async (args, ctx) => {
+				const topic = String(args ?? "").trim();
+				const cwd = ctx.cwd ?? process.cwd();
+				const skillFile = skillDirs(cwd).map((d) => join(d, "grill", "SKILL.md")).find(existsSync) ?? "";
+				const instruction = `Follow the grill skill${skillFile ? ` (${skillFile})` : ""}: inspect relevant files in the workspace first, ` +
+					"then interview me with ask_user (2 to 4 concrete questions per batch, with options and your recommendation) to resolve " +
+					"project structure, scope, and key design choices before making any edits." +
+					(topic ? `\n\nRequest to align on:\n${topic}` : "\n\nAlign on the current plan or project in this conversation.");
+				pi.sendUserMessage(instruction);
 			},
 		});
 

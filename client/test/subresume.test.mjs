@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 process.env.FERRY_HOME = mkdtempSync(join(tmpdir(), "ferry-subresume-"));
-const { createKeeper } = await import("../lib/subagent.mjs");
+const { FERRY_PROVIDERS } = await import("../lib/config.mjs");
+const { createKeeper, pickModel, subagentBudgetGuard } = await import("../lib/subagent.mjs");
 const { trackSubagent } = await import("../lib/jobs.mjs");
 
 const disposed = [];
@@ -52,4 +53,30 @@ test("a subagent still running cannot be resumed", () => {
 	assert.throws(() => k.take(t.job.id), new RegExp(`Subagent ${t.job.id} is still running`));
 	t.end("done");
 	assert.throws(() => k.take(t.job.id), /gone/);
+});
+
+test("pickModel uses agent override, then server subagentModel, then main model; explore budget steers once", () => {
+	FERRY_PROVIDERS.add("kiro");
+	const main = { id: "kiro-claude-opus-5.5" };
+	const fast = { id: "kiro-claude-sonnet-5.5" };
+	const own = { id: "kiro-claude-haiku-5.5" };
+	const modelRegistry = {
+		find: (prov, id) => prov === "kiro" ? ({ "kiro-claude-sonnet-5.5": fast, "kiro-claude-haiku-5.5": own })[id] : undefined,
+	};
+	const ctx = { model: main, modelRegistry };
+	assert.equal(pickModel({}, ctx, {}), main);
+	assert.equal(pickModel({}, ctx, { subagentModel: "kiro-claude-sonnet-5.5" }), fast);
+	assert.equal(pickModel({ model: "kiro/kiro-claude-haiku-5.5" }, ctx, { subagentModel: "kiro-claude-sonnet-5.5" }), own);
+
+	const sent = [];
+	let hook;
+	subagentBudgetGuard("explore", 3)({
+		on: (_ev, fn) => { hook = fn; },
+		sendMessage: (msg, opts) => sent.push({ msg, opts }),
+	});
+	hook(); hook();
+	assert.equal(sent.length, 0);
+	hook(); hook(); // fires once at 3, not again at 4
+	assert.equal(sent.length, 1);
+	assert.match(sent[0].msg.content, /write your final report now/);
 });

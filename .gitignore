@@ -1,6 +1,7 @@
 node_modules/
 __pycache__/
 *.egg-info/
+.DS_Store
 .env
 data/
 ferry-server.toml

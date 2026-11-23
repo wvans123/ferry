@@ -147,18 +147,33 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		}
 	}
 
-	/** Ask which of these messages the server still has (from an earlier run of this conversation). */
-	async function learnBlobs(hashes, signal) {
+	/** Ask whether the server still has this conversation prefix, tool list, or earlier message blobs (/resume). */
+	async function learnSession(conv, chain, toolsHash, hashes, signal) {
+		try {
+			const q = await post("/v1/ferry/have", JSON.stringify({ conv, tools_hash: toolsHash, hashes: [] }), signal);
+			if (!q.ok || !q.headers.get("content-type")?.includes("json")) return null;
+			const info = await q.json();
+			if (info.has_tools && toolsHash) knownTools.add(toolsHash);
+			const sc = info.conv;
+			if (sc && sc.count > 0 && sc.count <= chain.length - 1 && chain[sc.count] === sc.hash) {
+				known.set(conv, sc);
+				return sc;
+			}
+		} catch {
+			return null; // only an optimisation
+		}
+		if (hashes.length <= 2) return null;
 		const want = hashes.filter((h) => !haveBlobs.has(h));
 		for (let i = 0; i < want.length; i += 500) {
 			try {
 				const r = await post("/v1/ferry/have", JSON.stringify({ hashes: want.slice(i, i + 500) }), signal);
-				if (!r.ok || !r.headers.get("content-type")?.includes("json")) return;
+				if (!r.ok || !r.headers.get("content-type")?.includes("json")) return null;
 				for (const h of (await r.json()).have ?? []) haveBlobs.add(h);
 			} catch {
-				return; // only an optimisation
+				return null;
 			}
 		}
+		return null;
 	}
 
 	async function post(path, body, signal) {
@@ -201,8 +216,8 @@ export function createSyncProvider(cfg, models, opts = {}) {
 			list = [...(payload.system !== undefined ? [{ role: "__system__", content: structuredClone(payload.system) }] : []), ...list];
 			marks = takeCacheMarks(list);
 		}
-		// pictures: smaller, and only the latest few (pictures.mjs)
-		await fitPictures(list, Number(cfg.keepImages ?? 4));
+		// pictures: smaller, aged out after a few steps, and only the latest few (pictures.mjs)
+		await fitPictures(list, Number(cfg.keepImages ?? 4), Number(cfg.imageSteps ?? 4));
 		const msgs = list.map((m) => JSON.stringify(m));
 		// the session id keeps the server's copy usable after a restart or /resume (a random salt before ferry 0.15.1)
 		const conv = sha((sessionId || SALT) + (msgs[0] ?? "") + (msgs[1] ?? ""));
@@ -211,13 +226,13 @@ export function createSyncProvider(cfg, models, opts = {}) {
 		const toolsJson = Array.isArray(payload.tools) && payload.tools.length ? JSON.stringify(payload.tools) : null;
 		const toolsHash = toolsJson ? sha(toolsJson) : null;
 
-		const prev = known.get(conv);
-		const base = prev && prev.count <= msgs.length && chain[prev.count] === prev.hash ? prev.count : 0;
+		let prev = known.get(conv);
 		const hashes = msgs.map((m) => sha(m));
-		if (refs() && !prev && !asked.has(conv) && msgs.length > 2) { // first request of this conversation in this run
+		if (refs() && !prev && !asked.has(conv) && (msgs.length > 2 || toolsHash)) { // first request of this conversation in this run
 			asked.add(conv);
-			await learnBlobs(hashes, signal);
+			prev = await learnSession(conv, chain, toolsHash, hashes, signal);
 		}
+		const base = prev && prev.count <= msgs.length && chain[prev.count] === prev.hash ? prev.count : 0;
 		const blob = (b, withTools, useRefs = refs()) => JSON.stringify({
 			append: msgs.slice(b).map((m, i) => (useRefs && haveBlobs.has(hashes[b + i]) && m.length > 200 ? { ref: hashes[b + i] } : m)),
 			tools: withTools ? toolsJson : null });

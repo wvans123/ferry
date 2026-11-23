@@ -135,3 +135,30 @@ def test_old_settings_for_removed_features_load_without_an_error(tmp_path, monke
     cfg = load_default()
     assert cfg.bark_url == "https://bark.example/x" and list(cfg.models) == ["gpt", "gpt-b"]
     assert not hasattr(cfg.providers["a"], "fallback") and "'fallback' is no longer used" in capsys.readouterr().out
+
+
+def test_subagent_routing_round_trips_and_have_reports_conv_and_tools(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from ferry_server.app import create_app
+    from ferry_server.config import load_default, render_models_toml
+
+    monkeypatch.setenv("FERRY_SERVER_HOME", str(tmp_path))
+    p = {"id": "x", "base_url": "http://x/v1", "api_key_env": "K", "no_key": True}
+    models = [{"id": "main", "provider": "x", "model": "opus"}, {"id": "fast", "provider": "x", "model": "sonnet"}]
+    (tmp_path / "models.toml").write_text(render_models_toml([p], models, {"default": "main", "subagent": "fast"}), encoding="utf-8")
+    cfg = load_default()
+    assert cfg.subagent_model == "fast"
+
+    token = next(iter(cfg.users))
+    auth = {"Authorization": f"Bearer {token}", "x-ferry-protocol": "1"}
+    with TestClient(create_app(cfg)) as c:
+        info = c.get("/v1/ferry/models", headers=auth).json()
+        assert info["subagentModel"] == "fast"
+        commit = c.post("/v1/ferry/commit?conv=c1&base=0&base_hash=", content=b'{"append":["{\\"role\\":\\"user\\",\\"content\\":\\"hi\\"}"],"tools":"[{\\"name\\":\\"read\\"}]"}', headers=auth)
+        assert commit.status_code == 200
+        ack = commit.json()
+        import hashlib
+        th = hashlib.sha256(b'[{"name":"read"}]').hexdigest()
+        have = c.post("/v1/ferry/have", json={"conv": "c1", "tools_hash": th, "hashes": []}, headers=auth).json()
+        assert have["conv"] == {"count": ack["count"], "hash": ack["hash"]}
+        assert have["has_tools"] is True

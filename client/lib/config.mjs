@@ -66,16 +66,18 @@ export function cleanOldFiles(dir, keep = []) {
 const CONFIG = join(FERRY_HOME, "config.json");
 const MODELS_CACHE = join(FERRY_HOME, "models-cache.json");
 
+export const DEFAULT_CHUNK_BYTES = 128 * 1024;
 export const MAX_CHUNK_BYTES = 512 * 1024;
 export function chunkSize(value) {
 	const n = Number(value);
-	return Number.isFinite(n) && n > 0 ? Math.min(MAX_CHUNK_BYTES, Math.max(8 * 1024, Math.floor(n))) : MAX_CHUNK_BYTES;
+	if (n === Infinity) return MAX_CHUNK_BYTES;
+	return Number.isFinite(n) && n > 0 ? Math.min(MAX_CHUNK_BYTES, Math.max(8 * 1024, Math.floor(n))) : DEFAULT_CHUNK_BYTES;
 }
 
 export const DEFAULTS = {
 	server: "",
 	token: "",
-	chunkBytes: MAX_CHUNK_BYTES,
+	chunkBytes: DEFAULT_CHUNK_BYTES,
 	// Paths the agent may never read, change or run commands on (substring match, case-insensitive)
 	blockedPaths: [".env", ".ssh", "id_rsa", "secrets", "credentials"],
 	// Permission mode at start: default (ask before edits and commands), acceptEdits, plan (read-only), bypass.
@@ -123,6 +125,7 @@ export const DEFAULTS = {
 	compactLimit: "200k", // ...or once it holds this many tokens, whichever comes first ("0" = no limit)
 	compactKeep: "20k", // how much of the latest conversation a summary keeps word for word
 	keepImages: 4, // pictures kept in the conversation (the latest ones); older ones become a short note
+	imageSteps: 4, // assistant steps a picture stays in the conversation before becoming a short note (0 = off)
 	systemCerts: true, // also trust the certificates this computer trusts (a company proxy that checks HTTPS has its own)
 	caFile: "", // a PEM file with more certificates to trust, e.g. the company proxy's, if the computer's own are not enough
 	tempDir: "", // the temp folder: downloads, temporary scripts and the files they use. Empty = D:\ferry\temp on Windows with a D: drive, else <FERRY_HOME>/temp. In full access, deleting inside it does not ask
@@ -168,7 +171,7 @@ export const ADVANCED_SETTINGS = {
 	updateCheck: ["boolean", "once a day, look on GitHub for a newer Ferry and tell you (nothing is installed by itself)"],
 	browserPath: ["string", "a browser program to use instead of Edge / Chrome (full path), empty = Edge / Chrome"],
 	browserHeadless: ["boolean", "run that browser without a window (default); false: always show it, so you see what the agent does"],
-	chunkBytes: ["number", "largest conversation upload body, in bytes (8 KiB to 512 KiB; larger content goes up in parts; gets smaller when the network stops a request)"],
+	chunkBytes: ["number", "largest conversation upload body, in bytes (default 128 KiB, 8 KiB to 512 KiB; larger content goes up in parts; gets smaller when the network stops a request)"],
 	trimOldOutputs: ["string", "once the context is this big (e.g. 80k), old long tool outputs and old long write / command texts are left out, a batch at a time; 0 = never"],
 	batchNudge: ["number", "after this many replies in a row with one small look-up each, the agent is reminded to ask for several at once (0 = never)"],
 	maxParallel: ["number", "how many subagents may run at the same time (task, task_batch); the rest wait"],
@@ -181,6 +184,7 @@ export const ADVANCED_SETTINGS = {
 	rulesFromParents: ["boolean", "also put AGENTS.md / CLAUDE.md from folders above the project into the system prompt (off: only Ferry's own and the project's)"],
 	compactKeep: ["string", "how much of the latest conversation a summary keeps word for word, e.g. 20k (more = better memory of recent work, bigger requests)"],
 	keepImages: ["number", "how many of the latest pictures stay in the conversation; older ones are left out (the agent can read the file again)"],
+	imageSteps: ["number", "how many assistant replies a picture stays in the conversation before becoming a short note (default 4; 0 = keep until keepImages drops it)"],
 	systemCerts: ["boolean", "also trust the HTTPS certificates this computer trusts (needed when a company proxy checks HTTPS)"],
 	caFile: ["string", "a PEM file with more certificates to trust (full path), e.g. the company proxy's; empty = none"],
 	officeAuthor: ["string", "the name on Word tracked changes and comments the agent makes (empty: the Office user name, as Word itself uses)"],

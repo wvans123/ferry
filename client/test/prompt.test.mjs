@@ -31,6 +31,10 @@ test("the main agent says what it does while it works; both agents batch calls, 
 		assert.match(p, /Send the update together with the next tool call/);
 		assert.match(p, /Do not check on it with job_output or short sleeps/);
 		assert.match(p, /Once you know enough to act, act/);
+		assert.match(p, /align with the user via ask_user/);
+		assert.match(p, /Prefer dedicated tools/);
+		assert.match(p, /outline: true/);
+		assert.match(p, /Once checks pass, stop immediately/);
 		assert.match(p, /belong to the user/);
 		assert.match(p, /The final reply must make sense on its own/);
 	}

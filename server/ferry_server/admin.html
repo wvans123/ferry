@@ -274,6 +274,7 @@ details.full summary { cursor: pointer; color: var(--muted); font-size: 14px; ma
         <p class="hint">工作电脑上选 auto（默认）时，由这里决定。</p>
         <div class="grid3">
           <div><label class="f" for="rDefault">默认模型</label><select id="rDefault"></select></div>
+          <div><label class="f" for="rSubagent">子 agent 用</label><select id="rSubagent"></select></div>
           <div><label class="f" for="rSummary">写上下文摘要用</label><select id="rSummary"></select></div>
           <div><label class="f" for="rImage">生成图片用</label><select id="rImage"></select></div>
           <div><label class="f" for="rAdvisor">顾问模型</label><select id="rAdvisor"></select></div>
@@ -659,7 +660,8 @@ async function loadProviders() {
   P = await api("providers");
   const all = P.providers.flatMap((p) => p.models.map((m) => ({ id: m.id, label: `${m.model}（${p.name}）` })));
   const opts = (sel, extra) => (extra ? `<option value="">${extra}</option>` : "") + all.map((o) => `<option value="${esc(o.id)}" ${o.id === sel ? "selected" : ""}>${esc(o.label)}</option>`).join("");
-  $("rDefault").innerHTML = opts(P.routing.default); $("rSummary").innerHTML = opts(P.routing.summary, "和对话用的模型一样（推荐）");
+  $("rDefault").innerHTML = opts(P.routing.default); $("rSubagent").innerHTML = opts(P.routing.subagent, "和主对话用的模型一样");
+  $("rSummary").innerHTML = opts(P.routing.summary, "和对话用的模型一样（推荐）");
   $("rImage").innerHTML = opts(P.routing.image, "不用（agent 不能生成图片）");
   $("rAdvisor").innerHTML = opts(P.routing.advisor, "最贵的那个模型（和默认模型相同时不开）");
   $("rExpose").checked = P.routing.expose;
@@ -669,7 +671,7 @@ async function loadProviders() {
       : p.key_tail ? `<span class="tag good">Key 已保存 ••••${esc(p.key_tail)}</span>` : '<span class="tag bad">缺少 Key</span>';
     return `<div class="prov"><div class="prov-head"><h3>${esc(p.name)}</h3>${key}<span class="addr">${esc(p.base_url)}</span>
       <span class="acts"><button class="btn small" data-test="${i}" title="给这家的每个模型发一个很小的请求">测试</button><button class="btn small" data-edit="${i}">编辑</button><button class="btn small danger" data-del="${i}">删除</button></span></div>
-      <div class="chips">${p.models.map((m) => `<span class="chip"><span class="dot ${m.ready ? "" : "off"}"></span>${esc(m.model)}<span class="muted" title="上下文长度">${m.context_window >= 1e6 ? (m.context_window / 1e6).toFixed(m.context_window % 1e6 ? 1 : 0) + "M" : Math.round(m.context_window / 1000) + "k"}</span>${(P.groups || {})[m.id] ? `<span class="tag" title="有 ${P.groups[m.id].length} 家服务商提供这个模型：不同会话分到不同的服务商，一家出错时自动换另一家">⇄ ${P.groups[m.id].length} 家</span>` : ""}${m.price && m.price.input != null ? `<span class="muted" title="每百万 token 的价格（美元）：输入 / 输出">$${m.price.input}/${m.price.output ?? "?"}</span>` : ""}${m.id === P.routing.default ? ' <span class="tag">默认</span>' : ""}${m.id === P.routing.summary ? ' <span class="tag lamp">写摘要</span>' : ""}<span class="res" data-res="${esc(m.id)}"></span></span>`).join("")}</div></div>`;
+      <div class="chips">${p.models.map((m) => `<span class="chip"><span class="dot ${m.ready ? "" : "off"}"></span>${esc(m.model)}<span class="muted" title="上下文长度">${m.context_window >= 1e6 ? (m.context_window / 1e6).toFixed(m.context_window % 1e6 ? 1 : 0) + "M" : Math.round(m.context_window / 1000) + "k"}</span>${(P.groups || {})[m.id] ? `<span class="tag" title="有 ${P.groups[m.id].length} 家服务商提供这个模型：不同会话分到不同的服务商，一家出错时自动换另一家">⇄ ${P.groups[m.id].length} 家</span>` : ""}${m.price && m.price.input != null ? `<span class="muted" title="每百万 token 的价格（美元）：输入 / 输出">$${m.price.input}/${m.price.output ?? "?"}</span>` : ""}${m.id === P.routing.default ? ' <span class="tag">默认</span>' : ""}${m.id === P.routing.subagent ? ' <span class="tag">子 agent</span>' : ""}${m.id === P.routing.summary ? ' <span class="tag lamp">写摘要</span>' : ""}<span class="res" data-res="${esc(m.id)}"></span></span>`).join("")}</div></div>`;
   }).join("") || `<div class="card empty">还没有服务商。点右上角"添加服务商"，选一个预设，填上 API Key 就能用。</div>`;
   for (const b of document.querySelectorAll("[data-edit]")) b.onclick = () => openEditor(P.providers[+b.dataset.edit]);
   for (const b of document.querySelectorAll("[data-test]")) b.onclick = async () => {
@@ -685,7 +687,7 @@ async function loadProviders() {
 function payload(list, routing) {
   return { providers: list.map((p) => ({ id: p.id, name: p.name, preset: p.preset, base_url: p.base_url, api_key_env: p.api_key_env, key: p.key || "", api: p.api, max_concurrent: p.max_concurrent || 0, rpm: p.rpm || 0, cooldown: p.cooldown || 60, stall_seconds: p.stall_seconds ?? 120,
     models: p.models.map((m) => ({ id: m.id, model: m.model, name: m.name, context_window: m.context_window, max_tokens: m.max_tokens, api: m.api || p.api, ...(m.price ? { price: m.price } : {}) })) })),
-    routing: routing || { default: $("rDefault").value, summary: $("rSummary").value, image: $("rImage").value, advisor: $("rAdvisor").value, expose: $("rExpose").checked } };
+    routing: routing || { default: $("rDefault").value, subagent: $("rSubagent").value, summary: $("rSummary").value, image: $("rImage").value, advisor: $("rAdvisor").value, expose: $("rExpose").checked } };
 }
 async function saveAll(list, routing) { P = await api("providers", "PUT", payload(list, routing)); }
 $("saveRouting").onclick = async () => { try { await saveAll(P.providers); say("routingMsg", "已保存，下一次请求生效"); loadProviders(); } catch (e) { say("routingMsg", e.message, false); } };
