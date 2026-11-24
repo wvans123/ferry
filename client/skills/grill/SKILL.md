@@ -27,12 +27,12 @@ Treat an open idea, patent concept, contribution, deck, or architecture as a **d
    - When the frontier is empty, output a compact summary:
      - **Agreed decisions** (one line each);
      - **Deferred / out-of-scope items** (if any);
-     - **Next step / target skill** (e.g. `patent-idea`, `sa6-tdoc-writing`, `hw-ppt`, or direct implementation), then proceed if the user asked you to build.
+     - **Next step / target skill** (e.g. `patent-idea`, `sa-tdoc-writing`, `hw-ppt`, or direct implementation), then proceed if the user asked you to build.
 
 ## Scenario checklists (pick only what applies)
 
 ### Patent Idea (3GPP SA / RAN / Algorithm / System)
-- **Bottleneck & numeric example**: Which exact step of which existing procedure/pipeline gets stuck, and what concrete numbers show the failure?
+- **Bottleneck**: Which exact step of which existing procedure/pipeline gets stuck (missing state/signaling context for architecture patents, or concrete latency/resource limits for performance patents)?
 - **Simple workarounds**: What are the 2 most obvious fixes a skilled engineer would try first, and why does each fail?
 - **Target entity & mechanism**: Which network element, protocol layer (PHY/MAC/RRC/CN), or system module is enhanced, what new signaling/IE/criterion/operator is added, and what fallback runs when it is absent?
 - **External detectability**: If internal logic is swapped for another algorithm, does external signaling, message timing, or observable I/O still change? (If not, move the main claim to observable interaction or dual-side pipeline steps.)

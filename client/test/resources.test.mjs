@@ -6,8 +6,8 @@ import { join } from "node:path";
 const temp = mkdtempSync(join(tmpdir(), "ferry-resources-"));
 process.env.FERRY_HOME = join(temp, "home");
 const {
-	GLOBAL_PROJECT_NAME, applyPull, collectResource, createResourceClient, createResources,
-	discoverResources, parseSyncArgs, recoverPull, resourcePath, selectResource, summarizeSkillFiles, textDiff,
+	GLOBAL_PROJECT_NAME, applyPull, builtinSkillNames, collectResource, createResourceClient, createResources,
+	discoverResources, extractSkillOnboarding, parseSyncArgs, recoverPull, resourcePath, selectResource, summarizeSkillFiles, textDiff,
 } = await import("../lib/resources.mjs");
 after(() => rmSync(temp, { recursive: true, force: true }));
 function project(name) { const root = join(temp, name); mkdirSync(root, { recursive: true }); return root; }
@@ -336,4 +336,31 @@ test("local.md and *.local.json workspace profiles are skipped on upload and pre
 	assert.match(readFileSync(join(root, ".ferry/skills/patent-idea/SKILL.md"), "utf8"), /v2/);
 	assert.equal(readFileSync(join(root, ".ferry/skills/patent-idea/references/local.md"), "utf8"), "D:/Private/MyKB");
 	assert.equal(readFileSync(join(root, ".ferry/skills/patent-idea/config.local.json"), "utf8"), "{\"kb\":\"D:/Private\"}");
+});
+
+test("first-install onboarding hint fires only before local.md exists and built-in skill-creator validates all built-in skills", async () => {
+	assert.ok(builtinSkillNames().includes("skill-creator"));
+	const freshHome = join(temp, "fresh-home");
+	mkdirSync(freshHome, { recursive: true });
+	const skillDir = join(freshHome, "skills", "patent-idea");
+	file(freshHome, "skills/patent-idea/SKILL.md", [
+		"---",
+		"name: patent-idea",
+		"description: Patent helper",
+		"metadata:",
+		'  onboarding: "我是用于写专利的 Skill。如有背景知识库可告知路径建立索引。"',
+		"---",
+		"# Patent Idea",
+	].join("\n"));
+
+	assert.match(extractSkillOnboarding(skillDir, freshHome) ?? "", /背景知识库/);
+	file(freshHome, "local.md", "# Indexed KB\n");
+	assert.equal(extractSkillOnboarding(skillDir, freshHome), null);
+
+	const { validateSkillDir } = await import("../skills/skill-creator/scripts/validate_skill.mjs");
+	const builtinsRoot = new URL("../skills/", import.meta.url);
+	for (const name of builtinSkillNames()) {
+		const issues = validateSkillDir(new URL(name, builtinsRoot).pathname);
+		assert.deepEqual(issues.filter((i) => i.level === "FAIL"), [], `built-in skill ${name} failed validation: ${JSON.stringify(issues)}`);
+	}
 });

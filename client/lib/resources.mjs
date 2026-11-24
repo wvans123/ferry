@@ -59,6 +59,26 @@ export function builtinSkillNames() {
 	return readdirSync(BUILTIN_SKILLS_DIR).sort().filter((name) => existsSync(join(BUILTIN_SKILLS_DIR, name, "SKILL.md")));
 }
 
+/** Return a first-time setup hint from SKILL.md frontmatter (`metadata.onboarding`) when this machine has no local KB index yet. */
+export function extractSkillOnboarding(skillDir, ferryHome = FERRY_HOME) {
+	try {
+		const mdPath = join(skillDir, "SKILL.md");
+		if (!existsSync(mdPath)) return null;
+		if (existsSync(join(ferryHome, "local.md")) || existsSync(join(skillDir, "references", "local.md"))
+			|| existsSync(join(skillDir, "local.md"))) {
+			return null;
+		}
+		const fm = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(readFileSync(mdPath, "utf8"))?.[1];
+		if (!fm) return null;
+		const m = /^\s*onboarding:\s*(.+)$/m.exec(fm);
+		if (!m) return null;
+		const raw = m[1].trim().replace(/^(['"])([\s\S]*)\1$/, "$2").trim();
+		return raw || null;
+	} catch {
+		return null;
+	}
+}
+
 export function resourcePath(path) {
 	if (typeof path !== "string" || !path || path.length > 240 || path.split("/").some((p) => !p || p === "." || p === ".."
 		|| /[\\:*?"<>|\x00-\x1f]/.test(p) || /[ .]$/.test(p) || /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(p) || excluded(p))) {
@@ -849,10 +869,15 @@ export function createResources(cfg) {
 					}
 					applyPull(installRoot, activeDir, diskBefore, diskAfter, activeState);
 					const installedDirs = choices.map((c) => join(installRoot, c.destPath));
+					const onboardingHints = choices.flatMap((c, idx) => {
+						const hint = extractSkillOnboarding(installedDirs[idx]);
+						return hint ? [{ name: c.name, hint }] : [];
+					});
 					result = {
 						pulled: choices.map((c) => installTarget === "global" ? `user:${c.name}` : c.destPath),
 						target: installTarget,
 						installedPaths: installedDirs,
+						onboardingHints,
 						revision: revision ?? head.revision,
 						backups: join(activeDir, "backups"),
 						instruction: "Use /reload when the current response has finished. Newly started subagents use the updated files.",
@@ -944,7 +969,10 @@ export function createResources(cfg) {
 				}
 				if (result.pulled) {
 					const where = result.target === "global" ? `本机全局 (${join(FERRY_HOME, "skills")})` : `当前项目 (.ferry/skills)`;
-					ctx.ui.notify(`已安装/更新 ${result.skillNames.join(", ")} 到${where}。`, "info");
+					const hints = (result.onboardingHints ?? []).map((h) => `• [${h.name}] ${h.hint}`).join("\n");
+					const msg = `已安装/更新 ${result.skillNames.join(", ")} 到${where}。` +
+						(hints ? `\n\n首次使用提示（可选，不配置也可直接使用）：\n${hints}` : "");
+					ctx.ui.notify(msg, "info");
 					if (await confirmed(ctx, "Skill 文件已更新。现在重载使其在当前会话立即生效？", "立即重载")) {
 						await ctx.reload();
 					}
