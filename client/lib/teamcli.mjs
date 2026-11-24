@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { providerOf, readModelsCache } from "./config.mjs";
 import { openInBrowser } from "./gateway.mjs";
 
@@ -74,8 +74,16 @@ function start(opts) {
 	const args = ["-y", `paperclipai@${version}`, ...(configured ? ["run"] : ["onboard", "--yes"])];
 	console.log(configured ? "Starting Paperclip (the team board) at http://127.0.0.1:3100 . Keep this window open; Ctrl+C stops it."
 		: "Setting up Paperclip the first time (downloads it from npm, about a minute), then starting it at http://127.0.0.1:3100 .");
-	const child = spawn(process.platform === "win32" ? "npx.cmd" : "npx", args, {
-		stdio: "inherit", env: { ...process.env, ...QUIET_ENV }, shell: process.platform === "win32" });
+	const npxCandidates = [
+		join(dirname(process.execPath), "node_modules", "npm", "bin", "npx-cli.js"),
+		join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npx-cli.js"),
+	];
+	const npxScript = npxCandidates.find((p) => existsSync(p));
+	const child = npxScript
+		? spawn(process.execPath, [npxScript, ...args], { stdio: "inherit", env: { ...process.env, ...QUIET_ENV } })
+		: process.platform === "win32"
+			? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npx.cmd", ...args], { stdio: "inherit", env: { ...process.env, ...QUIET_ENV } })
+			: spawn("npx", args, { stdio: "inherit", env: { ...process.env, ...QUIET_ENV } });
 	let running = true;
 	if (opts.open !== "false" && !opts["no-open"]) {
 		whenUp(BOARD, () => running).then((up) => {

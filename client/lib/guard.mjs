@@ -6,6 +6,7 @@ import { findBash, tempDirOf } from "./config.mjs";
 import { basename, resolve } from "node:path";
 import { addRule, decide, hostOf, loadRules, MODE_LABEL, MODES, newSession, noteCreated, prefixRule, restoreSession } from "./permissions.mjs";
 import { openRemote, race } from "./remote.mjs";
+import { patchUISelect } from "./dialog.mjs";
 
 // One state per ferry process, shared by the main agent and its subagents
 // extraDirs: more folders treated like the project; session: what this run made (deletable in bypass without asking)
@@ -22,7 +23,7 @@ export function initialMode(cfg) {
 	return MODES.includes(cfg.permissionMode) ? cfg.permissionMode : "default";
 }
 
-const short = (s, n = 300) => (s.length > n ? `${s.slice(0, n)}...` : s);
+const short = (s, n = 1200) => (s.length > n ? `${s.slice(0, n)}...` : s);
 
 const DENY_NOTE = "Deny, and tell the agent what to do instead";
 
@@ -31,6 +32,7 @@ const DENY_NOTE = "Deny, and tell the agent what to do instead";
  * Returns { block, reason } or undefined (go ahead).
  */
 export async function ask(cfg, ui, verdict, event, cwd, who) {
+	patchUISelect(ui);
 	const tool = event.toolName;
 	const input = event.input ?? {};
 	const detail = short(String(input.command ?? input.path ?? input.url ?? JSON.stringify(input)));

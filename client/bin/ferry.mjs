@@ -452,6 +452,7 @@ async function run(args) {
 			{ name: "ferry-sync", factory: sync, hidden: true },
 			{ name: "ferry-prompt", factory: createPrompt(cfg), hidden: true },
 			{ name: "ferry-steer", factory: createSteer(), hidden: true }, // before the guard: skipped calls are not asked about
+			{ name: "ferry-dialogs", factory: (await import("../lib/dialog.mjs")).createDialogs(), hidden: true },
 			{ name: "ferry-modes", factory: createModes(cfg), hidden: true },
 			{ name: "ferry-guard", factory: createGuard(cfg), hidden: true },
 			{ name: "ferry-checkpoints", factory: createCheckpoints(), hidden: true },

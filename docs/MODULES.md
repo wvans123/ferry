@@ -65,6 +65,7 @@ Ferry 按模块开发：每个功能是一个模块，加的时候只动这个�
 | 看门狗 | 干活时每 5 分钟告诉服务端还在跑；跑到一半 15 分钟没消息（网关要确认、睡眠、断网、ferry 退出），服务端自己推手机，又连上时再推一条 | `client/lib/heartbeat.mjs`、`server/ferry_server/watchdog.py` | 客户端 `phoneNotify`；服务端 `stall_minutes`（0 关），要设了 Bark | F112 |
 | 旁问、顾问、回顾 | `advisor` 工具、`/btw`、长请求做完的一句话回顾，共用服务端一个接口；`review` 子 agent 和交付质量提示在 `subagent.mjs`、`prompt.mjs` | `client/lib/side.mjs`、`server/ferry_server/side.py`；`sync.mjs` 里 `cfg.side` 记着对话的服务端副本 | `advisor`、`recap`；服务端管理页的顾问模型 | F83–F85 |
 | Skill 同步 | `/sync`（及 `/skills install` / `upload`、`project_resources`）按账户整包同步带 `SKILL.md` 的 skill 目录（含 `scripts/`、参考文件和模板），默认同步到全局 `~/.ferry/skills`、也可选择当前项目 `.ferry/skills`，分包上传、冲突保护、历史版本恢复；服务端管理页可直接编辑 | `client/lib/resources.mjs`、`server/ferry_server/resources.py`、`admin.py`、`admin.html` | — | 单元测试 |
+| 交互弹窗 | 所有确认框与选择框严格贴合终端高度（按钮底部常驻，长命令或文件清单在框内用 `←`/`→`、`PgUp`/`PgDn` 或滚轮翻页，支持 `1-9` 快选与鼠标点击） | `client/lib/dialog.mjs`；全局接管 `ctx.ui.select` | — | `dialog.test.mjs`、F38 |
 | 问题报告 | `/report` 经服务端发 GitHub issue | `client/lib/report.mjs`、`server/ferry_server/report.py` | 服务端设了令牌才发到 GitHub | 单元测试 |
 
 `report.py`、`search.py`、`side.py`、`memreview.py`、`remote.py`、`watchdog.py`、`resources.py`、`admin.py` 都已按 `mount()` 方式在 `app.py` 末尾接入；对话同步、模型转发和全局记忆的核心接口仍留在 `app.py` 里。

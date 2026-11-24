@@ -385,22 +385,34 @@ function newer(a, b) {
 	return false;
 }
 
+function npmCommand(subtool = "npm") {
+	const cli = subtool === "npx" ? "npx-cli.js" : "npm-cli.js";
+	const cands = [
+		join(dirname(process.execPath), "node_modules", "npm", "bin", cli),
+		join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", cli),
+	];
+	const script = cands.find((p) => existsSync(p));
+	if (script) return { exe: process.execPath, prefix: [script] };
+	return WIN ? { exe: process.env.ComSpec || "cmd.exe", prefix: ["/d", "/s", "/c", `${subtool}.cmd`] } : { exe: subtool, prefix: [] };
+}
+
 /** `ferry update [file.zip]`: get the latest release from GitHub (or use a zip you downloaded) and install it. */
 /** Installed from a git checkout (git clone, npm ci, ferry install): git pull, npm ci, and install from it again. */
 function updateCheckout(checkout, info, env) {
 	const run = (cmd, args) => {
 		console.log(`> ${cmd} ${args.join(" ")}   (in ${checkout})`);
-		const r = spawnSync(cmd, args, { cwd: checkout, stdio: "inherit", shell: WIN, env });
+		const resolved = cmd === "npm" ? npmCommand("npm") : { exe: cmd, prefix: [] };
+		const r = spawnSync(resolved.exe, [...resolved.prefix, ...args], { cwd: checkout, stdio: "inherit", env });
 		if (r.status !== 0) throw new Error(`"${cmd} ${args.join(" ")}" failed in ${checkout}`);
 	};
-	const head = () => spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8", shell: WIN }).stdout?.trim();
+	const head = () => spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8", env }).stdout?.trim();
 	const before = head();
 	run("git", ["pull", "--ff-only"]);
 	if (before && before === head() && existsSync(join(checkout, "node_modules"))) {
 		const v = JSON.parse(readFileSync(join(checkout, "package.json"), "utf8")).version;
 		if (resolve(APP_ROOT) === resolve(checkout) || resolve(APP_ROOT).endsWith(v)) return console.log(`Ferry ${v} is the latest version.`);
 	}
-	run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"]);
+	run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"]);
 	if (resolve(APP_ROOT) !== resolve(checkout)) { // the ferry command runs an installed copy: install the new one
 		run(process.execPath, [join(checkout, "client", "bin", "ferry.mjs"), "install", ...(info.clientOnly ? ["--client-only"] : [])]);
 	}

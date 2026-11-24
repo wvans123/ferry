@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { FERRY_HOME, chunkSize, serverHeaders } from "./config.mjs";
 import { createUploader } from "./upload.mjs";
 import { gatewayPage } from "./gateway.mjs";
+import { patchUISelect } from "./dialog.mjs";
 
 const MAX_FILE = 16 * 1024 * 1024;
 const MAX_FILES = 2048;
@@ -436,11 +437,13 @@ export function createResourceClient(cfg, { fetch: send = fetch, sleep, say } = 
 
 async function confirmed(ctx, text, action) {
 	if (!ctx.hasUI) throw new Error("Run /sync in the interactive Client to review and approve resource changes.");
+	patchUISelect(ctx.ui);
 	return await ctx.ui.select(text, [action, "取消"]) === action;
 }
 
 async function review(ctx, text, action, diff) {
 	if (!ctx.hasUI) throw new Error("Run /sync in the interactive Client to review resource changes.");
+	patchUISelect(ctx.ui);
 	for (;;) {
 		const choice = await ctx.ui.select(text, [action, "查看文本差异", "取消"]);
 		if (choice !== "查看文本差异") return choice === action;
@@ -815,7 +818,7 @@ export function createResources(cfg) {
 						: `从服务端 [${serverBucket.name}] r${revision ?? head.revision} 安装到${installTarget === "global" ? `本机全局 (${join(FERRY_HOME, "skills")})` : `当前项目 (${join(root, ".ferry", "skills")})`}`;
 				const text = `${destDesc}\n` +
 					(summaries.length ? `包含整包内容\n  ${summaries.join("\n  ")}\n` : "") +
-					`${preview.slice(0, 30).join("\n") || "文件内容相同"}${preview.length > 30 ? `\n... 其余 ${preview.length - 30} 个文件变更` : ""}\n` +
+					`${preview.slice(0, 200).join("\n") || "文件内容相同"}${preview.length > 200 ? `\n... 其余 ${preview.length - 200} 个文件变更` : ""}\n` +
 					`共 ${fmtBytes(bytes)}；单个上传分片最多 ${fmtBytes(chunkSize(cfg.chunkBytes))}\n` +
 					(skipped.length ? `已自动跳过临时/敏感文件（${skipped.length} 个）：${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? " ..." : ""}\n` : "") +
 					(conflicts.length ? `需确认覆盖或删除\n${conflicts.join("\n")}\n` : "");
