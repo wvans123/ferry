@@ -24,29 +24,32 @@ Ferry 也认 Claude Code 的文件夹：`.claude\commands\`、`.claude\agents\`�
 
 ## 在 Client 和 Server 之间同步 Skill
 
-在 Ferry 对话里输入 `/sync`，第一次使用时把当前工作区关联到 Server 上的一个工作区。同一 Ferry 账户下的笔记本和主机可以关联到同一个工作区。Git 项目以仓库根目录作为同步根目录，其他文件夹以启动 Ferry 时所在目录为准。
+在任意电脑、任意目录下输入 `/sync`（或 `/skills install` / `/skills upload`），即可跨电脑同步自己的 Skill 整包（包含 `SKILL.md`、`scripts/` 脚本、`references/` 参考资料、`examples/` 和 `templates/` 模板等全部子文件）。
 
-可以按名字或路径选择 skill，也可以直接告诉 agent 你想同步哪个 skill：
+默认使用账户自带的**服务端全局 Skill 库**，无需提前执行 `bind`：
+- **上传**默认进服务端全局库，也可在弹窗或参数中选上传到当前项目专属空间（`-p` / `--project`）；
+- **安装/拉取**时可选择安装到**本机全局**（`%USERPROFILE%\.ferry\skills\` / `~/.ferry/skills/`，默认，所有项目通用）或**当前项目**（`.ferry/skills/`）。
+
+打开项目后运行 `/sync`、`/sync status` 或按 Tab 补全时，会自动读取并提示当前会话已加载的本机全局与项目 Skill、文件数量及子目录构成（内置 `grill`、`office` 随客户端自带，无需同步）：
 
 ```text
-/sync upload research
-/sync upload .claude/skills/patent-research
-/sync upload "D:\my-skills\patent research"
-/sync upload user:release-notes
-/sync pull research
-/sync status
-/sync history
-/sync pull research --revision 2
-/sync bind
+/sync status                      # 查看本机全局、当前项目与服务端全局库的同步状态
+/sync upload hw-ppt               # 上传本机 hw-ppt 整包（默认进全局库，也可加 -g 或 -p）
+/sync upload --all -g             # 一键把本机所有新建/修改过的 Skill 上传到全局库
+/sync install hw-ppt              # 从服务端安装 hw-ppt（弹窗可选装到本机全局或当前项目）
+/sync install hw-ppt -g           # 直接安装到本机全局 ~/.ferry/skills/hw-ppt
+/sync install hw-ppt -p           # 直接安装到当前项目 .ferry/skills/hw-ppt
+/sync install --all -g            # 在新电脑上一键把服务端全部 Skill 装到本机全局
+/sync history                     # 查看版本历史
+/sync install hw-ppt --revision 2 # 恢复指定历史版本到本地
+/sync bind                        # （可选）将当前文件夹关联到服务端独立项目空间
 ```
 
-同步范围只包括带 `SKILL.md` 的 skill 目录，目录中的 scripts、references、模板和二进制文件会一起传输。`user:名字` 选择个人 Ferry skills；其他路径可以指向 skill 文件夹。个人和外部 skill 上传后放在工作区的 `.ferry/skills/<目录名>`。名字重复时请使用完整路径。
+模型也可在得到你指示时调用 `project_resources` 工具查看状态、上传或安装，并在展示整包文件构成、差异和大小后等待你确认。Client 和 Server 两边都有未同步修改时会提示冲突；Client 安装/拉取前自动保存备份，异常中断可恢复。
 
-模型可用 `project_resources` 工具查找 skill 名称，并在展示文件变更、差异和大小后等待确认。Client 和 Server 两边都有未同步修改时会提示冲突；Server 会检查并发写入。Client 拉取前保存备份，Server 管理页遇到并发冲突会保留编辑草稿。
+Server 管理页的“Skills”页面默认排在第一位显示“全局 Skill 库”，左侧选 skill 和文件，右侧可直接在线编辑 `SKILL.md`、脚本或参考文件，保存后在任意电脑跑 `/sync install <名字>` 即可同步下来并重载。
 
-Server 管理页的“Skills”页面按工作区列出技能，左侧选 skill 和文件，右侧直接编辑 `SKILL.md`、脚本或参考文件。历史可查看和恢复；恢复会保存为新内容，之前的历史仍保留。保存后，在 Client 用 `/sync pull` 拉取，再按提示重载 skill。删除 Server 上的 skill 不会自动删除 Client 的本地文件。
-
-Skill 上传复用现有分包器，按当前 `chunkBytes` 分包，单请求体最多 512 KiB，遇到网关拒绝会自动缩小。每文件最多 4 MiB，每工作区最多 512 个文件、共 32 MiB。同步会排除 `.git`、`node_modules`、`.env`、常见凭证文件和私钥，拒绝符号链接和跨平台路径冲突。Server 将 skill 内容和历史保存在数据目录的 `resources.sqlite3`，备份 Server 时请一并保存。
+Skill 上传复用分包传输器，默认单包 ≤ 128 KiB（上限 512 KiB），遇到公司网关拦截会自动缩小分片。单个文件最多 16 MiB，单个 Skill 最多 2048 个文件，整个库最多 4096 个文件、共 96 MiB。同步会自动跳过 `.git`、`node_modules`、`__pycache__`、`*.pyc`、Office 临时锁文件 `~$*`、`.env` 及常见密钥文件，拒绝符号链接和跨平台路径冲突。Server 将内容和历史保存在数据目录的 `resources.sqlite3`。
 
 ## 规则：AGENTS.md
 

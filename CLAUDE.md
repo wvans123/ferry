@@ -99,7 +99,7 @@ Branches: main for Ferry itself; DSH / Codex / Claude Code integrations on `inte
 
 ## Where things stand (2026-11-23, release 0.47.1)
 
-- Released: 0.47.1 (account-scoped Skill sync via `/sync` and admin Skills editor). Releases since 0.31: 0.32 to 0.41
+- Released: 0.49.0 (global + project Skill sync via `/sync install` / `/sync upload` with scope selector and folder summary; 0.48.0 shipped `/grill`, image step decay, zero-reupload `/resume`, subagent model routing, and Office upgrades). Releases since 0.31: 0.32 to 0.41
   (models per provider, server web search, memory distill, Word tracked changes, eval tasks), 0.42 (gateway wait,
   watchdog), 0.43 (phone approvals and console), 0.44.x (background job watch and `/loop`, delete rule, keep-alive,
   300 s stall default), 0.45 (batch-trimmed old outputs, 200k compact limit, lookup batch nudge, `/goal` retries and

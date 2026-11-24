@@ -78,7 +78,7 @@
 |---|---|
 | 对话 | `/new` 新对话 · `/resume` 回到以前的对话 · `/name <名字>` 给对话起名 · `/session` 这次对话的信息 · `/compact [保留什么]` 现在就压缩上下文 · `/rewind` 回到之前某条消息 · `/btw <问题>` 旁问一句，不打断、不进对话 |
 | 干活 | `/goal <目标>` 一直做到完成 · `/grill [要做的事]` 动工前先提问对齐项目结构、范围和关键取舍 · `/tasks` 待办、子 agent 和后台命令 · `/loop [间隔] <提示>` 每隔一段时间做一次（见[后台任务和子 agent](#后台任务和子-agent)） · `/phone [off]` 手机控制台链接（见[手机控制台](#手机控制台)） |
-| 知识 | `/memory` 看记住了什么 · `/memory <内容>` 记一条 · `/memory tidy` 整理记忆 · `/memory distill` 从旧对话里找反复出现的事 · `/skills` 它会哪些技能 · `/sync` 同步 skill 到服务端或拉取（见 [CUSTOMIZE.md](CUSTOMIZE.md#在-client-和-server-之间同步-skill)） |
+| 知识 | `/memory` 看记住了什么 · `/memory <内容>` 记一条 · `/memory tidy` 整理记忆 · `/memory distill` 从旧对话里找反复出现的事 · `/skills` 查看或安装技能 · `/sync` 整包上传或安装 skill（默认全局 `~/.ferry/skills`，可选当前项目，见 [CUSTOMIZE.md](CUSTOMIZE.md#在-client-和-server-之间同步-skill)） |
 | 信息 | `/context [大小]` 上下文用了多少，带大小就改（如 `/context 400k`）· `/cost` 花了多少 token 和钱 · `/status` 连接、模型、用了哪些规则文件，并做一次快速检查 |
 | 设置 | `/config` 常用设置 · `/model` 选模型 · `/mcp` MCP 服务器 · `/quit` 退出 |
 | 问题 | `/report [哪里不对]` 让 agent 写一份问题报告，你看过同意后经服务端发到 GitHub（见[报告问题](#报告问题)） |

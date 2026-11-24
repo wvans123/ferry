@@ -39,7 +39,7 @@ C:\my-project> ferry
 - agent 在工作电脑上干活。引擎是开源的 [pi](https://github.com/earendil-works/pi)，Ferry 在上面加了权限、记忆、子 agent、联网、Office、斜杠命令等扩展。代码、对话记录、记忆都留在工作电脑上。
 - 服务端只负责问模型：把工作电脑传来的新增内容拼回完整对话，加上团队提示词，选模型，然后调用。API Key 只在服务端。
 - 长对话的上下文很快超过 1 MB，所以每轮只上传新增的消息。每个上传请求体最多 512 KiB（524,288 字节），图片也按序列化后的字节分块；600 KiB 分成 512 KiB 和 88 KiB，再发一个空请求体的 commit，服务端拼起来。HTTP 请求头不算在此上限内。网络限制更小时会自动缩小分块。服务端丢了缓存也没关系，工作电脑会整段重传。此分块只用于 client → server；server → 模型仍需遵守上游的上下文和请求大小限制。
-- `/sync` 可把 skill 上传到 Ferry Server 管理，也可拉取编辑后的版本。Skill 内的脚本和参考文件一起分包传输，支持历史恢复和冲突确认。详见 [Skill 同步](docs/CUSTOMIZE.md#在-client-和-server-之间同步-skill)。
+- `/sync`（或 `/skills install` / `/skills upload`）可跨电脑整包上传和安装 skill（含 `SKILL.md`、`scripts/` 脚本、参考资料和模板），默认同步到全局 `~/.ferry/skills/`，也可选择安装或上传到当前项目，支持分包传输、历史恢复和冲突确认。详见 [Skill 同步](docs/CUSTOMIZE.md#在-client-和-server-之间同步-skill)。
 
 ## 安装
 

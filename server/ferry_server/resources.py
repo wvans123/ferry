@@ -15,9 +15,12 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 MAX_PART = 512 * 1024
-MAX_BUNDLE = 32 * 1024 * 1024
-MAX_FILE = 4 * 1024 * 1024
-MAX_FILES = 512
+MAX_BUNDLE = 96 * 1024 * 1024
+MAX_FILE = 16 * 1024 * 1024
+MAX_FILES = 2048
+MAX_PROJECT_FILES = 4096
+GLOBAL_NAME = "全局 Skill 库"
+GLOBAL_NAMES = frozenset({GLOBAL_NAME, "_global"})
 ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$")
 RESERVED = re.compile(r"^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)", re.I)
 EXCLUDED = {".git", "node_modules", "__pycache__", ".ds_store", ".env", "credentials.json", "secrets.json",
@@ -58,7 +61,7 @@ def resource(value: dict) -> dict:
     kind = kind_of(path)
     files = value["files"]
     if not isinstance(files, list) or not files or len(files) > MAX_FILES:
-        raise ValueError("a resource needs 1–512 files")
+        raise ValueError(f"a resource needs 1–{MAX_FILES} files")
     clean = []
     names = set()
     for f in files:
@@ -70,7 +73,7 @@ def resource(value: dict) -> dict:
         names.add(name.casefold())
         data = base64.b64decode(f["data"], validate=True)
         if len(data) > MAX_FILE:
-            raise ValueError("each file must be at most 4 MiB")
+            raise ValueError("each file must be at most 16 MiB")
         sha = hashlib.sha256(data).hexdigest()
         if f.get("sha256", sha) != sha:
             raise ValueError("file checksum mismatch")
@@ -134,14 +137,24 @@ class Resources:
 
     def projects(self, owner):
         with self.db() as c:
-            return [dict(r) for r in c.execute("SELECT id,name FROM projects WHERE owner=? ORDER BY name,id", (owner,))]
+            rows = [dict(r) for r in c.execute("SELECT id,name FROM projects WHERE owner=? ORDER BY name,id", (owner,))]
+        rows.sort(key=lambda r: (0 if r["name"] in GLOBAL_NAMES else 1, r["name"], r["id"]))
+        return rows
 
     def create(self, owner, name):
         name = str(name).strip()
         if not name or len(name) > 120:
             raise ValueError("project name must be 1–120 characters")
-        project = uuid.uuid4().hex
+        if name in GLOBAL_NAMES:
+            name = GLOBAL_NAME
         with self.db() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if name == GLOBAL_NAME:
+                existing = c.execute("SELECT id,name FROM projects WHERE owner=? AND name IN (?,?) ORDER BY rowid LIMIT 1",
+                                     (owner, GLOBAL_NAME, "_global")).fetchone()
+                if existing:
+                    return dict(existing)
+            project = uuid.uuid4().hex
             c.execute("INSERT INTO projects VALUES(?,?,?)", (project, owner, name))
         return {"id": project, "name": name}
 
@@ -181,7 +194,7 @@ class Resources:
             total = c.execute("SELECT COALESCE(SUM(length(data)),0) FROM parts WHERE owner=? AND NOT(upload=? AND seq=?)",
                               (owner, upload, seq)).fetchone()[0]
             if total + len(data) > MAX_BUNDLE * 2:
-                raise ValueError("staged uploads exceed this account's 64 MiB limit")
+                raise ValueError(f"staged uploads exceed this account's {MAX_BUNDLE * 2 // (1024 * 1024)} MiB limit")
             c.execute("INSERT OR REPLACE INTO parts VALUES(?,?,?,?,?)", (owner, upload, seq, data, time.time()))
 
     def commit(self, owner, actor, project, base, operation, body, upload=None, parts=0):
@@ -204,7 +217,7 @@ class Resources:
                     raise ValueError("upload is incomplete")
                 body = b"".join(r["data"] for r in rows)
             if len(body) > MAX_BUNDLE:
-                raise ValueError("resource bundle exceeds 32 MiB")
+                raise ValueError("resource bundle exceeds 96 MiB")
             change = json.loads(body)
             if not isinstance(change, dict) or not isinstance(change.get("put", []), list) or not isinstance(change.get("delete", []), list):
                 raise ValueError("expected put and delete arrays")
@@ -228,8 +241,8 @@ class Resources:
                               (owner, f["sha256"], base64.b64decode(f.pop("data"))))
                 snapshot[r["path"]] = r
             all_paths = [f["path"].casefold() for r in snapshot.values() for f in r["files"]]
-            if len(all_paths) > MAX_FILES or len(set(all_paths)) != len(all_paths):
-                raise ValueError("project exceeds 512 files or has overlapping resources")
+            if len(all_paths) > MAX_PROJECT_FILES or len(set(all_paths)) != len(all_paths):
+                raise ValueError(f"project exceeds {MAX_PROJECT_FILES} files or has overlapping resources")
             # A file cannot also be a directory, even on a different operating system.
             names = set(all_paths)
             if any("/".join(p.split("/")[:i]) in names for p in all_paths for i in range(1, len(p.split("/")))):
@@ -246,7 +259,7 @@ class Resources:
             text = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
             encoded_bytes = sum(4 * ((f["bytes"] + 2) // 3) for r in snapshot.values() for f in r["files"])
             if len(text.encode()) + encoded_bytes > MAX_BUNDLE:
-                raise ValueError("project exceeds 32 MiB")
+                raise ValueError("project exceeds 96 MiB")
             c.execute("INSERT INTO revisions VALUES(?,?,?,?,?)", (project, rev + 1, time.time(), actor, text))
             c.execute("INSERT INTO operations VALUES(?,?,?,?)", (owner, operation, project, rev + 1))
             if upload:

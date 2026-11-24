@@ -150,8 +150,12 @@ def test_validation_snapshots_dedup_and_concurrent_writers(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         assert sorted(executor.map(writer, [1, 2])) == [3, 409]
     assert store.read("user", p)["revision"] == 3
-    # Similar account names never share namespaces.
+    # Similar account names never share namespaces, and global skill library creation is idempotent and sorted first.
     assert store.projects("u/ser") == []
+    g1 = store.create("user", "_global")
+    g2 = store.create("user", "全局 Skill 库")
+    assert g1 == g2 and g1["name"] == "全局 Skill 库"
+    assert store.projects("user")[0]["id"] == g1["id"]
 
 
 def test_real_node_client_upload_admin_edit_pull_and_history(tmp_path, monkeypatch):

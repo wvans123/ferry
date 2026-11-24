@@ -34,7 +34,7 @@ Work           /goal <objective>  keep working until it is done (/goal pause | r
 Knowledge      /memory  what Ferry remembers;  /memory <text>  remember this (for this project;
                /memory user <text> for all projects)      /skills  what the agent knows how to do
                /memory tidy  clean up;  /memory distill  learn from what keeps coming up in past conversations
-               /sync  upload or pull selected project skills, rules, agents and hooks through your Ferry account
+               /sync  upload or install skills (with scripts/) to global or project (/sync upload | install)
 Information    /context [size]  how full the context is; with a size (400k, 1m, auto) change it
                /cost  tokens and money       /status  server, model, settings, and a quick check
 Settings       /config  the useful settings   /model  pick a model   /mcp  MCP servers   /quit
@@ -354,12 +354,27 @@ export function createCommands(cfg, deps) {
 		});
 
 		pi.registerCommand("skills", {
-			description: "List the skills the agent can use",
-			handler: async (_a, ctx) => {
+			description: "List loaded skills, or install/upload via /skills install [name] | /skills upload [name]",
+			getArgumentCompletions: (prefix) => ["install", "upload", "status"].filter((x) => x.startsWith(prefix.trim()))
+				.map((x) => ({ value: x, label: x })),
+			handler: async (args, ctx) => {
+				const raw = String(args ?? "").trim();
+				if (/^(install|upload|push|pull|status|sync)(\s|$)/i.test(raw) && cfg.runSyncCommand) {
+					const forwarded = raw.replace(/^sync\s*/i, "");
+					return cfg.runSyncCommand(forwarded, ctx);
+				}
 				const skills = ctx.getSystemPromptOptions?.().skills ?? [];
-				const list = skills.map((s) => `  ${s.name}: ${String(s.description ?? "").slice(0, 100)}`).join("\n") || "  (none)";
-				tell(ctx, `${list}\n\nThe agent reads a skill by itself when a task fits; /skill:<name> calls one. Add your own as ` +
-					`folders with a SKILL.md in .ferry/skills/ or ${join(FERRY_HOME, "skills")} (docs/CUSTOMIZE.md).`, "info");
+				const homeSkills = join(FERRY_HOME, "skills").toLowerCase();
+				const builtinDir = BUILTIN_SKILLS.toLowerCase();
+				const tagOf = (fp) => {
+					const low = String(fp ?? "").toLowerCase();
+					if (low.startsWith(builtinDir)) return "[内置]";
+					if (low.startsWith(homeSkills)) return "[全局]";
+					return "[项目]";
+				};
+				const list = skills.map((s) => `  ${tagOf(s.filePath)} ${s.name}: ${String(s.description ?? "").slice(0, 96)}`).join("\n") || "  (none)";
+				tell(ctx, `${list}\n\nThe agent reads a skill by itself when a task fits; /skill:<name> calls one.\n` +
+					`Sync across computers (full folder incl. scripts/): /sync upload [name]  |  /sync install [name] (global ${join(FERRY_HOME, "skills")} or project .ferry/skills/).`, "info");
 			},
 		});
 	};
