@@ -34,6 +34,8 @@ test("the main agent says what it does while it works; both agents batch calls, 
 		assert.match(p, /align with the user via ask_user/);
 		assert.match(p, /Prefer dedicated tools/);
 		assert.match(p, /outline: true/);
+		assert.match(p, /Write clear, human prose \(no AI tone\)/);
+		assert.match(p, /赋能 \/ 赋智 \/ 闭环/);
 		assert.match(p, /Once checks pass, stop immediately/);
 		assert.match(p, /belong to the user/);
 		assert.match(p, /The final reply must make sense on its own/);

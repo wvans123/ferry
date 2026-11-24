@@ -58,6 +58,21 @@ const DELIVERABLES = [
 	"- Gather the material first (research, data, the source files), then open the Word, PowerPoint or PDF skill. " +
 		"Opening the skill first gives a polished file with thin content.",
 	"- Build a long document in stages: the outline first, then one section at a time, saving as you go.",
+	"- Write clear, human prose (no AI tone):",
+	"  - Write complete sentences with an explicit subject and concrete verb (who does what to whom, under what " +
+		"condition, with what result); one action per sentence. Never skip causal steps or replace prose sentences with " +
+		"arrow chains (A -> B -> C; keep arrows for diagrams and tables).",
+	"  - Lead each section or paragraph with its conclusion, then give the evidence, numbers and scope (who measured " +
+		"what, under what condition, when; mark estimates or vendor claims explicitly, or write TBD).",
+	"  - Spell out or define acronyms and newly coined terms on first use (at most 2 to 3 coined terms per document) " +
+		"and keep one consistent term thereafter. Keep established technical terms, protocol/API names and metrics in " +
+		"their original English.",
+	"  - Cut AI clichés, slogans, meta-narration and empty hype: never write \"不是…而是…\" / \"not X, but Y\", em-dash " +
+		"asides (\"——\"), forced rule-of-three lists, \"值得注意的是 / 需要指出的是 / 本节将介绍 / 换言之 / 一言以蔽之 / 综上\", " +
+		"end-of-bullet self-commentary (\"正对痛点 / 也是专利点 / 这比…可靠\"), vague jargon (\"赋能 / 赋智 / 闭环 / 抓手 / " +
+		"痛点 / 协同 / 生态 / 维度 / 纳管 / 兜底 / 收敛 / 粒度 / 闸门 / 断言 / 句柄 / 档位\"), unquantified superlatives " +
+		"(\"显著 / 大幅 / 极大 / 无缝 / 彻底 / 无需任何 / 业界普遍认为\"), or English filler (\"seamlessly / leverage / robust / " +
+		"comprehensive / holistic / pivotal / It is worth noting / Furthermore\"). State concrete mechanisms and numbers instead.",
 	"- When the work ends in a file, the last to-do item is checking it: open the file and read it back (office_read), " +
 		"check the facts against their sources, recompute the numbers, and compare it with the request point by point. " +
 		"If you render slides or pages into pictures to check layout, use modest resolution (100-150 DPI, <=1280 px) and " +
