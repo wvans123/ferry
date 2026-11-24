@@ -310,3 +310,30 @@ test("real Pi loader sees project and global skills in a new subagent and after 
 	await loader.reload();
 	assert.ok(loader.getSkills().skills.some((s) => s.name === "research"));
 });
+
+test("local.md and *.local.json workspace profiles are skipped on upload and preserved on install", () => {
+	const root = project("local-profile");
+	skill(root, "v1", "patent-idea");
+	file(root, ".ferry/skills/patent-idea/references/guide.md", "shared guide");
+	file(root, ".ferry/skills/patent-idea/references/local.md", "D:/Private/MyKB");
+	file(root, ".ferry/skills/patent-idea/config.local.json", "{\"kb\":\"D:/Private\"}");
+
+	const { resource: collected, skipped } = collectResource(root, ".ferry/skills/patent-idea");
+	const paths = collected.files.map((f) => f.path);
+	assert.ok(paths.includes(".ferry/skills/patent-idea/SKILL.md"));
+	assert.ok(paths.includes(".ferry/skills/patent-idea/references/guide.md"));
+	assert.ok(!paths.some((p) => p.includes("local.md") || p.includes(".local.json")));
+	assert.equal(skipped.length, 2);
+
+	// Simulate /sync install updating SKILL.md from v1 -> v2 while references/local.md exists on disk.
+	const updatedRemote = {
+		...collected,
+		files: collected.files.map((f) => f.path.endsWith("SKILL.md")
+			? { ...f, data: Buffer.from("---\nname: patent-idea\ndescription: v2\n---\nv2").toString("base64") }
+			: f),
+	};
+	applyPull(root, join(temp, "local-profile-state"), [collected], [updatedRemote], { bases: {} });
+	assert.match(readFileSync(join(root, ".ferry/skills/patent-idea/SKILL.md"), "utf8"), /v2/);
+	assert.equal(readFileSync(join(root, ".ferry/skills/patent-idea/references/local.md"), "utf8"), "D:/Private/MyKB");
+	assert.equal(readFileSync(join(root, ".ferry/skills/patent-idea/config.local.json"), "utf8"), "{\"kb\":\"D:/Private\"}");
+});

@@ -156,6 +156,24 @@ def test_validation_snapshots_dedup_and_concurrent_writers(tmp_path):
     g2 = store.create("user", "全局 Skill 库")
     assert g1 == g2 and g1["name"] == "全局 Skill 库"
     assert store.projects("user")[0]["id"] == g1["id"]
+    # Global Skill Library tracks independent per-skill versions and merges non-overlapping skill uploads cleanly.
+    gid = g1["id"]
+    store.commit("user", "pc1", gid, 0, uuid.uuid4().hex, json.dumps({"put": [bundle(".ferry/skills/a", "v1")]}).encode())
+    # pc2 still knows base=0, uploads a different skill 'b': succeeds without a whole-library 409!
+    store.commit("user", "pc2", gid, 0, uuid.uuid4().hex, json.dumps({"put": [bundle(".ferry/skills/b", "v1")]}).encode())
+    # Updating skill 'a' increments only 'a' to ver=2, leaving 'b' at ver=1.
+    store.commit("user", "pc1", gid, 2, uuid.uuid4().hex, json.dumps({"put": [bundle(".ferry/skills/a", "v2")]}).encode())
+    res_map = {r["path"]: r for r in store.read("user", gid)["resources"]}
+    assert res_map[".ferry/skills/a"]["ver"] == 2
+    assert res_map[".ferry/skills/b"]["ver"] == 1
+    # Concurrent edit to the SAME skill 'a' from stale base=1 still conflicts with 409.
+    with pytest.raises(HTTPException) as exc:
+        store.commit("user", "pc2", gid, 1, uuid.uuid4().hex, json.dumps({"put": [bundle(".ferry/skills/a", "stale")]}).encode())
+    assert exc.value.status_code == 409
+    # Local workspace discovery files (local.md / *.local.json) are rejected from server sync.
+    for local_file in ("references/local.md", "local.json", "references/paths.local.json"):
+        with pytest.raises(ValueError):
+            resource(bundle(".ferry/skills/a", "secret", file=local_file))
 
 
 def test_real_node_client_upload_admin_edit_pull_and_history(tmp_path, monkeypatch):

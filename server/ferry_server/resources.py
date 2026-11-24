@@ -24,7 +24,8 @@ GLOBAL_NAMES = frozenset({GLOBAL_NAME, "_global"})
 ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$")
 RESERVED = re.compile(r"^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)", re.I)
 EXCLUDED = {".git", "node_modules", "__pycache__", ".ds_store", ".env", "credentials.json", "secrets.json",
-            ".ssh", ".aws", ".npmrc", ".netrc", "id_rsa", "id_ed25519"}
+            ".ssh", ".aws", ".npmrc", ".netrc", "id_rsa", "id_ed25519", "local.md", "local.json", ".local"}
+LOCAL_ONLY = re.compile(r"\.local\.(?:md|json|ya?ml|py|txt)$", re.I)
 
 
 def safe_path(value: str) -> str:
@@ -34,8 +35,9 @@ def safe_path(value: str) -> str:
     if any(p in ("", ".", "..") or p.endswith((" ", ".")) or RESERVED.match(p)
            or any(ord(c) < 32 or c in '\\:*?"<>|' for c in p) for p in parts):
         raise ValueError("resource paths must be portable relative paths")
-    if any(p.lower() in EXCLUDED or p.lower().startswith(".env.") or p.lower().endswith((".pem", ".key")) for p in parts):
-        raise ValueError("excluded credential or generated file")
+    if any(p.lower() in EXCLUDED or p.lower().startswith(".env.") or p.lower().endswith((".pem", ".key"))
+           or LOCAL_ONLY.search(p) for p in parts):
+        raise ValueError("excluded credential, local-only or generated file")
     return value
 
 
@@ -94,7 +96,7 @@ def resource(value: dict) -> dict:
 
 
 def index(snapshot: dict) -> list[dict]:
-    return [{**r, "files": [{k: v for k, v in f.items() if k != "data"} for f in r["files"]]}
+    return [{"ver": r.get("ver", 1), **r, "files": [{k: v for k, v in f.items() if k != "data"} for f in r["files"]]}
             for r in snapshot.values()]
 
 
@@ -202,7 +204,7 @@ class Resources:
             raise ValueError("invalid operation id")
         with self.db() as c:
             c.execute("BEGIN IMMEDIATE")
-            self.owned(c, owner, project)
+            proj_row = self.owned(c, owner, project)
             done = c.execute("SELECT project,rev FROM operations WHERE owner=? AND op=?", (owner, operation)).fetchone()
             if done:
                 if done["project"] != project:
@@ -230,12 +232,29 @@ class Resources:
                 raise ValueError("duplicate resource path")
             row = c.execute("SELECT rev,snapshot FROM revisions WHERE project=? ORDER BY rev DESC LIMIT 1", (project,)).fetchone()
             rev = row["rev"] if row else 0
-            if base != rev:
-                raise HTTPException(409, "Server changed. Fetch the latest revision and review the differences before retrying.")
             snapshot = json.loads(row["snapshot"]) if row else {}
+            if base != rev:
+                if proj_row["name"] in GLOBAL_NAMES and 0 <= base < rev:
+                    base_row = c.execute("SELECT snapshot FROM revisions WHERE project=? AND rev=?", (project, base)).fetchone() if base > 0 else None
+                    base_snap = json.loads(base_row["snapshot"]) if base_row else {}
+                    if any((base_snap.get(p) or {}).get("hash") != (snapshot.get(p) or {}).get("hash") for p in paths):
+                        raise HTTPException(409, "This skill was updated on the Server. Fetch the latest version and review differences before retrying.")
+                else:
+                    raise HTTPException(409, "Server changed. Fetch the latest revision and review the differences before retrying.")
+            now = time.time()
             for path in deletes:
                 snapshot.pop(path, None)
             for r in puts:
+                prev = snapshot.get(r["path"])
+                if not prev:
+                    r["ver"] = 1
+                    r["updated"] = now
+                elif prev.get("hash") != r["hash"]:
+                    r["ver"] = int(prev.get("ver", 1)) + 1
+                    r["updated"] = now
+                else:
+                    r["ver"] = int(prev.get("ver", 1))
+                    r["updated"] = prev.get("updated", now)
                 for f in r["files"]:
                     c.execute("INSERT OR IGNORE INTO resource_blobs VALUES(?,?,?)",
                               (owner, f["sha256"], base64.b64decode(f.pop("data"))))

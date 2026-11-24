@@ -17,14 +17,15 @@ export const GLOBAL_PROJECT_NAME = "全局 Skill 库";
 const GLOBAL_NAMES = new Set([GLOBAL_PROJECT_NAME, "_global"]);
 const BUILTIN_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "skills");
 const EXCLUDED = new Set([".git", "node_modules", "__pycache__", ".ds_store", "thumbs.db", "desktop.ini",
-	".env", "credentials.json", "secrets.json", ".ssh", ".aws", ".npmrc", ".netrc", "id_rsa", "id_ed25519"]);
+	".env", "credentials.json", "secrets.json", ".ssh", ".aws", ".npmrc", ".netrc", "id_rsa", "id_ed25519",
+	"local.md", "local.json", ".local"]);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
 	? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const jsonHash = (value) => hash(JSON.stringify(canonical(value)));
 const id = () => randomUUID().replaceAll("-", "");
 const excluded = (name) => EXCLUDED.has(name.toLowerCase()) || name.startsWith("~$")
-	|| /^\.env\./i.test(name) || /\.(pem|key|pyc|pyo)$/i.test(name);
+	|| /^\.env\./i.test(name) || /\.(pem|key|pyc|pyo)$/i.test(name) || /\.local\.(md|json|ya?ml|py|txt)$/i.test(name);
 
 export const isGlobalProject = (project) => Boolean(project && GLOBAL_NAMES.has(project.name));
 
@@ -545,11 +546,12 @@ export function createResources(cfg) {
 					const localNames = new Set(localList.map((r) => r.name));
 					const serverEntries = serverSkills.map((r) => {
 						const name = basename(r.path);
+						const ver = r.ver ?? 1;
 						const g = localGlobal.find((x) => x.name === name);
 						const p = localProject.find((x) => x.name === name);
 						const stateNote = g ? (g.local === r.hash ? "本机全局已是最新" : "本机全局可更新")
 							: p ? (p.local === r.hash ? "当前项目已是最新" : "当前项目有差异") : "本机未安装";
-						return { name, path: r.path, hash: r.hash, summary: summarizeSkillFiles(r.files, r.path), status: stateNote, installed: localNames.has(name) };
+						return { name, ver, path: r.path, hash: r.hash, summary: summarizeSkillFiles(r.files, r.path), status: stateNote, installed: localNames.has(name) };
 					});
 
 					let boundSummary = null;
@@ -560,7 +562,7 @@ export function createResources(cfg) {
 								project: projectState.project, revision: pHead.revision,
 								resources: pHead.resources.filter((r) => r.kind === "skill").map((r) => {
 									const loc = localResource(root, r.path);
-									return { path: r.path, local: loc?.hash ?? null, server: r.hash, baseline: projectState.bases[r.path] ?? null, changes: changes(loc, r) };
+									return { path: r.path, ver: r.ver ?? 1, local: loc?.hash ?? null, server: r.hash, baseline: projectState.bases[r.path] ?? null, changes: changes(loc, r) };
 								}),
 							};
 						}
@@ -573,10 +575,10 @@ export function createResources(cfg) {
 						...localGlobal.map((x) => `  - ${x.name}：${x.status} · ${x.summary}`),
 						`当前项目 (${join(root, ".ferry", "skills")})：${localProject.length ? `${localProject.length} 个` : "暂无"}`,
 						...localProject.map((x) => `  - ${x.name}：${x.status} · ${x.summary}`),
-						`服务端全局 Skill 库 (${globalProj ? `r${globalHead.revision}` : "尚未初始化"})：${serverEntries.length ? `${serverEntries.length} 个` : "暂无"}`,
-						...serverEntries.map((x) => `  - ${x.name}：${x.status} · ${x.summary}`),
-						...(boundSummary ? [`关联项目空间 ${boundSummary.project.name} (r${boundSummary.revision})：${boundSummary.resources.length} 个 Skill`] : []),
-						"用法：/sync upload [名字] 上传整包（含 scripts/ 等子目录，默认全局）；/sync install [名字] 安装到本机全局或当前项目",
+						`服务端全局 Skill 库：${serverEntries.length ? `${serverEntries.length} 个（单个 Skill 独立版本）` : "暂无"}`,
+						...serverEntries.map((x) => `  - ${x.name} (v${x.ver})：${x.status} · ${x.summary}`),
+						...(boundSummary ? [`关联项目空间 ${boundSummary.project.name}：${boundSummary.resources.length} 个 Skill`] : []),
+						"用法：/sync upload [名字] 上传整包（自动跳过 local.md 等本机私有配置）；/sync install [名字] 安装到本机全局或当前项目",
 					];
 					return {
 						builtin: builtins,
@@ -739,7 +741,7 @@ export function createResources(cfg) {
 						if (!ctx.hasUI) return { choose: inspected.map((r) => r.label) };
 						const outdated = isInstall ? inspected.filter((c) => !c.localBefore || c.localBefore.hash !== c.remoteMeta.hash) : [];
 						const allLabel = outdated.length >= 2 ? `全部安装/更新有变化的 Skill（共 ${outdated.length} 个）` : null;
-						const itemLabels = inspected.map((c) => `${c.name} · ${c.badge} · ${c.summary}`);
+						const itemLabels = inspected.map((c) => `${c.name} (v${c.remoteMeta.ver ?? 1}) · ${c.badge} · ${c.summary}`);
 						const title = isInstall
 							? `服务端 [${serverBucket.name}] 共有 ${inspected.length} 个 Skill — 选择安装到${installTarget === "global" ? "本机全局 (~/.ferry/skills)" : "当前项目 (.ferry/skills)"}：`
 							: `选择要从服务端 [${serverBucket.name}] 删除的 Skill（历史版本仍会保留）：`;
@@ -811,16 +813,17 @@ export function createResources(cfg) {
 				}
 
 				const bytes = after.reduce((sum, r) => sum + (r?.files ?? []).reduce((n, f) => n + f.bytes, 0), 0);
+				const revNote = chosenScope === "global" && revision === undefined ? "" : ` (r${revision ?? head.revision})`;
 				const destDesc = action === "upload"
-					? `上传到服务端 [${serverBucket.name}] (Server r${head.revision})`
+					? `上传到服务端 [${serverBucket.name}]${revNote}`
 					: action === "delete"
-						? `从服务端 [${serverBucket.name}] 删除 (Server r${head.revision})`
-						: `从服务端 [${serverBucket.name}] r${revision ?? head.revision} 安装到${installTarget === "global" ? `本机全局 (${join(FERRY_HOME, "skills")})` : `当前项目 (${join(root, ".ferry", "skills")})`}`;
+						? `从服务端 [${serverBucket.name}] 删除${revNote}`
+						: `从服务端 [${serverBucket.name}]${revNote} 安装到${installTarget === "global" ? `本机全局 (${join(FERRY_HOME, "skills")})` : `当前项目 (${join(root, ".ferry", "skills")})`}`;
 				const text = `${destDesc}\n` +
 					(summaries.length ? `包含整包内容\n  ${summaries.join("\n  ")}\n` : "") +
 					`${preview.slice(0, 200).join("\n") || "文件内容相同"}${preview.length > 200 ? `\n... 其余 ${preview.length - 200} 个文件变更` : ""}\n` +
 					`共 ${fmtBytes(bytes)}；单个上传分片最多 ${fmtBytes(chunkSize(cfg.chunkBytes))}\n` +
-					(skipped.length ? `已自动跳过临时/敏感文件（${skipped.length} 个）：${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? " ..." : ""}\n` : "") +
+					(skipped.length ? `已自动跳过本机私有配置/临时文件（${skipped.length} 个，如 local.md 不会上传）：${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? " ..." : ""}\n` : "") +
 					(conflicts.length ? `需确认覆盖或删除\n${conflicts.join("\n")}\n` : "");
 
 				if (!await review(ctx, text, conflicts.length ? "确认覆盖或删除" : "确认同步", diffs.filter(Boolean).join("\n\n"))) return { cancelled: true };
@@ -941,18 +944,18 @@ export function createResources(cfg) {
 				}
 				if (result.pulled) {
 					const where = result.target === "global" ? `本机全局 (${join(FERRY_HOME, "skills")})` : `当前项目 (.ferry/skills)`;
-					ctx.ui.notify(`已安装/更新 ${result.skillNames.join(", ")} 到${where}（服务端 r${result.revision}）。`, "info");
+					ctx.ui.notify(`已安装/更新 ${result.skillNames.join(", ")} 到${where}。`, "info");
 					if (await confirmed(ctx, "Skill 文件已更新。现在重载使其在当前会话立即生效？", "立即重载")) {
 						await ctx.reload();
 					}
 					return;
 				}
 				if (action === "upload") {
-					ctx.ui.notify(`已整包上传 ${result.skillNames.join(", ")} 到服务端 [${result.bucket}]（r${result.revision}）。`, "info");
+					ctx.ui.notify(`已整包上传 ${result.skillNames.join(", ")} 到服务端 [${result.bucket}]。`, "info");
 					return;
 				}
 				if (action === "delete") {
-					ctx.ui.notify(`已从服务端 [${result.bucket}] 删除 ${result.skillNames.join(", ")}（r${result.revision}，历史可恢复）。`, "info");
+					ctx.ui.notify(`已从服务端 [${result.bucket}] 删除 ${result.skillNames.join(", ")}（历史可恢复）。`, "info");
 					return;
 				}
 				ctx.ui.notify(JSON.stringify(result, null, 2), "info");

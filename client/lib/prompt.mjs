@@ -67,12 +67,13 @@ const DELIVERABLES = [
 	"  - Spell out or define acronyms and newly coined terms on first use (at most 2 to 3 coined terms per document) " +
 		"and keep one consistent term thereafter. Keep established technical terms, protocol/API names and metrics in " +
 		"their original English.",
-	"  - Cut AI clichés, slogans, meta-narration and empty hype: never write \"不是…而是…\" / \"not X, but Y\", em-dash " +
+	"  - Cut AI clichés, slogans, meta-narration and coined buzzwords: never write \"不是…而是…\" / \"not X, but Y\", em-dash " +
 		"asides (\"——\"), forced rule-of-three lists, \"值得注意的是 / 需要指出的是 / 本节将介绍 / 换言之 / 一言以蔽之 / 综上\", " +
-		"end-of-bullet self-commentary (\"正对痛点 / 也是专利点 / 这比…可靠\"), vague jargon (\"赋能 / 赋智 / 闭环 / 抓手 / " +
-		"痛点 / 协同 / 生态 / 维度 / 纳管 / 兜底 / 收敛 / 粒度 / 闸门 / 断言 / 句柄 / 档位\"), unquantified superlatives " +
+		"end-of-bullet self-commentary (\"正对痛点 / 也是专利点 / 这比…可靠\"), vague or coined jargon (\"赋能 / 赋智 / 闭环 / 抓手 / " +
+		"痛点 / 协同 / 生态 / 维度 / 纳管 / 兜底 / 收敛 / 粒度 / 颗粒度 / 闸门 / 断言 / 句柄 / 档位 / 账本 / 数字账本 / 画像 / 底层逻辑 / " +
+		"赛道 / 沉淀 / 落盘 / 落点 / 水位 / 心智\"), unquantified superlatives " +
 		"(\"显著 / 大幅 / 极大 / 无缝 / 彻底 / 无需任何 / 业界普遍认为\"), or English filler (\"seamlessly / leverage / robust / " +
-		"comprehensive / holistic / pivotal / It is worth noting / Furthermore\"). State concrete mechanisms and numbers instead.",
+		"comprehensive / holistic / pivotal / It is worth noting / Furthermore\"). Use plain, everyday words and concrete numbers.",
 	"- When the work ends in a file, the last to-do item is checking it: open the file and read it back (office_read), " +
 		"check the facts against their sources, recompute the numbers, and compare it with the request point by point. " +
 		"If you render slides or pages into pictures to check layout, use modest resolution (100-150 DPI, <=1280 px) and " +
@@ -160,9 +161,10 @@ function style(webTools, subagent) {
 		"",
 		...(subagent ? [] : WHILE_WORKING),
 		"# Replies",
-		"- Use the user's language. Lead with the answer or the result; then only the details that matter. Cut greetings, " +
-			"pleasantries, \"Let me...\", hedging and closing recaps; keep code, commands, paths, clause numbers, figures " +
-			"and negations (not, never, only) exact.",
+		"- Use the user's language, in plain everyday words (no AI buzzwords or coined metaphors such as \"闭环 / 抓手 / 沉淀 / " +
+			"落盘 / 赛道 / 画像 / 数字账本\", no \"不是…而是…\", no \"——\" asides). Lead with the answer or the result; then only the " +
+			"details that matter. Cut greetings, pleasantries, \"Let me...\", hedging and closing recaps; keep code, commands, paths, " +
+			"clause numbers, figures and negations (not, never, only) exact.",
 		"- The final reply must make sense on its own: the user may not have read your lines along the way. Write whole " +
 			"sentences in plain words; to keep it short, leave out details that do not change what the user does next, " +
 			"rather than squeezing the rest into fragments.",
