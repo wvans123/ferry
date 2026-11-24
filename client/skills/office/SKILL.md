@@ -28,7 +28,7 @@ Encrypted files (IRM / password) reported by `office_read` cannot be opened by a
 | `{insert: "Para 1\nPara 2", after\|before: "anchor", style?: "Heading2"}` | Insert paragraph(s) next to the anchor paragraph, inheriting its formatting unless `style` is set. |
 | `{deleteParagraph: "text", through?: "end text"}` | Delete one paragraph or a span of paragraphs (including tables between them). |
 | `{fill: "value", label: "Title:"}` / `{fill, table, row, col}` / `{fill, after}` | Fill an empty table cell (right of `label`, or 1-based `table`/`row`/`col`) or empty paragraph. |
-| `{comment: "note", find: "anchor"}` / `{comment: "reply", replyTo: 3}` | Add a comment or reply to `[comment N]`. |
+| `{comment: "note", find: "anchor", date?: "..."}` / `{comment: "reply", replyTo: 3}` | Add a comment or reply to `[comment N]` (multiple comments auto-stagger in local wall-clock time within 1 hour, or pass per-comment `date` like `"2026-11-24T17:25:00+08:00"`). |
 | `{accept: "all"}` / `{reject: "Alice"}` | Accept or reject all tracked changes, or one author's. |
 
 - **General documents & templates** (contracts, forms, resumes, PRDs, reports): set `track: false` unless the user wants redlines. Copy the original first (`cp` / `Copy-Item`) when keeping a baseline helps.

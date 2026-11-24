@@ -125,6 +125,27 @@ test("comments: added on text (the parts are made when missing), read back, a re
 	assert.match(part(f, "word/commentsExtended.xml"), /w15:paraIdParent="[0-9A-F]{8}"/);
 	assert.deepEqual(checkDocx(unzipSync(readFileSync(f))), []);
 	assert.throws(() => editDocx(f, [{ comment: "x", replyTo: 999 }]), /No comment 999/);
+
+	// Beijing (+08:00) wall-clock digits are preserved for Desktop Word, and multi-comment batches stagger within 1 hour
+	const bj = docx("comments-bj.docx", `${p("Step 1 sends X.")}${p("Step 2 checks Y.")}${p("Step 3 returns Z.")}`);
+	editDocx(bj, [
+		{ comment: "First note", find: "Step 1", date: "2026-11-24T17:18:00+08:00" },
+		{ comment: "Second note", find: "Step 2", date: "2026-11-24T17:32:00+08:00" },
+	], { author: "Reviewer" });
+	const bjXml = part(bj, "word/comments.xml");
+	assert.match(bjXml, /w:date="2026-11-24T17:18:00Z"/);
+	assert.match(bjXml, /w:date="2026-11-24T17:32:00Z"/);
+
+	const staggered = docx("comments-stagger.docx", `${p("Clause A.")}${p("Clause B.")}${p("Clause C.")}`);
+	editDocx(staggered, [
+		{ comment: "Note A", find: "Clause A" },
+		{ comment: "Note B", find: "Clause B" },
+		{ comment: "Note C", find: "Clause C" },
+	], { author: "Reviewer" });
+	const dates = [...part(staggered, "word/comments.xml").matchAll(/w:date="([^"]+)"/g)].map((m) => Date.parse(m[1]));
+	assert.equal(dates.length, 3);
+	assert.ok(dates[0] < dates[1] && dates[1] < dates[2], `expected strictly increasing comment dates, got ${dates}`);
+	assert.ok(dates[2] - dates[0] <= 3600_000, "staggered comments stay within 1 hour");
 });
 
 test("accept or reject all, or one author's: text, paragraph marks, formatting", () => {

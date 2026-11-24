@@ -1188,6 +1188,7 @@ export function createOffice(cfg = {}) {
 					row: Type.Optional(Type.Number()), col: Type.Optional(Type.Number()),
 					comment: Type.Optional(Type.String({ description: "Comment text" })),
 					replyTo: Type.Optional(Type.Number({ description: "comment: reply to comment N" })),
+					date: Type.Optional(Type.String({ description: "Word: timestamp for this edit/comment, e.g. 2026-11-24T17:24:00+08:00" })),
 					accept: Type.Optional(Type.String({ description: "\"all\" or an author's name" })),
 					reject: Type.Optional(Type.String({ description: "\"all\" or an author's name" })),
 					track: Type.Optional(Type.Boolean({ description: "This edit tracked or not (default: the call's track)" })),

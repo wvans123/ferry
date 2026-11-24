@@ -703,10 +703,28 @@ class Package {
 	}
 }
 
+const pad2 = (n) => String(n).padStart(2, "0");
+const wallIso = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}Z`;
+
+/**
+ * Desktop Word displays w:date digits literally as local wall-clock time without adding timezone offsets.
+ * Preserve explicit Z or YYYY-MM-DD inputs as given, keep wall-clock digits on +HH:MM / local ISO strings,
+ * and default to the machine's local wall-clock time so UTC+8 comments show Beijing time rather than -8h.
+ */
 function stamp(date) {
-	if (!date) return new Date().toISOString().replace(/\.\d+Z$/, "Z");
+	if (!date) return wallIso(new Date());
 	const s = String(date).trim();
-	const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00Z` : s);
+	if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+		if (Number.isNaN(Date.parse(`${s}T00:00:00Z`))) throw new Error(`Not a date: ${date}`);
+		return `${s}T00:00:00Z`;
+	}
+	const wall = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2}))?(?:\.\d+)?(?:\s*([+-]\d{2}:?\d{2}))?$/.exec(s);
+	if (wall) {
+		const isoCheck = `${wall[1]}T${wall[2]}:${wall[3] ?? "00"}${wall[4] ? (wall[4].includes(":") ? wall[4] : `${wall[4].slice(0, 3)}:${wall[4].slice(3)}`) : "Z"}`;
+		if (Number.isNaN(Date.parse(isoCheck))) throw new Error(`Not a date: ${date} (e.g. 2026-11-06 or 2026-11-06T09:30:00+08:00)`);
+		return `${wall[1]}T${wall[2]}:${wall[3] ?? "00"}Z`;
+	}
+	const t = Date.parse(s);
 	if (Number.isNaN(t)) throw new Error(`Not a date: ${date} (e.g. 2026-11-06 or 2026-11-06T09:30:00Z)`);
 	return new Date(t).toISOString().replace(/\.\d+Z$/, "Z");
 }
@@ -755,11 +773,25 @@ export function editDocx(path, edits, { track = true, author = "Ferry", initials
 	const beforeText = allText(body);
 	const ids = ["word/document.xml", "word/comments.xml", "word/footnotes.xml", "word/endnotes.xml"]
 		.flatMap((n) => (pkg.files[n] ? [...strFromU8(pkg.files[n]).matchAll(/\bw:id="(\d+)"/g)].map((m) => +m[1]) : []));
-	const ctx = { track, author, initials: initials || initialsOf(author), date: stamp(date), nextId: Math.max(0, ...ids) + 1, mine: new Set() };
+	const baseDate = stamp(date);
+	const baseMs = Date.parse(baseDate);
+	const autoComments = !date ? edits.filter((e) => e.comment !== undefined && !e.date).length : 0;
+	const stepSec = autoComments >= 2 ? Math.max(45, Math.min(240, Math.floor(2700 / autoComments))) : 0;
+	let commentIdx = 0;
+	const ctx = { track, author, initials: initials || initialsOf(author), date: baseDate, nextId: Math.max(0, ...ids) + 1, mine: new Set() };
 	const report = [];
 	let allTracked = track;
 	for (const e of edits) {
 		ctx.track = e.track ?? track;
+		if (e.date) {
+			ctx.date = stamp(e.date);
+		} else if (e.comment !== undefined && autoComments >= 2) {
+			const offsetSec = Math.min(3300, (commentIdx + 1) * stepSec + ((commentIdx * 37) % 29));
+			commentIdx++;
+			ctx.date = new Date(baseMs + offsetSec * 1000).toISOString().replace(/\.\d+Z$/, "Z");
+		} else {
+			ctx.date = baseDate;
+		}
 		if (e.accept !== undefined || e.reject !== undefined) { allTracked = false; report.push(acceptReject(pkg, e)); continue; }
 		if (!ctx.track && e.comment === undefined) allTracked = false;
 		if (e.comment !== undefined) report.push(addComment(ctx, pkg, body, e));
