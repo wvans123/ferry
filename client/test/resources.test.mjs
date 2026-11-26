@@ -50,15 +50,20 @@ test("complete selected skill includes scripts, templates and references and exc
 	assert.equal(selectResource(root, "custom/other").source, join(root, "custom/other"));
 });
 
-test("parseSyncArgs handles install/upload scopes, quoted names and flags", () => {
+test("parseSyncArgs handles install/upload scopes, quoted names, multiple selectors and flags", () => {
 	assert.deepEqual(parseSyncArgs('upload "my skill" -g'), {
-		action: "upload", selector: "my skill", scope: "global", target: undefined, all: false, revision: undefined,
+		action: "upload", selector: "my skill", selectors: ["my skill"], scope: "global", target: undefined, all: false, revision: undefined,
 	});
 	assert.deepEqual(parseSyncArgs("install hw-ppt --project --revision 3"), {
-		action: "install", selector: "hw-ppt", scope: undefined, target: "project", all: false, revision: 3,
+		action: "install", selector: "hw-ppt", selectors: ["hw-ppt"], scope: undefined, target: "project", all: false, revision: 3,
+	});
+	assert.deepEqual(parseSyncArgs("install patent-idea 3gpp-tdoc-analysis,research-lite -g"), {
+		action: "install", selector: "patent-idea 3gpp-tdoc-analysis,research-lite",
+		selectors: ["patent-idea", "3gpp-tdoc-analysis", "research-lite"],
+		scope: undefined, target: "global", all: false, revision: undefined,
 	});
 	assert.deepEqual(parseSyncArgs("install --global --all"), {
-		action: "install", selector: "", scope: undefined, target: "global", all: true, revision: undefined,
+		action: "install", selector: "", selectors: [], scope: undefined, target: "global", all: true, revision: undefined,
 	});
 	assert.throws(() => parseSyncArgs("install -g -p"), /either --global or --project/);
 });

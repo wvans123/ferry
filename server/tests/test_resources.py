@@ -73,6 +73,12 @@ def test_accounts_devices_admin_history_conflicts_and_restore(tmp_path, monkeypa
             assert (await c.post(f"/admin/api/resources/{project}?user=Alice&base=2&operation={uuid.uuid4().hex}", json=change)).status_code == 403
             old = (await c.get(f"/v1/ferry/resources/projects/{project}" + q + "&revision=1", headers=a)).json()["resource"]
             assert base64.b64decode(old["files"][0]["data"]) == b"hello"
+            sha0 = old["files"][0]["sha256"]
+            assert (await c.post(f"/v1/ferry/resources/projects/{project}/blobs", headers=b, json={"shas": [sha0]})).status_code == 404
+            b_batch = (await c.post(f"/v1/ferry/resources/projects/{project}/blobs", headers=device, json={"shas": [sha0]})).json()
+            assert base64.b64decode(b_batch["blobs"][sha0]) == b"hello"
+            b_slice = (await c.post(f"/v1/ferry/resources/projects/{project}/blobs", headers=device, json={"sha": sha0, "offset": 1, "limit": 3})).json()
+            assert b_slice["total"] == 5 and base64.b64decode(b_slice["data"]) == b"ell"
             assert (await c.post(commit_url(project, 2), headers=device, json={"put": [old]})).json()["revision"] == 3
             assert (await c.post(commit_url(project, 3), headers=a, json={"delete": [old["path"]]})).json()["revision"] == 4
             assert (await c.get(f"/v1/ferry/resources/projects/{project}", headers=a)).json()["resources"] == []
@@ -212,11 +218,19 @@ if (mode === 'upload') {
   const resources = [collectResource(root,path).resource];
   const result = await c.upload(p.id,0,resources);
   console.log(JSON.stringify({...result, project:p.id, hash:resources[0].hash}));
+} else if (mode === 'fresh_pull') {
+  const head = await c.api(`projects/${project}`);
+  const meta = head.resources.find((r) => r.path === path);
+  const full = await c.hydrateResource(project, meta, null, head.revision);
+  applyPull(root,root+'-fresh',[null],[full],{bases:{[path]:full.hash}});
+  console.log(JSON.stringify({hash:collectResource(root,path).resource.hash,revision:head.revision}));
 } else {
-  const data = await c.api(`projects/${project}?path=${encodeURIComponent(path)}`);
+  const head = await c.api(`projects/${project}`);
+  const meta = head.resources.find((r) => r.path === path);
   const before = collectResource(root,path).resource;
-  applyPull(root,root+'-state',[before],[data.resource],{bases:{[path]:data.resource.hash}});
-  console.log(JSON.stringify({hash:collectResource(root,path).resource.hash,revision:data.revision}));
+  const full = await c.hydrateResource(project, meta, before, head.revision);
+  applyPull(root,root+'-state',[before],[full],{bases:{[path]:full.hash}});
+  console.log(JSON.stringify({hash:collectResource(root,path).resource.hash,revision:head.revision}));
 }
 """
         def node(mode, project=""):
@@ -249,6 +263,11 @@ if (mode === 'upload') {
         pulled = node("pull", p)
         assert pulled == {"hash": current["hash"], "revision": 2}
         assert (skill / "scripts/check.py").read_bytes() == b"print('edited')\n"
+        assert (skill / "references/data.bin").read_bytes() == bytes(range(256)) * 1600
+        # Fresh pull with no local cache slices 409 KB data.bin into bounded <60 KB /blobs requests.
+        (skill / "references/data.bin").unlink()
+        fresh = node("fresh_pull", p)
+        assert fresh == {"hash": current["hash"], "revision": 2}
         assert (skill / "references/data.bin").read_bytes() == bytes(range(256)) * 1600
         rows = [json.loads(line) for line in (cfg.data_dir / "access.jsonl").read_text().splitlines()]
         uploads = [r["bytes"] for r in rows if r.get("path", "").startswith("/v1/ferry/resources/")]

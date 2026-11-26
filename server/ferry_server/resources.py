@@ -182,6 +182,55 @@ class Resources:
                 result["resource"] = selected
             return result
 
+    def read_blobs(self, owner, project, body):
+        sha_re = re.compile(r"^[a-f0-9]{64}$")
+        if not isinstance(body, dict):
+            raise ValueError("expected a blob request object")
+        with self.db() as c:
+            self.owned(c, owner, project)
+            if "sha" in body:
+                sha = body.get("sha")
+                offset = body.get("offset", 0)
+                limit = body.get("limit", 262144)
+                if not isinstance(sha, str) or not sha_re.fullmatch(sha):
+                    raise ValueError("invalid blob sha256")
+                if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+                    raise ValueError("invalid blob offset")
+                if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= MAX_PART):
+                    raise ValueError("invalid blob slice limit")
+                row = c.execute(
+                    "SELECT length(data) AS total, substr(data, ?, ?) AS chunk FROM resource_blobs WHERE owner=? AND sha=?",
+                    (offset + 1, limit, owner, sha),
+                ).fetchone()
+                if row is None:
+                    raise HTTPException(404, "blob not found")
+                return {
+                    "sha": sha,
+                    "total": int(row["total"]),
+                    "offset": offset,
+                    "data": base64.b64encode(bytes(row["chunk"] or b"")).decode(),
+                }
+            shas = body.get("shas")
+            if not isinstance(shas, list) or not (1 <= len(shas) <= 128):
+                raise ValueError("expected 1–128 blob hashes")
+            clean = []
+            for s in shas:
+                if not isinstance(s, str) or not sha_re.fullmatch(s):
+                    raise ValueError("invalid blob sha256")
+                if s not in clean:
+                    clean.append(s)
+            marks = ",".join("?" for _ in clean)
+            rows = c.execute(
+                f"SELECT sha, data FROM resource_blobs WHERE owner=? AND sha IN ({marks})",
+                (owner, *clean),
+            ).fetchall()
+            found = {r["sha"]: bytes(r["data"]) for r in rows}
+            if len(found) != len(clean):
+                raise HTTPException(404, "blob not found")
+            if sum(len(v) for v in found.values()) > MAX_PART:
+                raise ValueError("blob batch exceeds 512 KiB; split into smaller requests")
+            return {"blobs": {k: base64.b64encode(v).decode() for k, v in found.items()}}
+
     def history(self, owner, project):
         with self.db() as c:
             self.owned(c, owner, project)
@@ -314,6 +363,13 @@ def mount_resources(app, cfg, audit_log, write):
     @app.get("/v1/ferry/resources/projects/{project}")
     async def read(project: str, request: Request, revision: int | None = None, path: str | None = None):
         return store.read(request.state.user, project, revision, path)
+
+    @app.post("/v1/ferry/resources/projects/{project}/blobs")
+    async def blobs(project: str, request: Request):
+        raw = await request.body()
+        if len(raw) > MAX_PART:
+            raise HTTPException(413, "blob request too large")
+        return checked(store.read_blobs, request.state.user, project, checked(json.loads, raw))
 
     @app.get("/v1/ferry/resources/projects/{project}/history")
     async def history(project: str, request: Request):

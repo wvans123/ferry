@@ -8,7 +8,7 @@ import { Type } from "typebox";
 import { FERRY_HOME, chunkSize, serverHeaders } from "./config.mjs";
 import { createUploader } from "./upload.mjs";
 import { gatewayPage } from "./gateway.mjs";
-import { patchUISelect } from "./dialog.mjs";
+import { multiSelectDialog, patchUISelect } from "./dialog.mjs";
 
 const MAX_FILE = 16 * 1024 * 1024;
 const MAX_FILES = 2048;
@@ -238,11 +238,13 @@ export function parseSyncArgs(raw) {
 	if (flagGlobal && flagProject) throw new Error("Choose either --global or --project, not both.");
 	let action = tokens[0];
 	if (action === "push") action = "upload";
+	const rawSelectors = tokens.slice(1).flatMap((t) => action === "bind" ? [t] : t.split(",").map((s) => s.trim()).filter(Boolean));
 	const selector = tokens.slice(1).join(" ").trim();
 	const isInstall = action === "install" || action === "pull";
 	return {
 		action,
 		selector,
+		selectors: action === "bind" ? (selector ? [selector] : []) : rawSelectors,
 		scope: fromProject ? "project" : isInstall ? undefined : (flagGlobal ? "global" : flagProject ? "project" : undefined),
 		target: isInstall ? (flagGlobal ? "global" : flagProject ? "project" : undefined) : undefined,
 		all,
@@ -426,7 +428,14 @@ export function createResourceClient(cfg, { fetch: send = fetch, sleep, say } = 
 	const state = { chunk: chunkSize(cfg.chunkBytes) };
 	const url = (path) => cfg.server.replace(/\/$/, "") + path;
 	async function response(res) {
-		const b = await res.json().catch(() => ({}));
+		const raw = await res.text();
+		let b = {};
+		if (raw) {
+			try { b = JSON.parse(raw); }
+			catch (e) {
+				if (res.ok) throw new Error(`Resource sync stream interrupted (${raw.length} chars received): ${e.message}`);
+			}
+		}
 		if (!res.ok) throw new Error(b.error?.message ?? b.detail ?? `Ferry resource sync HTTP ${res.status}`);
 		return b;
 	}
@@ -436,17 +445,102 @@ export function createResourceClient(cfg, { fetch: send = fetch, sleep, say } = 
 		if (bytes?.length > state.chunk) throw new Error("Resource metadata exceeds the configured upload part size.");
 		return response(await send(url(`/v1/ferry/resources/${path}`), {
 			method: body === undefined ? "GET" : "POST", headers: serverHeaders(cfg, { "Content-Type": "application/json" }),
-			body: bytes, signal: signal ?? AbortSignal.timeout(60000), redirect: "manual",
+			body: bytes, signal: signal ?? AbortSignal.timeout(90000), redirect: "manual",
 		}));
 	}
 	const uploader = createUploader(state, {
 		sleep, say,
 		gatewayConfirm: (res, text) => gatewayPage(res.headers.get("location"), text),
 		post: (path, body, signal) => send(url(path), { method: "POST", headers: serverHeaders(cfg, { "Content-Type": "application/octet-stream" }),
-			body, redirect: "manual", signal: signal ?? AbortSignal.timeout(60000) }),
+			body, redirect: "manual", signal: signal ?? AbortSignal.timeout(90000) }),
 	}, { upload: "/v1/ferry/resources/upload", commit: "/v1/ferry/resources/commit" });
+
+	async function hydrateResource(project, remoteMeta, knownRes, revision, signal, { onlyTextUnderBytes = null } = {}) {
+		if (!remoteMeta) return null;
+		const files = remoteMeta.files ?? [];
+		if (files.every((f) => typeof f.data === "string")) return remoteMeta;
+		if (files.some((f) => typeof f.bytes !== "number" || typeof f.sha256 !== "string")) {
+			const q = new URLSearchParams({ path: remoteMeta.path, ...(revision !== undefined ? { revision: String(revision) } : {}) });
+			return (await api(`projects/${project}?${q}`, undefined, signal)).resource ?? null;
+		}
+		const knownBySha = new Map();
+		for (const kf of knownRes?.files ?? []) {
+			if (typeof kf.sha256 === "string" && typeof kf.data === "string") knownBySha.set(kf.sha256, kf.data);
+		}
+		const need = new Map();
+		for (const f of files) {
+			if (typeof f.data === "string" || knownBySha.has(f.sha256)) continue;
+			if (onlyTextUnderBytes !== null && f.bytes > onlyTextUnderBytes) continue;
+			need.set(f.sha256, f.bytes);
+		}
+		const fetched = new Map();
+		if (need.size > 0) {
+			const sliceLimit = Math.max(32768, Math.min(262144, Math.floor(state.chunk * 0.65)));
+			const smallBatch = [];
+			let smallBytes = 0;
+			const flushSmall = async () => {
+				if (!smallBatch.length) return true;
+				const batch = smallBatch.splice(0, smallBatch.length);
+				smallBytes = 0;
+				let res;
+				try {
+					res = await api(`projects/${project}/blobs`, { shas: batch }, signal);
+				} catch (e) {
+					if (/HTTP 40[45]/.test(e.message)) return false;
+					throw e;
+				}
+				if (!res?.blobs || typeof res.blobs !== "object") return false;
+				for (const [k, v] of Object.entries(res.blobs)) fetched.set(k, v);
+				return true;
+			};
+			let supported = true;
+			for (const [sha, totalBytes] of need.entries()) {
+				if (totalBytes === 0) {
+					fetched.set(sha, "");
+					continue;
+				}
+				if (totalBytes <= sliceLimit) {
+					if (smallBatch.length >= 64 || (smallBatch.length > 0 && smallBytes + totalBytes > sliceLimit)) {
+						if (!await flushSmall()) { supported = false; break; }
+					}
+					smallBatch.push(sha);
+					smallBytes += totalBytes;
+				} else {
+					if (!await flushSmall()) { supported = false; break; }
+					const chunks = [];
+					for (let offset = 0; offset < totalBytes; offset += sliceLimit) {
+						let part;
+						try {
+							part = await api(`projects/${project}/blobs`, { sha, offset, limit: Math.min(sliceLimit, totalBytes - offset) }, signal);
+						} catch (e) {
+							if (/HTTP 40[45]/.test(e.message)) { supported = false; break; }
+							throw e;
+						}
+						if (typeof part?.data !== "string") { supported = false; break; }
+						chunks.push(Buffer.from(part.data, "base64"));
+					}
+					if (!supported) break;
+					fetched.set(sha, Buffer.concat(chunks).toString("base64"));
+				}
+			}
+			if (supported && smallBatch.length) supported = await flushSmall();
+			if (!supported) {
+				const q = new URLSearchParams({ path: remoteMeta.path, ...(revision !== undefined ? { revision: String(revision) } : {}) });
+				return (await api(`projects/${project}?${q}`, undefined, signal)).resource ?? null;
+			}
+		}
+		return {
+			...remoteMeta,
+			files: files.map((f) => ({
+				...f,
+				data: typeof f.data === "string" ? f.data : (knownBySha.get(f.sha256) ?? fetched.get(f.sha256) ?? ""),
+			})),
+		};
+	}
+
 	return {
 		api,
+		hydrateResource,
 		async upload(project, revision, resources, signal, deletes = []) {
 			const bytes = Buffer.from(JSON.stringify({ put: resources, delete: deletes }));
 			if (bytes.length > MAX_BUNDLE) throw new Error("Resource bundle exceeds 96 MiB.");
@@ -730,13 +824,13 @@ export function createResources(cfg) {
 							};
 						}
 						if (!ctx.hasUI) return { choose: collected.map((r) => r.label) };
-						const changedItems = collected.filter((c) => !c.remote || c.remote.hash !== c.collected.hash);
-						const allLabel = changedItems.length >= 2 ? `全部上传有变化的 Skill（共 ${changedItems.length} 个）` : null;
+						const changedIndices = collected.flatMap((c, i) => (!c.remote || c.remote.hash !== c.collected.hash) ? [i] : []);
+						const allLabel = changedIndices.length >= 2 ? `全部上传有变化的 Skill（共 ${changedIndices.length} 个）` : null;
 						const itemLabels = collected.map((c) => `${c.name} [${c.origin}] · ${c.badge} · ${c.summary}`);
-						const header = `本机已读取 ${collected.length} 个自定义 Skill${builtins.length ? `（内置 ${builtins.join(", ")} 无需同步）` : ""} — 选择要整包上传的目录：`;
-						const pick = await ctx.ui.select(header, [...(allLabel ? [allLabel] : []), ...itemLabels, "取消"]);
-						if (!pick || pick === "取消") return { cancelled: true };
-						choices = allLabel && pick === allLabel ? changedItems : [collected[itemLabels.indexOf(pick)]];
+						const header = `本机已读取 ${collected.length} 个自定义 Skill${builtins.length ? `（内置 ${builtins.join(", ")} 无需同步）` : ""} — 空格勾选指定多个，回车确认：`;
+						const pickedIdx = await multiSelectDialog(ctx.ui, header, itemLabels, { allIndices: changedIndices, allLabel, signal });
+						if (!pickedIdx?.length) return { cancelled: true };
+						choices = pickedIdx.map((i) => collected[i]);
 					}
 				} else {
 					const inspectRemote = (r) => {
@@ -759,15 +853,15 @@ export function createResources(cfg) {
 						});
 					} else {
 						if (!ctx.hasUI) return { choose: inspected.map((r) => r.label) };
-						const outdated = isInstall ? inspected.filter((c) => !c.localBefore || c.localBefore.hash !== c.remoteMeta.hash) : [];
-						const allLabel = outdated.length >= 2 ? `全部安装/更新有变化的 Skill（共 ${outdated.length} 个）` : null;
+						const outdatedIndices = isInstall ? inspected.flatMap((c, i) => (!c.localBefore || c.localBefore.hash !== c.remoteMeta.hash) ? [i] : []) : [];
+						const allLabel = outdatedIndices.length >= 2 ? `全部安装/更新有变化的 Skill（共 ${outdatedIndices.length} 个）` : null;
 						const itemLabels = inspected.map((c) => `${c.name} (v${c.remoteMeta.ver ?? 1}) · ${c.badge} · ${c.summary}`);
 						const title = isInstall
-							? `服务端 [${serverBucket.name}] 共有 ${inspected.length} 个 Skill — 选择安装到${installTarget === "global" ? "本机全局 (~/.ferry/skills)" : "当前项目 (.ferry/skills)"}：`
-							: `选择要从服务端 [${serverBucket.name}] 删除的 Skill（历史版本仍会保留）：`;
-						const pick = await ctx.ui.select(title, [...(allLabel ? [allLabel] : []), ...itemLabels, "取消"]);
-						if (!pick || pick === "取消") return { cancelled: true };
-						choices = allLabel && pick === allLabel ? outdated : [inspected[itemLabels.indexOf(pick)]];
+							? `服务端 [${serverBucket.name}] 共有 ${inspected.length} 个 Skill — 空格勾选指定多个，回车安装到${installTarget === "global" ? "本机全局 (~/.ferry/skills)" : "当前项目 (.ferry/skills)"}：`
+							: `选择要从服务端 [${serverBucket.name}] 删除的 Skill（可空格勾选多个，历史版本仍会保留）：`;
+						const pickedIdx = await multiSelectDialog(ctx.ui, title, itemLabels, { allIndices: outdatedIndices, allLabel, signal });
+						if (!pickedIdx?.length) return { cancelled: true };
+						choices = pickedIdx.map((i) => inspected[i]);
 					}
 				}
 
@@ -786,8 +880,7 @@ export function createResources(cfg) {
 					let targetRes = local.resource;
 
 					if (isInstall) {
-						const q = new URLSearchParams({ path: choice.path, revision: String(revision ?? head.revision) });
-						targetRes = (await client.api(`projects/${serverBucket.id}?${q}`, undefined, signal)).resource;
+						targetRes = await client.hydrateResource(serverBucket.id, choice.remoteMeta, local.resource, revision, signal);
 						if (!targetRes) throw new Error(`Resource does not exist in revision ${revision ?? head.revision}: ${choice.path}`);
 						const kind = resourceKind(targetRes.path);
 						if (targetRes.path !== choice.path || targetRes.kind !== kind || !Array.isArray(targetRes.files)
@@ -811,8 +904,7 @@ export function createResources(cfg) {
 					if (action === "upload") {
 						let previous = null;
 						if (server && serverBucket) {
-							const q = new URLSearchParams({ path: choice.path, revision: String(head.revision) });
-							previous = (await client.api(`projects/${serverBucket.id}?${q}`, undefined, signal)).resource;
+							previous = await client.hydrateResource(serverBucket.id, server, targetRes, head.revision, signal, { onlyTextUnderBytes: 262144 });
 						}
 						diffs.push(textDiff(previous, targetRes));
 						summaries.push(`${basename(choice.path)}：${summarizeSkillFiles(targetRes.files, choice.path)}`);
@@ -946,7 +1038,7 @@ export function createResources(cfg) {
 				}
 				const result = await run({
 					action,
-					selectors: action === "bind" || !parsed.selector ? [] : [parsed.selector],
+					selectors: action === "bind" ? [] : (parsed.selectors ?? (parsed.selector ? [parsed.selector] : [])),
 					scope: parsed.scope,
 					target: parsed.target,
 					all: parsed.all,

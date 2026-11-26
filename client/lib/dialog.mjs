@@ -332,6 +332,198 @@ export async function selectDialog(ui, title, options, opts, fallbackSelect) {
 	});
 }
 
+export class FerryMultiSelectDialog extends FerrySelectDialog {
+	constructor(title, itemLabels, { tui, theme, keybindings, done, timeout, allIndices = [], allLabel = null }) {
+		super(title, [], { tui, theme, keybindings, done, timeout });
+		this.itemLabels = itemLabels;
+		this.allIndices = allIndices;
+		this.allLabel = allLabel;
+		this.checked = new Set();
+		this.rebuildOptions();
+	}
+
+	hasTopAction() {
+		return Boolean(this.allLabel) || this.checked.size > 0;
+	}
+
+	rebuildOptions() {
+		const top = this.checked.size > 0
+			? `确认所选（共 ${this.checked.size} 个 Skill）`
+			: this.allLabel;
+		this.options = [
+			...(top ? [top] : []),
+			...this.itemLabels.map((lab, idx) => `${this.checked.has(idx) ? "[✓]" : "[ ]"} ${lab}`),
+			"取消",
+		];
+		if (this.selectedIndex >= this.options.length) {
+			this.selectedIndex = Math.max(0, this.options.length - 1);
+		}
+	}
+
+	itemIndexAtRow(optIdx) {
+		const offset = this.hasTopAction() ? 1 : 0;
+		const idx = optIdx - offset;
+		return idx >= 0 && idx < this.itemLabels.length ? idx : -1;
+	}
+
+	toggleAtRow(optIdx) {
+		const hadTop = this.hasTopAction();
+		const itemIdx = this.itemIndexAtRow(optIdx);
+		if (itemIdx >= 0) {
+			if (this.checked.has(itemIdx)) this.checked.delete(itemIdx);
+			else this.checked.add(itemIdx);
+			this.rebuildOptions();
+			const nowTop = this.hasTopAction();
+			if (!hadTop && nowTop) this.selectedIndex += 1;
+			else if (hadTop && !nowTop) this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+			return true;
+		}
+		if (hadTop && optIdx === 0) {
+			this.toggleAll();
+			return true;
+		}
+		return false;
+	}
+
+	toggleAll() {
+		const hadTop = this.hasTopAction();
+		const pool = this.allIndices.length ? this.allIndices : this.itemLabels.map((_, i) => i);
+		const allOn = pool.length > 0 && pool.every((i) => this.checked.has(i));
+		if (allOn) this.checked.clear();
+		else for (const i of pool) this.checked.add(i);
+		this.rebuildOptions();
+		const nowTop = this.hasTopAction();
+		if (!hadTop && nowTop) this.selectedIndex += 1;
+		else if (hadTop && !nowTop) this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+	}
+
+	confirmSelection() {
+		const cancelRow = this.options.length - 1;
+		if (this.selectedIndex === cancelRow) {
+			this.dispose();
+			this.done(null);
+			return;
+		}
+		if (this.checked.size > 0) {
+			const res = [...this.checked].sort((a, b) => a - b);
+			this.dispose();
+			this.done(res);
+			return;
+		}
+		if (this.hasTopAction() && this.selectedIndex === 0) {
+			const res = [...this.allIndices];
+			this.dispose();
+			this.done(res);
+			return;
+		}
+		const itemIdx = this.itemIndexAtRow(this.selectedIndex);
+		this.dispose();
+		this.done(itemIdx >= 0 ? [itemIdx] : null);
+	}
+
+	render(width) {
+		const lines = super.render(width);
+		if (lines.length >= 2) {
+			const safeWidth = Math.max(12, Math.floor(width));
+			const hint = " ↑↓ 移动  •  Space 勾选多个  •  a 全选变更/清空  •  Enter 确认  •  Esc 取消";
+			const fitted = visibleWidth(hint) > safeWidth ? truncateToWidth(hint, safeWidth, "…") : hint;
+			lines[lines.length - 2] = this.fg("muted", fitted);
+		}
+		return lines;
+	}
+
+	handleMouse(event) {
+		if (event?.button === "left" && event.type === "click") {
+			const row = event.y;
+			if (typeof row === "number" && row >= this.lastLayout.optRowStart && row < this.lastLayout.optRowEnd) {
+				const optIdx = this.lastLayout.optStart + (row - this.lastLayout.optRowStart);
+				if (optIdx >= 0 && optIdx < this.options.length) {
+					this.selectedIndex = optIdx;
+					if (this.itemIndexAtRow(optIdx) >= 0) {
+						this.toggleAtRow(optIdx);
+						return { handled: true, focus: true, render: true };
+					}
+					this.confirmSelection();
+					return { handled: true, focus: true, render: true };
+				}
+			}
+		}
+		return super.handleMouse(event);
+	}
+
+	handleInput(data) {
+		const kb = this.keybindings;
+		if (kb?.matches?.(data, "tui.select.cancel") || matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.dispose();
+			this.done(null);
+			return;
+		}
+		if (data === " " || matchesKey(data, "space")) {
+			this.toggleAtRow(this.selectedIndex);
+			return;
+		}
+		if (data === "a" || data === "A") {
+			this.toggleAll();
+			return;
+		}
+		if (kb?.matches?.(data, "tui.select.confirm") || data === "\r" || data === "\n" || matchesKey(data, "enter")) {
+			this.confirmSelection();
+			return;
+		}
+		super.handleInput(data);
+	}
+}
+
+/** Multi-select checkbox dialog returning selected indices (`number[]`), or `null` when cancelled. */
+export async function multiSelectDialog(ui, title, itemLabels, opts = {}) {
+	if (!Array.isArray(itemLabels) || itemLabels.length === 0) return null;
+	if (opts?.signal?.aborted) return null;
+	const allIndices = opts.allIndices ?? [];
+	const allLabel = opts.allLabel ?? null;
+	if (typeof ui?.custom !== "function") {
+		const menu = [...(allLabel ? [allLabel] : []), ...itemLabels, "取消"];
+		const pick = await ui?.select?.(title, menu, opts);
+		if (!pick || pick === "取消") return null;
+		if (allLabel && pick === allLabel) return [...allIndices];
+		const idx = itemLabels.indexOf(pick);
+		return idx >= 0 ? [idx] : null;
+	}
+	return new Promise((resolve) => {
+		let closeFn = null;
+		let dialog = null;
+		let settled = false;
+		const finish = (val) => {
+			if (settled) return;
+			settled = true;
+			opts?.signal?.removeEventListener("abort", onAbort);
+			dialog?.dispose();
+			resolve(val ?? null);
+		};
+		const onAbort = () => {
+			if (closeFn) closeFn(null);
+			else finish(null);
+		};
+		opts?.signal?.addEventListener("abort", onAbort, { once: true });
+		ui.custom((tui, theme, keybindings, done) => {
+			closeFn = done;
+			dialog = new FerryMultiSelectDialog(title, itemLabels, {
+				tui,
+				theme,
+				keybindings,
+				timeout: opts?.timeout,
+				allIndices,
+				allLabel,
+				done: (val) => {
+					done(val);
+					finish(val);
+				},
+			});
+			if (opts?.signal?.aborted) queueMicrotask(() => done(null));
+			return dialog;
+		}, { blocked: { kind: "question", message: String(title ?? "").slice(0, 200) } }).then(finish, () => finish(null));
+	});
+}
+
 /** Patch ctx.ui.select once per UI context so every Ferry dialog (permissions, /sync, ask_user, /config, etc.) fits on screen. */
 export function patchUISelect(ui) {
 	if (!ui || typeof ui.select !== "function" || typeof ui.custom !== "function" || PATCHED.has(ui)) return ui;

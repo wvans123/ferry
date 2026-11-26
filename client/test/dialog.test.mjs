@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CURSOR_MARKER, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { FerrySelectDialog, patchUISelect, selectDialog } from "../lib/dialog.mjs";
+import { FerryMultiSelectDialog, FerrySelectDialog, multiSelectDialog, patchUISelect, selectDialog } from "../lib/dialog.mjs";
 
 const plain = (lines) => lines.map((l) => stripTerminalSequences(l.replaceAll(CURSOR_MARKER, ""))).join("\n");
 
@@ -102,4 +102,35 @@ test("patchUISelect routes through ui.custom, honors AbortSignal, and leaves pla
 	const p2 = selectDialog(customUI, "Approve?", ["Allow once", "Deny"], { signal: ac.signal });
 	ac.abort();
 	assert.equal(await p2, undefined);
+});
+
+test("FerryMultiSelectDialog supports picking arbitrary specific skills with Space, toggle-all with 'a', and single Enter", async () => {
+	const labels = ["patent-idea (v14)", "hw-ppt (v14)", "3gpp-tdoc-analysis (v11)", "research-lite (v8)"];
+	let chosen = null;
+	const dlg = new FerryMultiSelectDialog("选择要安装的 Skill", labels, {
+		tui: { terminal: { rows: 24, columns: 88 }, requestRender: () => {} },
+		theme: null,
+		keybindings: null,
+		allIndices: [0, 1, 2],
+		allLabel: "全部安装/更新有变化的 Skill（共 3 个）",
+		done: (v) => { chosen = v; },
+	});
+	dlg.render(88);
+	// Move down to patent-idea (row 1), press Space; move down twice to 3gpp-tdoc-analysis (row 3), press Space, then Enter!
+	dlg.handleInput("\x1b[B"); // row 1: patent-idea
+	dlg.handleInput(" ");      // check index 0
+	dlg.handleInput("\x1b[B"); // row 2: hw-ppt (leave unchecked!)
+	dlg.handleInput("\x1b[B"); // row 3: 3gpp-tdoc-analysis
+	dlg.handleInput(" ");      // check index 2
+	const rendered = plain(dlg.render(88));
+	assert.match(rendered, /确认所选（共 2 个 Skill）/);
+	assert.match(rendered, /\[✓\] patent-idea/);
+	assert.match(rendered, /\[ \] hw-ppt/);
+	assert.match(rendered, /\[✓\] 3gpp-tdoc-analysis/);
+	dlg.handleInput("\r");
+	assert.deepEqual(chosen, [0, 2]);
+
+	// Fallback mode when ui.custom is absent still supports single or allLabel selection.
+	const mockUI = { select: async (_t, opts) => opts[2] };
+	assert.deepEqual(await multiSelectDialog(mockUI, "pick", labels, { allIndices: [0, 1], allLabel: "All" }), [1]);
 });
